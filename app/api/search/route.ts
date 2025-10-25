@@ -45,22 +45,39 @@ export async function GET(request: NextRequest) {
     
     const supabase = await createClient()
     
-    // Build the query
+    // Build the query with minimal fields to reduce egress
     let query = supabase
       .from('businesses')
       .select(`
-        *,
-        owner:profiles!businesses_owner_id_fkey(
-          id,
-          full_name,
-          avatar_url
-        ),
-        reviews:reviews(
-          id,
-          rating,
-          comment,
-          created_at
-        )
+        id,
+        name,
+        description,
+        rating_avg,
+        rating_count,
+        base_rate_cents,
+        hourly_rate_cents,
+        city,
+        state,
+        address,
+        phone,
+        email,
+        website,
+        verified,
+        service_types,
+        specialties,
+        years_experience,
+        insurance_verified,
+        background_checked,
+        response_time,
+        completion_rate,
+        total_jobs,
+        last_active,
+        languages,
+        certifications,
+        awards,
+        created_at,
+        lat,
+        lng
       `)
       .eq('status', 'verified')
 
@@ -159,17 +176,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Search failed' }, { status: 500 })
     }
 
-    // Calculate additional metrics
+    // Calculate additional metrics (without expensive reviews query)
     const enrichedBusinesses = businesses?.map(business => {
-      const totalReviews = business.reviews?.length || 0
-      const avgRating = business.reviews?.length > 0 
-        ? business.reviews.reduce((sum: number, review: any) => sum + review.rating, 0) / business.reviews.length
-        : business.rating_avg || 0
-
       return {
         ...business,
-        total_reviews: totalReviews,
-        avg_rating: avgRating,
+        total_reviews: business.rating_count || 0,
+        avg_rating: business.rating_avg || 0,
         // Calculate distance if coordinates provided
         distance_km: validatedParams.lat && validatedParams.lng && business.lat && business.lng
           ? calculateDistance(validatedParams.lat, validatedParams.lng, business.lat, business.lng)
