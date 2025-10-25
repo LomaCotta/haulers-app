@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://haulers.app/sitemap.xml
+
+# Disallow private areas
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/

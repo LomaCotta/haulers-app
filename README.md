@@ -1,36 +1,185 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Haulers.app
+
+A nonprofit, transparent directory and marketplace for local moving and hauling services built with Next.js 15, TypeScript, Tailwind CSS, and Supabase.
+
+## Features
+
+- **Transparent Marketplace**: Low platform fees (2.5% max) with public financial reporting
+- **Role-based Access**: Consumers, providers, and admin roles with appropriate permissions
+- **Business Management**: Complete CRUD for business profiles with verification
+- **Discovery & Search**: Full-text search with filters, map integration, and distance-based results
+- **Booking System**: End-to-end booking flow with quotes, deposits, and messaging
+- **Review System**: Job-verified reviews with photo support
+- **Admin Dashboard**: Provider verification, moderation, and ledger management
+- **Transparency Reports**: Monthly public financial ledgers with CSV export
+
+## Tech Stack
+
+- **Frontend**: Next.js 15 (App Router), TypeScript, Tailwind CSS, shadcn/ui
+- **Backend**: Supabase (PostgreSQL, Auth, RLS, Storage)
+- **Maps**: Mapbox GL
+- **Payments**: Stripe
+- **Email**: Resend
+- **Testing**: Vitest, Playwright, Testing Library
+- **Deployment**: Vercel
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- Node.js 20+
+- pnpm
+- Supabase account
+- Mapbox account
+- Stripe account (for payments)
+
+### Environment Setup
+
+1. Copy the environment template:
+   ```bash
+   cp env.example .env.local
+   ```
+
+2. Fill in your environment variables:
+   ```bash
+   # Site Configuration
+   NEXT_PUBLIC_SITE_NAME=Haulers.app
+   NEXT_PUBLIC_SITE_URL=http://localhost:3000
+
+   # Mapbox
+   NEXT_PUBLIC_MAPBOX_TOKEN=pk.your_mapbox_token
+
+   # Supabase
+   NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+   SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+   # Resend (Email)
+   RESEND_API_KEY=your_resend_key
+
+   # Stripe
+   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_your_key
+   STRIPE_SECRET_KEY=sk_test_your_key
+   STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+   ```
+
+### Database Setup
+
+1. Create a new Supabase project
+2. Run the database migration:
+   ```bash
+   npm run db:migrate
+   ```
+3. Seed the database with sample data:
+   ```bash
+   npm run db:seed
+   ```
+
+### Development
+
+1. Install dependencies:
+   ```bash
+   pnpm install
+   ```
+
+2. Start the development server:
+   ```bash
+   pnpm dev
+   ```
+
+3. Open [http://localhost:3000](http://localhost:3000) in your browser.
+
+### Testing
+
+Run the test suite:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Unit tests
+pnpm test
+
+# E2E tests
+pnpm test:e2e
+
+# All tests
+pnpm test:all
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Project Structure
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+├── app/                    # Next.js App Router
+│   ├── (marketing)/        # Public pages
+│   ├── (dashboard)/        # Authenticated pages
+│   ├── api/               # API routes
+│   └── globals.css        # Global styles
+├── components/            # Reusable UI components
+├── lib/                   # Utilities and configurations
+│   ├── supabase/         # Supabase client setup
+│   └── schema.ts         # Zod schemas
+├── db/                   # Database files
+│   └── migrations/       # SQL migrations
+├── scripts/              # Utility scripts
+└── tests/                # Test files
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Key Features
 
-## Learn More
+### Authentication & Authorization
+- Email/password and magic link authentication
+- Role-based access control (consumer, provider, admin)
+- Row-level security (RLS) for data protection
 
-To learn more about Next.js, take a look at the following resources:
+### Business Management
+- Multi-step business profile creation
+- Service area mapping with radius
+- Document upload for verification
+- Availability calendar management
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Discovery & Search
+- Full-text search across business names and descriptions
+- Advanced filtering (service type, rating, price, distance)
+- Map integration with clustering
+- Distance-based sorting
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Booking System
+- Quote request and response flow
+- Secure deposit payments via Stripe
+- Real-time messaging between parties
+- Status tracking and notifications
 
-## Deploy on Vercel
+### Transparency
+- Monthly financial reports
+- Public ledger with CSV export
+- Community reinvestment tracking
+- Nonprofit financial transparency
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Vercel Deployment
+
+1. Connect your GitHub repository to Vercel
+2. Set environment variables in Vercel dashboard
+3. Deploy automatically on push to main branch
+
+### Environment Variables for Production
+
+Ensure all environment variables are set in your production environment, including:
+- Supabase production URLs and keys
+- Stripe production keys
+- Mapbox production token
+- Resend API key
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Submit a pull request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Support
+
+For support, email support@haulers.app or join our community Discord.
