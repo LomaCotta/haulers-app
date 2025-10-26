@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,18 @@ import { createClient } from '@/lib/supabase/client'
 import { profileRoleSchema } from '@/lib/schema'
 import { ArrowLeft, User, Building } from 'lucide-react'
 
+// Declare Turnstile types
+declare global {
+  interface Window {
+    turnstile: {
+      render: (element: string | HTMLElement, options: any) => string
+      reset: (widgetId: string) => void
+      remove: (widgetId: string) => void
+      getResponse: (widgetId: string) => string
+    }
+  }
+}
+
 export default function SignUpPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -20,8 +32,133 @@ export default function SignUpPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   
+  // Turnstile state
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
+  const [turnstileLoaded, setTurnstileLoaded] = useState(false)
+  const turnstileRef = useRef<HTMLDivElement>(null)
+  const widgetIdRef = useRef<string | null>(null)
+  
   const router = useRouter()
   const supabase = createClient()
+
+  // Load Turnstile script and render widget
+  useEffect(() => {
+    let mounted = true
+
+    // For development, we'll skip Turnstile to avoid domain issues
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Development mode: Skipping Turnstile to avoid domain issues')
+      setTurnstileLoaded(true)
+      // Set a mock token for development
+      setTurnstileToken('dev-mock-token')
+      return () => {
+        mounted = false
+      }
+    }
+
+    const loadTurnstileScript = () => {
+      return new Promise<void>((resolve, reject) => {
+        // Check if already loaded
+        if (window.turnstile) {
+          resolve()
+          return
+        }
+
+        // Check if script already exists
+        const existingScript = document.querySelector('script[src*="turnstile"]')
+        if (existingScript) {
+          // Wait for it to load
+          existingScript.addEventListener('load', () => resolve())
+          existingScript.addEventListener('error', () => reject())
+          return
+        }
+
+        // Create new script
+        const script = document.createElement('script')
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
+        script.async = true
+        script.defer = true
+        script.onload = () => {
+          console.log('Turnstile script loaded successfully')
+          resolve()
+        }
+        script.onerror = (error) => {
+          console.error('Failed to load Turnstile script:', error)
+          reject(error)
+        }
+        document.head.appendChild(script)
+      })
+    }
+
+    const renderTurnstileWidget = () => {
+      if (!mounted || !window.turnstile || !turnstileRef.current || widgetIdRef.current) {
+        return
+      }
+
+      try {
+        const siteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY || '0x4AAAAAAABkMYinukE8nzY_' // Cloudflare test key
+        console.log('Rendering Turnstile widget with site key:', siteKey)
+        
+        const widgetId = window.turnstile.render(turnstileRef.current, {
+          sitekey: siteKey,
+          callback: (token: string) => {
+            console.log('Turnstile token received:', token)
+            if (mounted) {
+              setTurnstileToken(token)
+            }
+          },
+          'error-callback': (error: any) => {
+            console.error('Turnstile error:', error)
+            if (mounted) {
+              setTurnstileToken(null)
+            }
+          },
+          'expired-callback': () => {
+            console.log('Turnstile token expired')
+            if (mounted) {
+              setTurnstileToken(null)
+            }
+          }
+        })
+        
+        widgetIdRef.current = widgetId
+        console.log('Turnstile widget rendered successfully with ID:', widgetId)
+        
+        if (mounted) {
+          setTurnstileLoaded(true)
+        }
+      } catch (error) {
+        console.error('Turnstile render error:', error)
+      }
+    }
+
+    const initializeTurnstile = async () => {
+      try {
+        await loadTurnstileScript()
+        // Small delay to ensure DOM is ready
+        setTimeout(() => {
+          if (mounted) {
+            renderTurnstileWidget()
+          }
+        }, 100)
+      } catch (error) {
+        console.error('Failed to initialize Turnstile:', error)
+      }
+    }
+
+    initializeTurnstile()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  const resetTurnstile = () => {
+    if (widgetIdRef.current && window.turnstile) {
+      window.turnstile.reset(widgetIdRef.current)
+      setTurnstileToken(null)
+    }
+  }
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,12 +177,23 @@ export default function SignUpPage() {
           data: {
             full_name: fullName,
             role: validatedRole,
-          }
+          },
+          captchaToken: turnstileToken || undefined
         }
       })
 
       if (authError) {
-        setError(authError.message)
+        // Handle specific captcha errors with better messaging
+        if (authError.message.includes('captcha') || authError.message.includes('verification')) {
+          if (process.env.NODE_ENV === 'development') {
+            setError('Development mode: Captcha verification bypassed. Please check your credentials.')
+          } else {
+            setError('Please complete the verification challenge above and try again.')
+            resetTurnstile()
+          }
+        } else {
+          setError(authError.message)
+        }
         return
       }
 
@@ -152,6 +300,32 @@ export default function SignUpPage() {
                   className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                 />
               </div>
+
+              {/* Turnstile Widget */}
+              <div className="flex justify-center">
+                <div ref={turnstileRef} className="turnstile-widget">
+                  {!turnstileLoaded && (
+                    <div className="text-sm text-gray-500 p-2">
+                      Loading verification...
+                    </div>
+                  )}
+                  {process.env.NODE_ENV === 'development' && turnstileLoaded && (
+                    <div className="text-sm text-green-600 bg-green-50 p-2 rounded border border-green-200">
+                      ✅ Development mode: Verification bypassed
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Debug info - remove in production */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="text-xs text-gray-400 p-2 bg-gray-50 rounded">
+                  <div>Turnstile loaded: {turnstileLoaded ? 'Yes' : 'No'}</div>
+                  <div>Token: {turnstileToken ? 'Present' : 'None'}</div>
+                  <div>Site key: {process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ? 'Set' : 'Missing'}</div>
+                  <div className="mt-1 text-green-600">✅ Development mode active</div>
+                </div>
+              )}
 
               {error && (
                 <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
