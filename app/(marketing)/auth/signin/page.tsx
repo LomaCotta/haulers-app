@@ -71,46 +71,48 @@ export default function SignInPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="mb-8">
-          <Link href="/" className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900">
+          <Link href="/" className="inline-flex items-center text-sm text-gray-600 hover:text-orange-600 transition-colors">
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back to home
           </Link>
         </div>
 
-        <Card>
+        <Card className="shadow-2xl border-0">
           <CardHeader className="text-center">
-            <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center mx-auto mb-4 shadow-lg">
               <span className="text-white font-bold text-xl">H</span>
             </div>
-            <CardTitle className="text-2xl">Welcome back</CardTitle>
-            <CardDescription>
+            <CardTitle className="text-3xl font-bold text-gray-900">Welcome back</CardTitle>
+            <CardDescription className="text-lg text-gray-600">
               Sign in to your Haulers.app account
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSignIn} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email" className="text-base font-semibold text-gray-900">Email</Label>
                 <Input
                   id="email"
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password" className="text-base font-semibold text-gray-900">Password</Label>
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
+                  className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                 />
               </div>
 
@@ -120,7 +122,11 @@ export default function SignInPage() {
                 </div>
               )}
 
-              <Button type="submit" className="w-full" disabled={loading}>
+              <Button 
+                type="submit" 
+                className="w-full h-12 text-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-200" 
+                disabled={loading}
+              >
                 {loading ? 'Signing in...' : 'Sign in'}
               </Button>
 
@@ -136,7 +142,7 @@ export default function SignInPage() {
               <Button 
                 type="button" 
                 variant="outline" 
-                className="w-full" 
+                className="w-full h-12 text-base font-semibold border-orange-300 text-orange-600 hover:bg-orange-50 hover:border-orange-400 transition-all duration-200" 
                 onClick={handleMagicLink}
                 disabled={loading || !email}
               >
@@ -145,9 +151,9 @@ export default function SignInPage() {
             </form>
 
             <div className="mt-6 text-center">
-              <p className="text-sm text-gray-600">
+              <p className="text-base text-gray-600">
                 Don't have an account?{' '}
-                <Link href="/auth/signup" className="text-blue-600 hover:text-blue-500">
+                <Link href="/auth/signup" className="text-orange-600 hover:text-orange-500 font-semibold transition-colors">
                   Sign up
                 </Link>
               </p>

@@ -136,3 +136,4 @@ if (usage > 0.8 * limit) {
 - Use CDN for static assets
 - Monitor usage with Supabase dashboard
 - Set up alerts for usage thresholds
+

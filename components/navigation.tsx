@@ -57,21 +57,21 @@ export function Navigation({ user }: NavigationProps) {
       <div className="container flex h-16 items-center">
         {/* Logo */}
         <Link href="/" className="flex items-center space-x-2">
-          <div className="h-8 w-8 bg-primary rounded-md flex items-center justify-center">
-            <span className="text-primary-foreground font-bold text-sm">H</span>
+          <div className="h-8 w-8 bg-gradient-to-br from-orange-500 to-red-500 rounded-md flex items-center justify-center shadow-md">
+            <span className="text-white font-bold text-sm">H</span>
           </div>
-          <span className="font-bold text-xl">Haulers.app</span>
+          <span className="font-bold text-xl text-gray-800">Haulers.app</span>
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden md:flex items-center space-x-6 ml-8">
+        <nav className="hidden md:flex items-center space-x-8 ml-8">
           {publicLinks.map((link) => (
             <Link
               key={link.href}
               href={link.href}
               className={cn(
-                "text-sm font-medium transition-colors hover:text-primary",
-                isActive(link.href) ? "text-primary" : "text-muted-foreground"
+                "text-base font-bold transition-all duration-200 hover:text-primary hover:scale-105",
+                isActive(link.href) ? "text-primary" : "text-gray-800"
               )}
             >
               {link.label}
@@ -82,27 +82,27 @@ export function Navigation({ user }: NavigationProps) {
         <div className="ml-auto flex items-center space-x-4">
           {/* User Menu */}
           {user ? (
-            <div className="hidden md:flex items-center space-x-4">
+            <div className="hidden md:flex items-center space-x-6">
               <Link href="/dashboard">
-                <Button variant="outline" size="sm">
+                <Button variant="outline" size="sm" className="font-bold border-2 border-orange-500 text-orange-600 hover:bg-gradient-to-r hover:from-orange-500 hover:to-red-500 hover:text-white hover:border-orange-600 transition-all duration-200">
                   Dashboard
                 </Button>
               </Link>
-              <Link href="/auth/signout">
-                <Button variant="ghost" size="sm">
+              <form action="/auth/signout" method="post">
+                <Button type="submit" variant="ghost" size="sm" className="font-bold text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition-all duration-200">
                   Sign Out
                 </Button>
-              </Link>
+              </form>
             </div>
           ) : (
-            <div className="hidden md:flex items-center space-x-2">
+            <div className="hidden md:flex items-center space-x-4">
               <Link href="/auth/signin">
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" className="font-semibold hover:bg-gray-100 transition-all duration-200">
                   Sign In
                 </Button>
               </Link>
               <Link href="/auth/signup">
-                <Button size="sm">
+                <Button size="sm" className="font-bold bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-200">
                   Sign Up
                 </Button>
               </Link>
@@ -176,19 +176,31 @@ export function Navigation({ user }: NavigationProps) {
                 <div className="space-y-2">
                   <h3 className="font-medium text-sm text-muted-foreground">Account</h3>
                   {authLinks.map((link) => (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      className={cn(
-                        "block px-3 py-2 text-sm rounded-md transition-colors",
-                        isActive(link.href) 
-                          ? "bg-primary text-primary-foreground" 
-                          : "hover:bg-muted"
-                      )}
-                      onClick={() => setIsOpen(false)}
-                    >
-                      {link.label}
-                    </Link>
+                    link.href === '/auth/signout' ? (
+                      <form key={link.href} action="/auth/signout" method="post">
+                        <button
+                          type="submit"
+                          className="block w-full text-left px-3 py-2 text-sm rounded-md transition-colors hover:bg-muted"
+                          onClick={() => setIsOpen(false)}
+                        >
+                          {link.label}
+                        </button>
+                      </form>
+                    ) : (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        className={cn(
+                          "block px-3 py-2 text-sm rounded-md transition-colors",
+                          isActive(link.href) 
+                            ? "bg-primary text-primary-foreground" 
+                            : "hover:bg-muted"
+                        )}
+                        onClick={() => setIsOpen(false)}
+                      >
+                        {link.label}
+                      </Link>
+                    )
                   ))}
                 </div>
               </div>

@@ -147,3 +147,4 @@ export function trackUsage(endpoint: string, dataSize: number) {
   // You can send this to your analytics service
   // analytics.track('api_usage', { endpoint, dataSize })
 }
+
