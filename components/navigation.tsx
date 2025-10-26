@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { Menu, X, User, Building2, BookOpen, Shield, DollarSign } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/hooks/use-auth"
 
 interface NavigationProps {
   user?: {
@@ -15,9 +16,13 @@ interface NavigationProps {
   } | null
 }
 
-export function Navigation({ user }: NavigationProps) {
+export function Navigation({ user: propUser }: NavigationProps) {
+  const { user, loading, signOut } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+
+  // Use prop user if provided, otherwise use auth hook
+  const currentUser = propUser || user
 
   const isActive = (path: string) => pathname === path
 
@@ -44,9 +49,8 @@ export function Navigation({ user }: NavigationProps) {
     { href: "/dashboard/bookings", label: "My Bookings", icon: BookOpen },
   ]
 
-  const authLinks = user ? [
+  const authLinks = currentUser ? [
     { href: "/dashboard", label: "Dashboard" },
-    { href: "/auth/signout", label: "Sign Out" },
   ] : [
     { href: "/auth/signin", label: "Sign In" },
     { href: "/auth/signup", label: "Sign Up" },
@@ -81,19 +85,22 @@ export function Navigation({ user }: NavigationProps) {
 
         <div className="ml-auto flex items-center space-x-4">
           {/* User Menu */}
-          {user ? (
-            <div className="hidden md:flex items-center space-x-6">
-              <Link href="/dashboard">
-                <Button variant="outline" size="sm" className="font-bold border-2 border-orange-500 text-orange-600 hover:bg-gradient-to-r hover:from-orange-500 hover:to-red-500 hover:text-white hover:border-orange-600 transition-all duration-200">
-                  Dashboard
-                </Button>
-              </Link>
-              <form action="/auth/signout" method="post">
-                <Button type="submit" variant="ghost" size="sm" className="font-bold text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition-all duration-200">
-                  Sign Out
-                </Button>
-              </form>
-            </div>
+          {currentUser ? (
+                        <div className="hidden md:flex items-center space-x-6">
+                          <Link href="/dashboard">
+                            <Button variant="outline" size="sm" className="font-bold border-2 border-orange-500 text-orange-600 hover:bg-gradient-to-r hover:from-orange-500 hover:to-red-500 hover:text-white hover:border-orange-600 transition-all duration-200">
+                              Dashboard
+                            </Button>
+                          </Link>
+                          <Button 
+                            onClick={signOut}
+                            variant="ghost" 
+                            size="sm" 
+                            className="font-bold text-gray-700 hover:bg-orange-50 hover:text-orange-600 transition-all duration-200"
+                          >
+                            Sign Out
+                          </Button>
+                        </div>
           ) : (
             <div className="hidden md:flex items-center space-x-4">
               <Link href="/auth/signin">
@@ -150,7 +157,7 @@ export function Navigation({ user }: NavigationProps) {
                 </div>
 
                 {/* Dashboard Links */}
-                {user && (
+                {currentUser && (
                   <div className="space-y-2">
                     <h3 className="font-medium text-sm text-muted-foreground">Dashboard</h3>
                     {dashboardLinks.map((link) => (
@@ -176,32 +183,31 @@ export function Navigation({ user }: NavigationProps) {
                 <div className="space-y-2">
                   <h3 className="font-medium text-sm text-muted-foreground">Account</h3>
                   {authLinks.map((link) => (
-                    link.href === '/auth/signout' ? (
-                      <form key={link.href} action="/auth/signout" method="post">
-                        <button
-                          type="submit"
-                          className="block w-full text-left px-3 py-2 text-sm rounded-md transition-colors hover:bg-muted"
-                          onClick={() => setIsOpen(false)}
-                        >
-                          {link.label}
-                        </button>
-                      </form>
-                    ) : (
-                      <Link
-                        key={link.href}
-                        href={link.href}
-                        className={cn(
-                          "block px-3 py-2 text-sm rounded-md transition-colors",
-                          isActive(link.href) 
-                            ? "bg-primary text-primary-foreground" 
-                            : "hover:bg-muted"
-                        )}
-                        onClick={() => setIsOpen(false)}
-                      >
-                        {link.label}
-                      </Link>
-                    )
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      className={cn(
+                        "block px-3 py-2 text-sm rounded-md transition-colors",
+                        isActive(link.href) 
+                          ? "bg-primary text-primary-foreground" 
+                          : "hover:bg-muted"
+                      )}
+                      onClick={() => setIsOpen(false)}
+                    >
+                      {link.label}
+                    </Link>
                   ))}
+                  {currentUser && (
+                    <button
+                      onClick={() => {
+                        signOut()
+                        setIsOpen(false)
+                      }}
+                      className="block w-full text-left px-3 py-2 text-sm rounded-md transition-colors hover:bg-muted"
+                    >
+                      Sign Out
+                    </button>
+                  )}
                 </div>
               </div>
             </SheetContent>

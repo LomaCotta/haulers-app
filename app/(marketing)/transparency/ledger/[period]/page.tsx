@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { 
-  Download, 
   ArrowLeft, 
   TrendingUp, 
   TrendingDown,
@@ -19,58 +18,8 @@ interface LedgerEntry {
   created_at: string
 }
 
-// Mock data for demonstration
-const mockLedgerData: LedgerEntry[] = [
-  {
-    id: '1',
-    category: 'income_fees',
-    amount_cents: 234000, // $2,340
-    note: 'Platform fees from November transactions',
-    created_at: '2024-11-01T00:00:00Z'
-  },
-  {
-    id: '2',
-    category: 'donations',
-    amount_cents: 89000, // $890
-    note: 'User donations and tips',
-    created_at: '2024-11-15T00:00:00Z'
-  },
-  {
-    id: '3',
-    category: 'infra_costs',
-    amount_cents: -120000, // -$1,200
-    note: 'Supabase hosting and database costs',
-    created_at: '2024-11-01T00:00:00Z'
-  },
-  {
-    id: '4',
-    category: 'infra_costs',
-    amount_cents: -45000, // -$450
-    note: 'Stripe payment processing fees',
-    created_at: '2024-11-01T00:00:00Z'
-  },
-  {
-    id: '5',
-    category: 'staff',
-    amount_cents: -80000, // -$800
-    note: 'Part-time community manager',
-    created_at: '2024-11-01T00:00:00Z'
-  },
-  {
-    id: '6',
-    category: 'grants',
-    amount_cents: -180000, // -$1,800
-    note: 'Small business development grants',
-    created_at: '2024-11-20T00:00:00Z'
-  },
-  {
-    id: '7',
-    category: 'reserves',
-    amount_cents: 50000, // $500
-    note: 'Emergency fund contribution',
-    created_at: '2024-11-25T00:00:00Z'
-  }
-]
+// Empty data since we just started
+const mockLedgerData: LedgerEntry[] = []
 
 const categoryLabels: Record<string, string> = {
   income_fees: 'Platform Fees',
@@ -107,23 +56,11 @@ export default async function LedgerPage({ params }: PageProps) {
   const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' })
 
   // Calculate totals by category
-  const categoryTotals = mockLedgerData.reduce((acc, entry) => {
-    if (!acc[entry.category]) {
-      acc[entry.category] = 0
-    }
-    acc[entry.category] += entry.amount_cents
-    return acc
-  }, {} as Record<string, number>)
-
-  const totalIncome = Object.entries(categoryTotals)
-    .filter(([category]) => ['income_fees', 'donations'].includes(category))
-    .reduce((sum, [, amount]) => sum + amount, 0)
-
-  const totalExpenses = Object.entries(categoryTotals)
-    .filter(([category]) => !['income_fees', 'donations'].includes(category))
-    .reduce((sum, [, amount]) => sum + Math.abs(amount), 0)
-
-  const netIncome = totalIncome - totalExpenses
+  // Since we just started, all values are zero
+  const totalIncome = 0
+  const totalExpenses = 0
+  const netIncome = 0
+  const categoryTotals: Record<string, number> = {}
 
   const formatCurrency = (cents: number) => {
     const dollars = cents / 100
@@ -155,19 +92,10 @@ export default async function LedgerPage({ params }: PageProps) {
             </div>
           </div>
 
-          <div className="flex gap-4">
-            <Button asChild>
-              <Link href={`/transparency/ledger/${period}.csv`}>
-                <Download className="w-4 h-4 mr-2" />
-                Download CSV
-              </Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href={`/transparency/ledger/${period}.json`}>
-                <Download className="w-4 h-4 mr-2" />
-                Download JSON
-              </Link>
-            </Button>
+          <div className="text-center py-4">
+            <p className="text-gray-500">
+              No financial data available yet - we just launched!
+            </p>
           </div>
         </div>
 
@@ -224,20 +152,8 @@ export default async function LedgerPage({ params }: PageProps) {
               <CardDescription>Sources of revenue</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {Object.entries(categoryTotals)
-                  .filter(([category]) => ['income_fees', 'donations'].includes(category))
-                  .map(([category, amount]) => (
-                    <div key={category} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                        <span className="font-medium">{categoryLabels[category]}</span>
-                      </div>
-                      <span className="font-bold text-green-600">
-                        {formatCurrency(amount)}
-                      </span>
-                    </div>
-                  ))}
+              <div className="text-center py-8">
+                <p className="text-gray-500">No income data yet</p>
               </div>
             </CardContent>
           </Card>
@@ -248,20 +164,8 @@ export default async function LedgerPage({ params }: PageProps) {
               <CardDescription>Where money was spent</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {Object.entries(categoryTotals)
-                  .filter(([category]) => !['income_fees', 'donations'].includes(category))
-                  .map(([category, amount]) => (
-                    <div key={category} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-                        <span className="font-medium">{categoryLabels[category]}</span>
-                      </div>
-                      <span className="font-bold text-red-600">
-                        {formatCurrency(Math.abs(amount))}
-                      </span>
-                    </div>
-                  ))}
+              <div className="text-center py-8">
+                <p className="text-gray-500">No expense data yet</p>
               </div>
             </CardContent>
           </Card>
@@ -274,30 +178,17 @@ export default async function LedgerPage({ params }: PageProps) {
             <CardDescription>All financial entries for {monthName}</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {mockLedgerData.map((entry) => (
-                <div key={entry.id} className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge 
-                        variant={entry.amount_cents >= 0 ? 'default' : 'destructive'}
-                        className="text-xs"
-                      >
-                        {categoryLabels[entry.category]}
-                      </Badge>
-                      <span className="text-sm text-gray-500">
-                        {new Date(entry.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600">{entry.note}</p>
-                  </div>
-                  <div className="text-right">
-                    <div className={`font-bold ${entry.amount_cents >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {entry.amount_cents >= 0 ? '+' : ''}{formatCurrency(entry.amount_cents)}
-                    </div>
-                  </div>
-                </div>
-              ))}
+            <div className="text-center py-12">
+              <div className="text-gray-400 mb-4">
+                <Calendar className="w-12 h-12 mx-auto" />
+              </div>
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No Transactions Yet</h3>
+              <p className="text-gray-500 mb-4">
+                We just launched! Financial data will appear here as we start processing transactions.
+              </p>
+              <p className="text-sm text-gray-400">
+                Check back soon for our first financial report.
+              </p>
             </div>
           </CardContent>
         </Card>

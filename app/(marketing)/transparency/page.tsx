@@ -7,7 +7,6 @@ import {
   DollarSign, 
   Users, 
   Heart,
-  Download,
   Calendar,
   BarChart3
 } from 'lucide-react'
@@ -31,8 +30,8 @@ export default function TransparencyPage() {
             </h1>
             <p className="text-xl text-gray-600 max-w-3xl mx-auto">
               We believe in complete transparency. Every dollar earned through platform fees 
-              is tracked, reported, and reinvested in our community. See exactly how we use 
-              our revenue to support local businesses and community initiatives.
+              will be tracked, reported, and reinvested in our community. As we grow, you'll 
+              see exactly how we use our revenue to support local businesses and community initiatives.
             </p>
           </div>
         </div>
@@ -95,15 +94,15 @@ export default function TransparencyPage() {
           </Card>
         </div>
 
-        {/* Recent Ledgers */}
+        {/* Current Status */}
         <div className="mb-12">
-          <h2 className="text-2xl font-bold mb-6">Recent Financial Reports</h2>
+          <h2 className="text-2xl font-bold mb-6">Current Financial Status</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>November 2024</span>
-                  <Badge variant="outline">Latest</Badge>
+                  <span>{new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}</span>
+                  <Badge variant="outline">Current</Badge>
                 </CardTitle>
                 <CardDescription>Monthly transparency report</CardDescription>
               </CardHeader>
@@ -111,113 +110,89 @@ export default function TransparencyPage() {
                 <div className="space-y-2 mb-4">
                   <div className="flex justify-between">
                     <span className="text-sm">Platform Fees</span>
-                    <span className="font-medium">$2,340</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Donations</span>
-                    <span className="font-medium">$890</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Infrastructure</span>
-                    <span className="font-medium">-$1,200</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Community Grants</span>
-                    <span className="font-medium">-$1,800</span>
+                    <span className="font-medium">$0</span>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" asChild>
-                    <Link href={`/transparency/ledger/${currentMonth}`}>
-                      View Report
-                    </Link>
-                  </Button>
-                  <Button size="sm" variant="outline" asChild>
-                    <Link href={`/transparency/ledger/${currentMonth}.csv`}>
-                      <Download className="w-4 h-4 mr-1" />
-                      CSV
-                    </Link>
-                  </Button>
+                <div className="text-center py-4">
+                  <p className="text-sm text-gray-500">
+                    No transactions yet - we just launched!
+                  </p>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>October 2024</CardTitle>
+                <CardTitle>Previous Month</CardTitle>
                 <CardDescription>Monthly transparency report</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 mb-4">
                   <div className="flex justify-between">
                     <span className="text-sm">Platform Fees</span>
-                    <span className="font-medium">$1,890</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Donations</span>
-                    <span className="font-medium">$650</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Infrastructure</span>
-                    <span className="font-medium">-$980</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Community Grants</span>
-                    <span className="font-medium">-$1,200</span>
+                    <span className="font-medium">$0</span>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" asChild>
-                    <Link href={`/transparency/ledger/${lastMonth}`}>
-                      View Report
-                    </Link>
-                  </Button>
-                  <Button size="sm" variant="outline" asChild>
-                    <Link href={`/transparency/ledger/${lastMonth}.csv`}>
-                      <Download className="w-4 h-4 mr-1" />
-                      CSV
-                    </Link>
-                  </Button>
+                <div className="text-center py-4">
+                  <p className="text-sm text-gray-500">
+                    No transactions yet
+                  </p>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle>September 2024</CardTitle>
+                <CardTitle>Two Months Ago</CardTitle>
                 <CardDescription>Monthly transparency report</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 mb-4">
                   <div className="flex justify-between">
                     <span className="text-sm">Platform Fees</span>
-                    <span className="font-medium">$1,560</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Donations</span>
-                    <span className="font-medium">$420</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Infrastructure</span>
-                    <span className="font-medium">-$850</span>
+                    <span className="font-medium">$0</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-sm">Community Grants</span>
-                    <span className="font-medium">-$900</span>
+                    <span className="font-medium">$0</span>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button size="sm" asChild>
-                    <Link href="/transparency/ledger/2024-09">
-                      View Report
-                    </Link>
-                  </Button>
-                  <Button size="sm" variant="outline" asChild>
-                    <Link href="/transparency/ledger/2024-09.csv">
-                      <Download className="w-4 h-4 mr-1" />
-                      CSV
-                    </Link>
-                  </Button>
+                <div className="text-center py-4">
+                  <p className="text-sm text-gray-500">
+                    No transactions yet
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -237,9 +212,9 @@ export default function TransparencyPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-gray-600 mb-4">
-                  Every month, we publish a detailed financial report showing all income, 
-                  expenses, and community reinvestment. These reports are available to 
-                  everyone and include CSV downloads for analysis.
+                  Every month, we will publish a detailed financial report showing all income, 
+                  expenses, and community reinvestment. These reports will be available to 
+                  everyone for complete transparency.
                 </p>
                 <ul className="space-y-2 text-sm">
                   <li>• Platform fee income from transactions</li>

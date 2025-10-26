@@ -23,25 +23,11 @@ export const metadata: Metadata = {
   },
 }
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  // Get user profile for role
-  let userRole = null
-  if (user) {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single()
-    userRole = profile?.role
-  }
-
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -60,7 +46,7 @@ export default async function RootLayout({
         </Script>
       </head>
       <body suppressHydrationWarning>
-        <Navigation user={user ? { id: user.id, role: userRole || "customer" } : null} />
+        <Navigation />
         <main>
           {children}
         </main>
