@@ -1,9 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCategoryBySubdomain } from '@/config/service-categories'
 
+// Simple in-memory rate limiting
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>()
+const RATE_LIMIT = 100 // requests per window
+const WINDOW_MS = 60 * 1000 // 1 minute
+
+function rateLimit(ip: string): boolean {
+  const now = Date.now()
+  const key = ip
+  const record = rateLimitMap.get(key)
+  
+  if (!record || now > record.resetTime) {
+    rateLimitMap.set(key, { count: 1, resetTime: now + WINDOW_MS })
+    return true
+  }
+  
+  if (record.count >= RATE_LIMIT) {
+    return false
+  }
+  
+  record.count++
+  return true
+}
+
 export async function middleware(request: NextRequest) {
   const url = request.nextUrl.clone()
   const hostname = request.headers.get('host') || ''
+  const ip = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || 'unknown'
+  
+  // Rate limiting
+  if (!rateLimit(ip)) {
+    console.log(`Rate limit exceeded for IP: ${ip}, URL: ${request.url}`)
+    return new NextResponse('Too Many Requests', { status: 429 })
+  }
+  
+  // Block suspicious CSV/JSON requests
+  if (url.pathname.includes('.csv') || url.pathname.includes('.json')) {
+    console.log(`Blocked suspicious request: ${request.url} from IP: ${ip}`)
+    return new NextResponse('Not Found', { status: 404 })
+  }
   
   // Extract subdomain from hostname
   const subdomain = hostname.split('.')[0]
@@ -18,6 +54,12 @@ export async function middleware(request: NextRequest) {
     response.headers.set('x-service-category-name', category.name)
     response.headers.set('x-service-category-subdomain', category.subdomain)
     
+    // Add security headers
+    response.headers.set('X-Frame-Options', 'DENY')
+    response.headers.set('X-Content-Type-Options', 'nosniff')
+    response.headers.set('Referrer-Policy', 'origin-when-cross-origin')
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow')
+    
     // Redirect to the main domain with category parameter for now
     // In production, you'd want to handle this differently
     if (process.env.NODE_ENV === 'development') {
@@ -29,8 +71,13 @@ export async function middleware(request: NextRequest) {
     return response
   }
   
-  // For main domain, pass through normally
-  return NextResponse.next()
+  // For main domain, pass through normally with security headers
+  const response = NextResponse.next()
+  response.headers.set('X-Frame-Options', 'DENY')
+  response.headers.set('X-Content-Type-Options', 'nosniff')
+  response.headers.set('Referrer-Policy', 'origin-when-cross-origin')
+  response.headers.set('X-Robots-Tag', 'noindex, nofollow')
+  return response
 }
 
 export const config = {
