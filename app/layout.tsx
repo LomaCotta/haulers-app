@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import "./globals.css"
 import { Navigation } from "@/components/navigation"
 import { createClient } from "@/lib/supabase/server"
+import Script from "next/script"
 
 export const metadata: Metadata = {
   title: "Haulers.app - Transparent Moving & Hauling Services",
@@ -43,6 +44,21 @@ export default async function RootLayout({
 
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Google Analytics */}
+        <Script
+          src="https://www.googletagmanager.com/gtag/js?id=G-PWSR301L6D"
+          strategy="afterInteractive"
+        />
+        <Script id="google-analytics" strategy="afterInteractive">
+          {`
+            window.dataLayer = window.dataLayer || [];
+            function gtag(){dataLayer.push(arguments);}
+            gtag('js', new Date());
+            gtag('config', 'G-PWSR301L6D');
+          `}
+        </Script>
+      </head>
       <body suppressHydrationWarning>
         <Navigation user={user ? { id: user.id, role: userRole || "customer" } : null} />
         <main>
