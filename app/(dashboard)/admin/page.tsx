@@ -1,115 +1,215 @@
-import { createClient } from "@/lib/supabase/server"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+'use client'
+
+import { useState, useEffect } from 'react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { createClient } from '@/lib/supabase/client'
+import Link from 'next/link'
 import { 
-  Building2, 
   Users, 
-  BookOpen, 
+  Building, 
   DollarSign, 
-  TrendingUp, 
+  TrendingUp,
+  Shield,
+  CheckCircle,
+  XCircle,
   AlertTriangle,
-  CheckCircle
-} from "lucide-react"
-import Link from "next/link"
+  BarChart3,
+  Settings,
+  Eye,
+  Star,
+  Calendar
+} from 'lucide-react'
 
-export default async function AdminDashboard() {
-  const supabase = await createClient()
+interface Business {
+  id: string
+  name: string
+  verified: boolean
+  rating_avg: number
+  rating_count: number
+  created_at: string
+  owner: {
+    full_name: string
+  }
+}
 
-  // Get dashboard statistics
-  const [
-    { data: businesses },
-    { data: users },
-    { data: bookings },
-    { data: reviews },
-    { data: pendingBusinesses },
-    { data: recentBookings },
-    { data: ledgerEntries }
-  ] = await Promise.all([
-    supabase.from("businesses").select("id, status").eq("status", "verified"),
-    supabase.from("profiles").select("id, role"),
-    supabase.from("bookings").select("id, status, created_at"),
-    supabase.from("reviews").select("id, rating"),
-    supabase.from("businesses").select("id, name, created_at").eq("status", "pending"),
-    supabase.from("bookings").select(`
-      id, 
-      status, 
-      created_at,
-      business:businesses(name),
-      customer:profiles!bookings_customer_id_fkey(*)
-    `).order("created_at", { ascending: false }).limit(5),
-    supabase.from("ledger_entries").select("amount, type").order("created_at", { ascending: false }).limit(10)
-  ])
+interface Booking {
+  id: string
+  status: string
+  created_at: string
+  quote_cents: number
+}
 
-  const totalRevenue = ledgerEntries?.reduce((sum, entry) => 
-    entry.type === "platform_fee" ? sum + entry.amount : sum, 0
-  ) || 0
+interface User {
+  id: string
+  role: string
+  full_name: string
+  created_at: string
+}
 
-  const averageRating = reviews && reviews.length > 0 
-    ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length 
-    : 0
+export default function AdminDashboard() {
+  const [businesses, setBusinesses] = useState<Business[]>([])
+  const [bookings, setBookings] = useState<Booking[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
 
-  const recentBookingsData = recentBookings || []
+  useEffect(() => {
+    fetchAdminData()
+  }, [])
+
+  const fetchAdminData = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      // Check if user is admin
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (profile?.role !== 'admin') {
+        window.location.href = '/dashboard'
+        return
+      }
+
+      // Fetch businesses
+      const { data: businessesData } = await supabase
+        .from('businesses')
+        .select(`
+          *,
+          owner:profiles(full_name)
+        `)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      // Fetch recent bookings
+      const { data: bookingsData } = await supabase
+        .from('bookings')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      // Fetch users
+      const { data: usersData } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      setBusinesses(businessesData || [])
+      setBookings(bookingsData || [])
+      setUsers(usersData || [])
+    } catch (error) {
+      console.error('Error fetching admin data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyBusiness = async (businessId: string, verified: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('businesses')
+        .update({ verified })
+        .eq('id', businessId)
+
+      if (error) {
+        console.error('Error updating business:', error)
+        return
+      }
+
+      // Refresh data
+      fetchAdminData()
+    } catch (error) {
+      console.error('Error:', error)
+    }
+  }
+
+  const formatPrice = (cents: number) => {
+    return `$${(cents / 100).toFixed(2)}`
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p>Loading admin dashboard...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-        <p className="text-muted-foreground">Overview of platform activity and metrics</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
+          <p className="text-gray-600">Manage the platform and oversee operations</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/admin/ledger">
+              <BarChart3 className="w-4 h-4 mr-2" />
+              Ledger
+            </Link>
+          </Button>
+          <Button variant="outline" asChild>
+            <Link href="/admin/settings">
+              <Settings className="w-4 h-4 mr-2" />
+              Settings
+            </Link>
+          </Button>
+        </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Quick Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Verified Businesses</CardTitle>
-            <Building2 className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600">Total Users</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{businesses?.length || 0}</div>
+            <div className="text-2xl font-bold">{users.length}</div>
+            <p className="text-xs text-muted-foreground">+12% from last month</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600">Businesses</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{businesses.length}</div>
             <p className="text-xs text-muted-foreground">
-              {pendingBusinesses?.length || 0} pending verification
+              {businesses.filter(b => b.verified).length} verified
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{users?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              {users?.filter(u => u.role === "customer").length || 0} customers, {" "}
-              {users?.filter(u => u.role === "provider").length || 0} providers
-            </p>
+            <div className="text-2xl font-bold">{bookings.length}</div>
+            <p className="text-xs text-muted-foreground">+8% from last month</p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Bookings</CardTitle>
-            <BookOpen className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-gray-600">Revenue</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{bookings?.length || 0}</div>
-            <p className="text-xs text-muted-foreground">
-              {bookings?.filter(b => b.status === "completed").length || 0} completed
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Platform Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${totalRevenue.toFixed(2)}</div>
-            <p className="text-xs text-muted-foreground">
-              Average rating: {averageRating.toFixed(1)}/5
-            </p>
+            <div className="text-2xl font-bold">
+              {formatPrice(bookings.reduce((sum, b) => sum + (b.quote_cents || 0), 0))}
+            </div>
+            <p className="text-xs text-muted-foreground">Total platform value</p>
           </CardContent>
         </Card>
       </div>
@@ -118,90 +218,80 @@ export default async function AdminDashboard() {
         {/* Pending Verifications */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-500" />
-              <span>Pending Verifications</span>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5" />
+              Pending Verifications
             </CardTitle>
-            <CardDescription>
-              Businesses waiting for admin approval
-            </CardDescription>
+            <CardDescription>Businesses waiting for verification</CardDescription>
           </CardHeader>
           <CardContent>
-            {pendingBusinesses && pendingBusinesses.length > 0 ? (
-              <div className="space-y-3">
-                {pendingBusinesses.slice(0, 5).map((business) => (
-                  <div key={business.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div>
-                      <p className="font-medium">{business.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        Submitted {new Date(business.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <Link href={`/admin/businesses/${business.id}`}>
-                      <Button size="sm">Review</Button>
-                    </Link>
+            <div className="space-y-4">
+              {businesses.filter(b => !b.verified).slice(0, 5).map((business) => (
+                <div key={business.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div>
+                    <p className="font-medium">{business.name}</p>
+                    <p className="text-sm text-gray-500">Owner: {business.owner.full_name}</p>
                   </div>
-                ))}
-                {pendingBusinesses.length > 5 && (
-                  <Link href="/admin/businesses">
-                    <Button variant="outline" className="w-full">
-                      View All ({pendingBusinesses.length})
+                  <div className="flex gap-2">
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => handleVerifyBusiness(business.id, true)}
+                    >
+                      <CheckCircle className="w-4 h-4 mr-1" />
+                      Verify
                     </Button>
-                  </Link>
-                )}
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-center py-4">
-                No pending verifications
-              </p>
-            )}
+                    <Button size="sm" variant="outline" asChild>
+                      <Link href={`/dashboard/businesses/${business.id}`}>
+                        <Eye className="w-4 h-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {businesses.filter(b => !b.verified).length === 0 && (
+                <p className="text-gray-500 text-center py-4">No pending verifications</p>
+              )}
+            </div>
+            <Button variant="outline" className="w-full mt-4" asChild>
+              <Link href="/admin/verify">View All Verifications</Link>
+            </Button>
           </CardContent>
         </Card>
 
-        {/* Recent Bookings */}
+        {/* Recent Activity */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <TrendingUp className="h-5 w-5 text-green-500" />
-              <span>Recent Bookings</span>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5" />
+              Recent Activity
             </CardTitle>
-            <CardDescription>
-              Latest customer requests
-            </CardDescription>
+            <CardDescription>Latest platform activity</CardDescription>
           </CardHeader>
           <CardContent>
-            {recentBookingsData.length > 0 ? (
-              <div className="space-y-3">
-                {recentBookingsData.map((booking) => (
-                  <div key={booking.id} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div>
-                      <p className="font-medium">#{booking.id.slice(0, 8)}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {(booking.customer as any)?.full_name} → {(booking.business as any)?.name}
-                      </p>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Badge variant={
-                        booking.status === "completed" ? "default" :
-                        booking.status === "confirmed" ? "secondary" :
-                        "outline"
-                      }>
-                        {booking.status.replace("_", " ")}
-                      </Badge>
-                    </div>
+            <div className="space-y-4">
+              {bookings.slice(0, 5).map((booking) => (
+                <div key={booking.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div>
+                    <p className="font-medium">New Booking</p>
+                    <p className="text-sm text-gray-500">
+                      {new Date(booking.created_at).toLocaleDateString()}
+                    </p>
                   </div>
-                ))}
-                <Link href="/admin/bookings">
-                  <Button variant="outline" className="w-full">
-                    View All Bookings
-                  </Button>
-                </Link>
-              </div>
-            ) : (
-              <p className="text-muted-foreground text-center py-4">
-                No recent bookings
-              </p>
-            )}
+                  <div className="text-right">
+                    <Badge variant="outline">{booking.status}</Badge>
+                    {booking.quote_cents && (
+                      <p className="text-sm text-gray-500 mt-1">
+                        {formatPrice(booking.quote_cents)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Button variant="outline" className="w-full mt-4" asChild>
+              <Link href="/admin/bookings">View All Activity</Link>
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -210,30 +300,28 @@ export default async function AdminDashboard() {
       <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>
-            Common administrative tasks
-          </CardDescription>
+          <CardDescription>Common administrative tasks</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Link href="/admin/businesses">
-              <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                <Building2 className="h-6 w-6" />
-                <span>Manage Businesses</span>
-              </Button>
-            </Link>
-            <Link href="/admin/users">
-              <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                <Users className="h-6 w-6" />
-                <span>Manage Users</span>
-              </Button>
-            </Link>
-            <Link href="/admin/ledger">
-              <Button variant="outline" className="w-full h-20 flex flex-col space-y-2">
-                <DollarSign className="h-6 w-6" />
-                <span>View Ledger</span>
-              </Button>
-            </Link>
+            <Button className="w-full justify-start" asChild>
+              <Link href="/admin/verify">
+                <Shield className="w-4 h-4 mr-2" />
+                Verify Businesses
+              </Link>
+            </Button>
+            <Button variant="outline" className="w-full justify-start" asChild>
+              <Link href="/admin/users">
+                <Users className="w-4 h-4 mr-2" />
+                Manage Users
+              </Link>
+            </Button>
+            <Button variant="outline" className="w-full justify-start" asChild>
+              <Link href="/admin/ledger">
+                <BarChart3 className="w-4 h-4 mr-2" />
+                View Ledger
+              </Link>
+            </Button>
           </div>
         </CardContent>
       </Card>

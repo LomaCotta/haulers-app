@@ -12,7 +12,7 @@ async function runMigration() {
   
   try {
     // Read the migration file
-    const migrationPath = join(process.cwd(), 'db', 'migrations', '001_init.sql')
+    const migrationPath = join(process.cwd(), 'db', 'migrations', '002_add_phone_and_service_type.sql')
     const migrationSQL = readFileSync(migrationPath, 'utf8')
     
     // Execute the migration

@@ -2,59 +2,23 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
+import { Button } from '@/components/ui/button'
 import { createClient } from '@/lib/supabase/client'
-import { User, Building, MapPin, Phone } from 'lucide-react'
+import { CheckCircle, AlertCircle, User } from 'lucide-react'
 
 export default function OnboardingPage() {
-  const [profile, setProfile] = useState({
-    full_name: '',
-    phone: '',
-    avatar_url: '',
-  })
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState<any>(null)
   const [error, setError] = useState('')
-  
   const router = useRouter()
   const supabase = createClient()
 
   useEffect(() => {
-    // Get current user and profile
-    const getUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        router.push('/auth/signin')
-        return
-      }
+    checkProfile()
+  }, [])
 
-      // Get existing profile
-      const { data: existingProfile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .single()
-
-      if (existingProfile) {
-        setProfile({
-          full_name: existingProfile.full_name || '',
-          phone: existingProfile.phone || '',
-          avatar_url: existingProfile.avatar_url || '',
-        })
-      }
-    }
-
-    getUser()
-  }, [router, supabase])
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-
+  const checkProfile = async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) {
@@ -62,101 +26,99 @@ export default function OnboardingPage() {
         return
       }
 
-      // Update profile
-      const { error: profileError } = await supabase
+      const { data: profileData } = await supabase
         .from('profiles')
-        .update({
-          full_name: profile.full_name,
-          phone: profile.phone,
-          avatar_url: profile.avatar_url,
-        })
-        .eq('id', user.id)
-
-      if (profileError) {
-        setError('Failed to update profile: ' + profileError.message)
-        return
-      }
-
-      // Redirect based on role
-      const { data: userProfile } = await supabase
-        .from('profiles')
-        .select('role')
+        .select('*')
         .eq('id', user.id)
         .single()
 
-      if (userProfile?.role === 'provider') {
-        router.push('/dashboard/businesses')
-      } else {
-        router.push('/dashboard')
+      if (profileData) {
+        setProfile(profileData)
+        // Redirect based on role
+        if (profileData.role === 'provider') {
+          router.push('/dashboard/businesses')
+        } else if (profileData.role === 'consumer') {
+          router.push('/dashboard/bookings')
+        } else if (profileData.role === 'admin') {
+          router.push('/admin')
+        }
       }
-    } catch (err) {
-      setError('An unexpected error occurred')
+    } catch (error) {
+      console.error('Error checking profile:', error)
+      setError('Error loading your profile')
     } finally {
       setLoading(false)
     }
   }
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <Card>
-          <CardHeader className="text-center">
-            <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <span className="text-white font-bold text-xl">H</span>
-            </div>
-            <CardTitle className="text-2xl">Complete your profile</CardTitle>
-            <CardDescription>
-              Help us personalize your experience
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="fullName">Full Name</Label>
-                <Input
-                  id="fullName"
-                  type="text"
-                  value={profile.full_name}
-                  onChange={(e) => setProfile({ ...profile, full_name: e.target.value })}
-                  required
-                />
-              </div>
+  const createProfile = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
 
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input
-                  id="phone"
-                  type="tel"
-                  value={profile.phone}
-                  onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                  placeholder="+1 (555) 123-4567"
-                />
-              </div>
+      // Create a basic consumer profile
+      const { error } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          role: 'consumer',
+          full_name: user.user_metadata?.full_name || 'User',
+        })
 
-              <div className="space-y-2">
-                <Label htmlFor="avatar">Avatar URL (optional)</Label>
-                <Input
-                  id="avatar"
-                  type="url"
-                  value={profile.avatar_url}
-                  onChange={(e) => setProfile({ ...profile, avatar_url: e.target.value })}
-                  placeholder="https://example.com/avatar.jpg"
-                />
-              </div>
+      if (error) {
+        setError('Failed to create profile: ' + error.message)
+        return
+      }
 
-              {error && (
-                <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
-                  {error}
-                </div>
-              )}
+      // Redirect to consumer dashboard
+      router.push('/dashboard/bookings')
+    } catch (error) {
+      setError('An unexpected error occurred')
+    }
+  }
 
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Saving...' : 'Complete setup'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
       </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <div className="w-12 h-12 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center mx-auto mb-4">
+            <User className="w-6 h-6 text-white" />
+          </div>
+          <CardTitle className="text-2xl font-bold text-gray-900">Welcome!</CardTitle>
+          <CardDescription className="text-gray-600">
+            Let's set up your profile
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {error ? (
+            <div className="flex items-center gap-2 text-red-600">
+              <AlertCircle className="w-5 h-5" />
+              <span>{error}</span>
+            </div>
+          ) : (
+            <div className="text-center space-y-4">
+              <p className="text-gray-600">
+                It looks like your profile wasn't created properly. Let's fix that!
+              </p>
+              <Button onClick={createProfile} className="w-full">
+                <CheckCircle className="w-4 h-4 mr-2" />
+                Create My Profile
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

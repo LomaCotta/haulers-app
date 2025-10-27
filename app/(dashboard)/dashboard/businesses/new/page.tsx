@@ -7,27 +7,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { createClient } from '@/lib/supabase/client'
-import { ArrowLeft, Building, MapPin, DollarSign } from 'lucide-react'
+import { SERVICE_CATEGORIES } from '@/config/service-categories'
+import { ArrowLeft, Building, MapPin, Phone } from 'lucide-react'
 import Link from 'next/link'
-
-const serviceTypes = [
-  { id: 'moving', label: 'Moving Services' },
-  { id: 'junk_haul', label: 'Junk Haul' },
-  { id: 'packing', label: 'Packing Services' },
-  { id: 'piano', label: 'Piano Moving' },
-  { id: 'storage', label: 'Storage Solutions' },
-  { id: 'cleaning', label: 'Cleaning Services' },
-]
 
 export default function NewBusinessPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    base_rate_cents: '',
-    hourly_rate_cents: '',
-    service_types: [] as string[],
+    phone: '',
+    service_type: '',
     address: '',
     city: '',
     state: '',
@@ -59,9 +50,8 @@ export default function NewBusinessPage() {
           owner_id: user.id,
           name: formData.name,
           description: formData.description,
-          base_rate_cents: formData.base_rate_cents ? parseInt(formData.base_rate_cents) * 100 : null,
-          hourly_rate_cents: formData.hourly_rate_cents ? parseInt(formData.hourly_rate_cents) * 100 : null,
-          service_types: formData.service_types,
+          phone: formData.phone,
+          service_type: formData.service_type,
           address: formData.address,
           city: formData.city,
           state: formData.state,
@@ -76,8 +66,8 @@ export default function NewBusinessPage() {
         return
       }
 
-      // Redirect to business details
-      router.push(`/dashboard/businesses/${data.id}`)
+      // Redirect to businesses list
+      router.push('/dashboard/businesses')
     } catch (err) {
       setError('An unexpected error occurred')
     } finally {
@@ -85,19 +75,6 @@ export default function NewBusinessPage() {
     }
   }
 
-  const handleServiceTypeChange = (serviceId: string, checked: boolean) => {
-    if (checked) {
-      setFormData({
-        ...formData,
-        service_types: [...formData.service_types, serviceId]
-      })
-    } else {
-      setFormData({
-        ...formData,
-        service_types: formData.service_types.filter(id => id !== serviceId)
-      })
-    }
-  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -145,53 +122,39 @@ export default function NewBusinessPage() {
                   rows={3}
                 />
               </div>
-            </div>
 
-            {/* Service Types */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Service Types</h3>
-              <div className="grid grid-cols-2 gap-3">
-                {serviceTypes.map((type) => (
-                  <div key={type.id} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={type.id}
-                      checked={formData.service_types.includes(type.id)}
-                      onCheckedChange={(checked) => handleServiceTypeChange(type.id, !!checked)}
-                    />
-                    <Label htmlFor={type.id} className="text-sm">
-                      {type.label}
-                    </Label>
-                  </div>
-                ))}
+              <div className="space-y-2">
+                <Label htmlFor="phone">Phone Number</Label>
+                <Input
+                  id="phone"
+                  type="tel"
+                  value={formData.phone}
+                  onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  placeholder="(555) 123-4567"
+                />
               </div>
             </div>
 
-            {/* Pricing */}
+            {/* Service Type */}
             <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Pricing</h3>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="base_rate">Base Rate ($)</Label>
-                  <Input
-                    id="base_rate"
-                    type="number"
-                    value={formData.base_rate_cents}
-                    onChange={(e) => setFormData({ ...formData, base_rate_cents: e.target.value })}
-                    placeholder="100"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="hourly_rate">Hourly Rate ($)</Label>
-                  <Input
-                    id="hourly_rate"
-                    type="number"
-                    value={formData.hourly_rate_cents}
-                    onChange={(e) => setFormData({ ...formData, hourly_rate_cents: e.target.value })}
-                    placeholder="75"
-                  />
-                </div>
+              <h3 className="text-lg font-semibold">Service Type</h3>
+              <div className="space-y-2">
+                <Label htmlFor="service_type">Select Service Category *</Label>
+                <Select value={formData.service_type} onValueChange={(value) => setFormData({ ...formData, service_type: value })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose your service category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SERVICE_CATEGORIES.map((category) => (
+                      <SelectItem key={category.id} value={category.id}>
+                        <div className="flex items-center space-x-2">
+                          <span>{category.icon}</span>
+                          <span>{category.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 

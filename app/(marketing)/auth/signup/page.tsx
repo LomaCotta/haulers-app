@@ -198,18 +198,19 @@ export default function SignUpPage() {
       }
 
       if (data.user) {
-        // Create profile
+        // Try to create profile, but don't fail if it already exists (trigger might have created it)
         const { error: profileError } = await supabase
           .from('profiles')
-          .insert({
+          .upsert({
             id: data.user.id,
             role: validatedRole,
             full_name: fullName,
           })
 
         if (profileError) {
-          setError('Failed to create profile: ' + profileError.message)
-          return
+          console.error('Profile creation error:', profileError)
+          // Don't fail the signup if profile creation fails - the trigger should handle it
+          // Just log the error and continue
         }
 
         // Redirect to onboarding

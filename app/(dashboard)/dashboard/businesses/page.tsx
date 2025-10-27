@@ -34,6 +34,7 @@ interface Business {
 export default function BusinessesPage() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [loading, setLoading] = useState(true)
+  const [userRole, setUserRole] = useState<string>('')
   const supabase = createClient()
 
   useEffect(() => {
@@ -44,6 +45,17 @@ export default function BusinessesPage() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+
+      // Get user's role
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+
+      if (profile) {
+        setUserRole(profile.role)
+      }
 
       const { data, error } = await supabase
         .from('businesses')
@@ -188,15 +200,18 @@ export default function BusinessesPage() {
                         Edit
                       </Link>
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="outline" 
-                      onClick={() => handleDeleteBusiness(business.id)}
-                      className="text-red-600 hover:text-red-700"
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Delete
-                    </Button>
+                    {/* Only admins can delete businesses */}
+                    {userRole === 'admin' && (
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        onClick={() => handleDeleteBusiness(business.id)}
+                        className="text-red-600 hover:text-red-700"
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Delete
+                      </Button>
+                    )}
                   </div>
                 </div>
               </CardContent>

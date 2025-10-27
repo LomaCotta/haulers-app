@@ -73,7 +73,24 @@ export default function DashboardLayout({
   }
 
   if (!profile) {
-    return null
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 mb-4">Loading your profile...</p>
+          <p className="text-sm text-gray-500">
+            If this takes too long, you may not be logged in.
+          </p>
+          <Button 
+            variant="outline" 
+            className="mt-4"
+            onClick={() => window.location.href = '/auth/signin'}
+          >
+            Go to Sign In
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   const navigation = [
@@ -85,12 +102,12 @@ export default function DashboardLayout({
     ] : []),
     ...(profile.role === 'consumer' ? [
       { name: 'My Bookings', href: '/dashboard/bookings', icon: Calendar },
-      { name: 'Messages', href: '/dashboard/messages', icon: MessageSquare },
     ] : []),
     ...(profile.role === 'admin' ? [
       { name: 'Verify Providers', href: '/admin/verify', icon: Building },
       { name: 'Ledger', href: '/admin/ledger', icon: Star },
     ] : []),
+    { name: 'Messages', href: '/dashboard/messages', icon: MessageSquare },
     { name: 'Settings', href: '/dashboard/settings', icon: Settings },
   ]
 
@@ -117,7 +134,6 @@ export default function DashboardLayout({
               </div>
               <div>
                 <p className="font-medium text-gray-900">{profile.full_name}</p>
-                <p className="text-sm text-gray-500 capitalize">{profile.role}</p>
               </div>
             </div>
 
