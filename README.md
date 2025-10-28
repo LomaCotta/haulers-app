@@ -4,7 +4,7 @@ A nonprofit, transparent directory and marketplace for local moving and hauling 
 
 ## Features
 
-- **Transparent Marketplace**: Low platform fees (2.5% max) with public financial reporting
+- **Transparent Marketplace**: Low platform fees with public financial reporting
 - **Role-based Access**: Consumers, providers, and admin roles with appropriate permissions
 - **Business Management**: Complete CRUD for business profiles with verification
 - **Discovery & Search**: Full-text search with filters, map integration, and distance-based results

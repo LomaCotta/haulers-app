@@ -186,8 +186,8 @@ export default function PricingPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-center mb-6">
-                  <div className="text-4xl font-bold text-green-600 mb-2">2.5%</div>
-                  <p className="text-gray-600">Maximum platform fee</p>
+                  <div className="text-4xl font-bold text-green-600 mb-2">Low Fees</div>
+                  <p className="text-gray-600">Minimal platform fees</p>
                 </div>
                 <ul className="space-y-3">
                   <li className="flex items-center">
@@ -281,10 +281,10 @@ export default function PricingPage() {
                   <tbody>
                     <tr className="border-b">
                       <td className="py-4 px-4 font-medium">Haulers.app</td>
-                      <td className="text-center py-4 px-4 text-green-600 font-bold">2.5%</td>
+                      <td className="text-center py-4 px-4 text-green-600 font-bold">Low</td>
                       <td className="text-center py-4 px-4">2.9%</td>
                       <td className="text-center py-4 px-4 text-green-600 font-bold">$0</td>
-                      <td className="text-center py-4 px-4 text-green-600 font-bold">5.4%</td>
+                      <td className="text-center py-4 px-4 text-green-600 font-bold">Minimal</td>
                     </tr>
                     <tr className="border-b">
                       <td className="py-4 px-4">TaskRabbit</td>
@@ -336,7 +336,7 @@ export default function PricingPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-gray-600">
-                  We generate revenue through our small platform fees (2.5% max) and optional user donations. 
+                  We generate revenue through our small platform fees and optional user donations. 
                   All revenue is transparently reported in our monthly ledgers, with the majority reinvested 
                   in community programs and infrastructure.
                 </p>
@@ -349,7 +349,7 @@ export default function PricingPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-gray-600">
-                  No hidden fees whatsoever. The only costs are our transparent platform fee (2.5% max) and 
+                  No hidden fees whatsoever. The only costs are our transparent platform fees and 
                   Stripe's payment processing fee (2.9%). Everything else is clearly disclosed upfront.
                 </p>
               </CardContent>

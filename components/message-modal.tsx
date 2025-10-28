@@ -61,12 +61,20 @@ export default function MessageModal({
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
+
+  const addEmoji = (emoji: string) => {
+    setMessage(prev => prev + emoji)
+    setShowEmojiPicker(false)
+  }
+
+  const commonEmojis = ['😀', '😂', '😍', '🤔', '👍', '👎', '❤️', '🎉', '🔥', '💯', '😊', '😢', '😮', '😡', '🤗', '👏']
 
   useEffect(() => {
     if (isOpen) {
@@ -77,6 +85,23 @@ export default function MessageModal({
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showEmojiPicker) {
+        const target = event.target as HTMLElement
+        if (!target.closest('.emoji-picker-container')) {
+          setShowEmojiPicker(false)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showEmojiPicker])
 
   const fetchMessages = async () => {
     try {
@@ -89,9 +114,10 @@ export default function MessageModal({
         .from('messages')
         .select(`
           *,
-          sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url)
+          sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url),
+          recipient:profiles!messages_recipient_id_fkey(id, full_name, avatar_url)
         `)
-        .or(`and(sender_id.eq.${user.id},body.ilike.%${recipientId}%),and(sender_id.eq.${recipientId},body.ilike.%${user.id}%)`)
+        .or(`and(sender_id.eq.${user.id},recipient_id.eq.${recipientId}),and(sender_id.eq.${recipientId},recipient_id.eq.${user.id})`)
         .order('created_at', { ascending: true })
 
       if (error) {
@@ -116,17 +142,20 @@ export default function MessageModal({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
+      // Send message to the recipient
       const { data: newMessage, error } = await supabase
         .from('messages')
         .insert({
           sender_id: user.id,
+          recipient_id: recipientId,
           body: message.trim(),
           message_type: 'general',
           is_read: false
         })
         .select(`
           *,
-          sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url)
+          sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url),
+          recipient:profiles!messages_recipient_id_fkey(id, full_name, avatar_url)
         `)
         .single()
 
@@ -199,9 +228,6 @@ export default function MessageModal({
                 <MessageSquare className="w-3 h-3 mr-1" />
                 {messages.length} messages
               </Badge>
-              <Button variant="ghost" size="sm" onClick={onClose}>
-                <X className="w-4 h-4" />
-              </Button>
             </div>
           </div>
         </DialogHeader>
@@ -282,23 +308,35 @@ export default function MessageModal({
                 }}
               />
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 relative">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="text-gray-500 hover:text-gray-700"
-              >
-                <Paperclip className="w-4 h-4" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="text-gray-500 hover:text-gray-700"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
               >
                 <Smile className="w-4 h-4" />
               </Button>
+              
+              {/* Emoji Picker */}
+              {showEmojiPicker && (
+                <div className="absolute bottom-12 left-0 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-10 emoji-picker-container">
+                  <div className="grid grid-cols-4 gap-2">
+                    {commonEmojis.map((emoji, index) => (
+                      <button
+                        key={index}
+                        type="button"
+                        className="w-8 h-8 flex items-center justify-center hover:bg-gray-100 rounded text-lg"
+                        onClick={() => addEmoji(emoji)}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
               <Button
                 type="submit"
                 disabled={!message.trim() || sending}

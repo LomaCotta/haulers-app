@@ -35,6 +35,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
+import { createClient } from "@/lib/supabase/client"
 
 interface Business {
   id: string
@@ -90,16 +91,18 @@ interface Review {
 }
 
 export default function BusinessDetailPage({ params }: { params: Promise<{ slug: string }> }) {
-  const [slug, setSlug] = useState<string>('')
+  const [businessId, setBusinessId] = useState<string>('')
   
   useEffect(() => {
-    params.then(({ slug }) => setSlug(slug))
+    params.then(({ slug }) => setBusinessId(slug))
   }, [params])
+  
   const [business, setBusiness] = useState<Business | null>(null)
   const [reviews, setReviews] = useState<Review[]>([])
   const [loading, setLoading] = useState(true)
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const [showContactForm, setShowContactForm] = useState(false)
+  const [isBookingForm, setIsBookingForm] = useState(false)
   const [contactForm, setContactForm] = useState({
     name: '',
     email: '',
@@ -108,6 +111,8 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
     service_type: '',
     preferred_date: ''
   })
+  
+  const supabase = createClient()
 
   // Mock data - in production, this would come from API
   const mockBusiness: Business = {
@@ -210,13 +215,115 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
   ]
 
   useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      setBusiness(mockBusiness)
-      setReviews(mockReviews)
-      setLoading(false)
-    }, 1000)
-  }, [slug])
+    const fetchBusiness = async () => {
+      if (!businessId) return
+      
+      try {
+        setLoading(true)
+        
+        // Fetch business data from database
+        const { data: businessData, error } = await supabase
+          .from('businesses')
+          .select(`
+            *,
+            owner:profiles!businesses_owner_id_fkey(id, full_name)
+          `)
+          .eq('id', businessId)
+          .eq('verified', true)
+          .single()
+
+        if (error) {
+          console.error('Error fetching business:', error)
+          setBusiness(null)
+          return
+        }
+
+        if (businessData) {
+          // Fetch real reviews for this business
+          const { data: reviewsData, error: reviewsError } = await supabase
+            .from('reviews')
+            .select(`
+              *,
+              consumer:profiles!reviews_consumer_id_fkey(id, full_name)
+            `)
+            .eq('business_id', businessId)
+            .order('created_at', { ascending: false })
+
+          if (reviewsError) {
+            console.error('Error fetching reviews:', reviewsError)
+          }
+
+          // Transform reviews data
+          const transformedReviews: Review[] = (reviewsData || []).map(review => ({
+            id: review.id,
+            user_name: review.consumer?.full_name || 'Anonymous',
+            user_avatar: undefined,
+            rating: review.rating,
+            comment: review.body || '',
+            date: new Date(review.created_at).toLocaleDateString(),
+            helpful: 0, // Not implemented yet
+            verified: true // Reviews are from completed bookings
+          }))
+
+          // Calculate real rating stats
+          const totalReviews = transformedReviews.length
+          const avgRating = totalReviews > 0 
+            ? transformedReviews.reduce((sum, review) => sum + review.rating, 0) / totalReviews 
+            : 0
+
+          // Transform database data to match interface
+          const transformedBusiness: Business = {
+            id: businessData.id,
+            name: businessData.name,
+            description: businessData.description,
+            rating_avg: avgRating,
+            rating_count: totalReviews,
+            verified: businessData.verified,
+            base_rate_cents: businessData.base_rate_cents || 0,
+            hourly_rate_cents: businessData.hourly_rate_cents || 0,
+            service_types: businessData.service_type ? [businessData.service_type] : [],
+            city: businessData.city || '',
+            state: businessData.state || '',
+            address: businessData.address || '',
+            phone: businessData.phone,
+            email: businessData.email,
+            website: businessData.website,
+            // Add default values for fields not in database yet
+            distance_km: 0,
+            image_url: undefined,
+            availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+            specialties: [],
+            years_experience: businessData.years_experience || 0,
+            insurance_verified: businessData.insurance_verified || false,
+            background_checked: businessData.background_checked || false,
+            response_time: 'No info yet',
+            completion_rate: 95,
+            total_jobs: 0,
+            last_active: 'No info yet',
+            languages: businessData.languages_spoken || ['English'],
+            certifications: businessData.certifications || [],
+            awards: [],
+            is_favorite: false,
+            is_bookmarked: false,
+            gallery: [],
+            about: businessData.description,
+            services: businessData.services_offered || [],
+            pricing: []
+          }
+          
+          setBusiness(transformedBusiness)
+          setReviews(transformedReviews)
+        }
+      } catch (error) {
+        console.error('Unexpected error:', error)
+        setBusiness(null)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchBusiness()
+  }, [businessId])
 
   const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(0)}`
@@ -232,6 +339,18 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
     // Handle form submission
     console.log('Contact form submitted:', contactForm)
     setShowContactForm(false)
+  }
+
+  const handleBookNow = () => {
+    // Open the contact form for booking
+    setIsBookingForm(true)
+    setShowContactForm(true)
+  }
+
+  const handleMessage = () => {
+    // Open the contact form for messaging
+    setIsBookingForm(false)
+    setShowContactForm(true)
   }
 
   const toggleFavorite = () => {
@@ -434,8 +553,9 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
                 <CardTitle>Reviews ({business.rating_count})</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {reviews.map((review) => (
+                {reviews.length > 0 ? (
+                  <div className="space-y-4">
+                    {reviews.map((review) => (
                     <div key={review.id} className="border-b pb-4 last:border-b-0">
                       <div className="flex items-start gap-3">
                         <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
@@ -486,6 +606,17 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
                     </div>
                   ))}
                 </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="text-gray-400 mb-2">
+                      <Star className="h-12 w-12 mx-auto" />
+                    </div>
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No reviews yet</h3>
+                    <p className="text-gray-500">
+                      This business hasn't received any reviews yet. Be the first to book and review their services!
+                    </p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -509,29 +640,55 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
                 </div>
 
                 <div className="space-y-2">
-                  <Button className="w-full" size="lg">
+                  <Button className="w-full" size="lg" onClick={handleBookNow}>
                     <Calendar className="h-4 w-4 mr-2" />
                     Book Now
                   </Button>
-                  <Button 
-                    variant="outline" 
-                    className="w-full"
-                    onClick={() => setShowContactForm(true)}
-                  >
-                    <MessageCircle className="h-4 w-4 mr-2" />
-                    Send Message
-                  </Button>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button 
+                      variant="outline" 
+                      className="w-full"
+                      onClick={handleMessage}
+                    >
+                      <MessageCircle className="h-4 w-4 mr-2" />
+                      Message
+                    </Button>
+                    {business.phone && (
+                      <Button 
+                        variant="outline" 
+                        className="w-full"
+                        onClick={() => window.open(`tel:${business.phone}`, '_self')}
+                      >
+                        <Phone className="h-4 w-4 mr-2" />
+                        Call
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="space-y-2 pt-4 border-t">
-                  <div className="flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-gray-400" />
-                    <span className="text-sm">{business.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Mail className="h-4 w-4 text-gray-400" />
-                    <span className="text-sm">{business.email}</span>
-                  </div>
+                  {business.phone && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-gray-400" />
+                      <a 
+                        href={`tel:${business.phone}`}
+                        className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        {business.phone}
+                      </a>
+                    </div>
+                  )}
+                  {business.email && (
+                    <div className="flex items-center gap-2">
+                      <Mail className="h-4 w-4 text-gray-400" />
+                      <a 
+                        href={`mailto:${business.email}`}
+                        className="text-sm text-blue-600 hover:text-blue-800 hover:underline"
+                      >
+                        {business.email}
+                      </a>
+                    </div>
+                  )}
                   {business.website && (
                     <div className="flex items-center gap-2">
                       <Globe className="h-4 w-4 text-gray-400" />
@@ -602,15 +759,21 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Years Experience</span>
-                  <span className="font-medium">{business.years_experience}</span>
+                  <span className="font-medium">
+                    {business.years_experience > 0 ? business.years_experience : 'No info yet'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Completion Rate</span>
-                  <span className="font-medium">{business.completion_rate}%</span>
+                  <span className="font-medium">
+                    {business.completion_rate > 0 ? `${business.completion_rate}%` : 'No info yet'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Total Jobs</span>
-                  <span className="font-medium">{business.total_jobs}</span>
+                  <span className="font-medium">
+                    {business.total_jobs > 0 ? business.total_jobs : 'No info yet'}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-gray-600">Response Time</span>
@@ -631,7 +794,9 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <Card className="w-full max-w-md mx-4">
             <CardHeader>
-              <CardTitle>Contact {business.name}</CardTitle>
+              <CardTitle>
+                {isBookingForm ? `Book ${business.name}` : `Contact ${business.name}`}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleContactSubmit} className="space-y-4">
@@ -692,7 +857,7 @@ export default function BusinessDetailPage({ params }: { params: Promise<{ slug:
                 </div>
                 <div className="flex gap-2">
                   <Button type="submit" className="flex-1">
-                    Send Message
+                    {isBookingForm ? 'Request Booking' : 'Send Message'}
                   </Button>
                   <Button 
                     type="button" 

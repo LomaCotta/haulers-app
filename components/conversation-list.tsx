@@ -66,37 +66,54 @@ export default function ConversationList({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Fetch conversations with other users
+      // Fetch messages where current user is either sender or recipient
       const { data: conversationsData, error } = await supabase
         .from('messages')
         .select(`
+          id,
           sender_id,
+          recipient_id,
           sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url, role),
+          recipient:profiles!messages_recipient_id_fkey(id, full_name, avatar_url, role),
           created_at,
           body,
-          is_read
+          is_read,
+          message_type
         `)
-        .neq('sender_id', user.id)
+        .or(`sender_id.eq.${user.id},recipient_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
+        .limit(100)
 
       if (error) {
         console.error('Error fetching conversations:', error)
         return
       }
 
-      // Group messages by sender to create conversations
+      console.log('Fetched conversations data:', conversationsData)
+      console.log('Current user:', user.id)
+
+      // Group messages by conversation partner to create conversations
       const conversationMap = new Map<string, Conversation>()
       
       conversationsData?.forEach((msg: any) => {
-        const senderId = msg.sender_id
-        if (!conversationMap.has(senderId)) {
-          conversationMap.set(senderId, {
-            id: senderId,
+        // Determine the other user in the conversation
+        const otherUserId = msg.sender_id === user.id ? msg.recipient_id : msg.sender_id
+        const otherUser = msg.sender_id === user.id ? msg.recipient : msg.sender
+        
+        // Skip if we don't have proper user data
+        if (!otherUserId || !otherUser || !otherUser.id) {
+          console.warn('Skipping message with missing user data:', msg)
+          return
+        }
+        
+        if (!conversationMap.has(otherUserId)) {
+          conversationMap.set(otherUserId, {
+            id: otherUserId,
             other_user: {
-              id: msg.sender.id,
-              full_name: msg.sender.full_name,
-              avatar_url: msg.sender.avatar_url,
-              role: msg.sender.role
+              id: otherUser.id,
+              full_name: otherUser.full_name || 'Unknown User',
+              avatar_url: otherUser.avatar_url,
+              role: otherUser.role || 'user'
             },
             unread_count: 0,
             is_pinned: false,
@@ -104,7 +121,7 @@ export default function ConversationList({
           })
         }
         
-        const conversation = conversationMap.get(senderId)!
+        const conversation = conversationMap.get(otherUserId)!
         if (!conversation.last_message || new Date(msg.created_at) > new Date(conversation.last_message.created_at)) {
           conversation.last_message = {
             body: msg.body,
@@ -114,7 +131,8 @@ export default function ConversationList({
           }
         }
         
-        if (!msg.is_read) {
+        // Count unread messages (messages sent TO the current user)
+        if (!msg.is_read && msg.recipient_id === user.id) {
           conversation.unread_count++
         }
       })

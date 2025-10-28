@@ -41,6 +41,7 @@ import {
 } from "lucide-react"
 import { useServiceCategory } from "@/hooks/use-service-category"
 import { SERVICE_CATEGORIES } from "@/config/service-categories"
+import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
 interface Business {
@@ -50,29 +51,40 @@ interface Business {
   rating_avg: number
   rating_count: number
   verified: boolean
-  base_rate_cents: number
-  hourly_rate_cents: number
-  service_types: string[]
+  phone?: string
+  service_type: string
   city: string
   state: string
+  address: string
+  postal_code: string
+  service_radius_km: number
+  created_at: string
+  updated_at: string
+  donation_badge?: boolean
+  owner: {
+    id: string
+    full_name: string
+  }
+  // Legacy fields for compatibility
+  base_rate_cents?: number
+  hourly_rate_cents?: number
+  service_types?: string[]
   distance_km?: number
   image_url?: string
-  phone?: string
   email?: string
   website?: string
-  address: string
-  availability: string[]
-  specialties: string[]
-  years_experience: number
-  insurance_verified: boolean
-  background_checked: boolean
-  response_time: string
-  completion_rate: number
-  total_jobs: number
-  last_active: string
-  languages: string[]
-  certifications: string[]
-  awards: string[]
+  availability?: string[]
+  specialties?: string[]
+  years_experience?: number
+  insurance_verified?: boolean
+  background_checked?: boolean
+  response_time?: string
+  completion_rate?: number
+  total_jobs?: number
+  last_active?: string
+  languages?: string[]
+  certifications?: string[]
+  awards?: string[]
   is_favorite?: boolean
   is_bookmarked?: boolean
 }
@@ -127,116 +139,14 @@ export default function FindPage() {
     service_types: [],
     min_rating: 0,
     max_price: 1000,
-    verified_only: false,
+    verified_only: true, // Default to showing only verified businesses
     max_distance: 50,
     availability: [],
     price_range: [0, 1000],
     sort_by: 'relevance',
     features: []
   })
-
-  // Mock data - in production, this would come from API
-  const mockBusinesses: Business[] = [
-    {
-      id: '1',
-      name: 'Elite Moving Solutions',
-      description: 'Professional moving services with 15+ years experience. Specializing in residential and commercial moves.',
-      rating_avg: 4.8,
-      rating_count: 127,
-      verified: true,
-      base_rate_cents: 8000,
-      hourly_rate_cents: 6000,
-      service_types: ['moving', 'packing'],
-      city: 'Los Angeles',
-      state: 'CA',
-      distance_km: 2.3,
-      image_url: '/images/moving-1.jpg',
-      phone: '(555) 123-4567',
-      email: 'info@elitemoving.com',
-      website: 'https://elitemoving.com',
-      address: '123 Main St, Los Angeles, CA 90210',
-      availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-      specialties: ['Residential Moves', 'Commercial Moves', 'Piano Moving'],
-      years_experience: 15,
-      insurance_verified: true,
-      background_checked: true,
-      response_time: '2 hours',
-      completion_rate: 98,
-      total_jobs: 1250,
-      last_active: '2 hours ago',
-      languages: ['English', 'Spanish'],
-      certifications: ['DOT Licensed', 'BBB A+ Rating'],
-      awards: ['Best Moving Company 2023', 'Customer Choice Award'],
-      is_favorite: false,
-      is_bookmarked: false
-    },
-    {
-      id: '2',
-      name: 'Quick & Clean Movers',
-      description: 'Fast, reliable moving services with eco-friendly packing materials.',
-      rating_avg: 4.6,
-      rating_count: 89,
-      verified: true,
-      base_rate_cents: 6500,
-      hourly_rate_cents: 5000,
-      service_types: ['moving', 'cleaning'],
-      city: 'Beverly Hills',
-      state: 'CA',
-      distance_km: 8.7,
-      image_url: '/images/moving-2.jpg',
-      phone: '(555) 987-6543',
-      email: 'hello@quickclean.com',
-      website: 'https://quickclean.com',
-      address: '456 Oak Ave, Beverly Hills, CA 90210',
-      availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-      specialties: ['Eco-Friendly Moving', 'Quick Moves', 'Cleaning Services'],
-      years_experience: 8,
-      insurance_verified: true,
-      background_checked: true,
-      response_time: '1 hour',
-      completion_rate: 95,
-      total_jobs: 450,
-      last_active: '30 minutes ago',
-      languages: ['English'],
-      certifications: ['Green Certified', 'BBB A+ Rating'],
-      awards: ['Eco-Friendly Award 2023'],
-      is_favorite: false,
-      is_bookmarked: false
-    },
-    {
-      id: '3',
-      name: 'Premium Piano Movers',
-      description: 'Specialized piano moving services with 20+ years of experience.',
-      rating_avg: 4.9,
-      rating_count: 203,
-      verified: true,
-      base_rate_cents: 15000,
-      hourly_rate_cents: 10000,
-      service_types: ['moving', 'piano'],
-      city: 'Santa Monica',
-      state: 'CA',
-      distance_km: 12.1,
-      image_url: '/images/piano-1.jpg',
-      phone: '(555) 456-7890',
-      email: 'piano@premiummovers.com',
-      website: 'https://premiumpianomovers.com',
-      address: '789 Music St, Santa Monica, CA 90401',
-      availability: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-      specialties: ['Piano Moving', 'Antique Moving', 'White Glove Service'],
-      years_experience: 20,
-      insurance_verified: true,
-      background_checked: true,
-      response_time: '4 hours',
-      completion_rate: 99,
-      total_jobs: 850,
-      last_active: '1 day ago',
-      languages: ['English', 'French'],
-      certifications: ['Piano Moving Certified', 'Antique Specialist'],
-      awards: ['Best Piano Movers 2023', 'Luxury Service Award'],
-      is_favorite: false,
-      is_bookmarked: false
-    }
-  ]
+  const supabase = createClient()
 
   const serviceTypes = useMemo(() => {
     if (serviceCategory) {
@@ -256,12 +166,66 @@ export default function FindPage() {
   }, [serviceCategory])
 
   const handleSearch = async () => {
-    setLoading(true)
-    // Simulate API call
-    setTimeout(() => {
-      setBusinesses(mockBusinesses)
+    try {
+      setLoading(true)
+      
+      // Build the query
+      let query = supabase
+        .from('businesses')
+        .select(`
+          *,
+          owner:profiles!businesses_owner_id_fkey(id, full_name)
+        `)
+        .eq('verified', true) // Only show verified businesses
+        .order('created_at', { ascending: false })
+
+      // Apply search filter
+      if (filters.search) {
+        query = query.or(`name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
+      }
+
+      // Apply location filter
+      if (filters.location) {
+        query = query.or(`city.ilike.%${filters.location}%,state.ilike.%${filters.location}%,address.ilike.%${filters.location}%`)
+      }
+
+      // Apply service type filter
+      if (filters.service_types.length > 0) {
+        query = query.in('service_type', filters.service_types)
+      }
+
+      // Apply rating filter
+      if (filters.min_rating > 0) {
+        query = query.gte('rating_avg', filters.min_rating)
+      }
+
+      const { data, error } = await query
+
+      if (error) {
+        console.error('Error fetching businesses:', error)
+        setBusinesses([])
+        return
+      }
+
+      // Transform the data to match the expected format - NO FAKE DATA
+      const transformedBusinesses = (data || []).map(business => ({
+        ...business,
+        // Only use real data from database
+        service_types: business.service_type ? [business.service_type] : [],
+        base_rate_cents: business.base_rate_cents || 0,
+        hourly_rate_cents: business.hourly_rate_cents || 0,
+        // Remove all fake/mock data - only show what's actually in the database
+        is_favorite: false,
+        is_bookmarked: false
+      }))
+
+      setBusinesses(transformedBusinesses)
+    } catch (error) {
+      console.error('Unexpected error:', error)
+      setBusinesses([])
+    } finally {
       setLoading(false)
-    }, 1000)
+    }
   }
 
   const handleFilterChange = (key: keyof FilterState, value: any) => {
@@ -299,6 +263,7 @@ export default function FindPage() {
   }
 
   const formatPrice = (cents: number) => {
+    if (cents === 0) return 'Contact for pricing'
     return `$${(cents / 100).toFixed(0)}`
   }
 
@@ -582,6 +547,11 @@ export default function FindPage() {
                             Verified
                           </Badge>
                         )}
+                        {business.donation_badge && (
+                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                            💚 Donation Partner
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <div className="flex items-center">
@@ -623,24 +593,28 @@ export default function FindPage() {
                 <CardContent className="pt-0">
                   <p className="text-gray-600 text-sm mb-3 line-clamp-2">{business.description}</p>
                   
-                  <div className="space-y-2 mb-4">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Base Rate:</span>
-                      <span className="font-medium">{formatPrice(business.base_rate_cents)}</span>
+                   {business.base_rate_cents && business.base_rate_cents > 0 && (
+                    <div className="space-y-2 mb-4">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-500">Base Rate:</span>
+                        <span className="font-medium">{formatPrice(business.base_rate_cents)}</span>
+                      </div>
+                      {business.hourly_rate_cents && business.hourly_rate_cents > 0 && (
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-500">Hourly Rate:</span>
+                          <span className="font-medium">{formatPrice(business.hourly_rate_cents)}/hr</span>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-500">Hourly Rate:</span>
-                      <span className="font-medium">{formatPrice(business.hourly_rate_cents)}/hr</span>
-                    </div>
-                  </div>
+                  )}
 
                   <div className="flex flex-wrap gap-1 mb-4">
-                    {business.service_types.slice(0, 3).map((type) => (
+                     {business.service_types?.slice(0, 3).map((type) => (
                       <Badge key={type} variant="outline" className="text-xs">
                         {type.replace('_', ' ')}
                       </Badge>
                     ))}
-                    {business.service_types.length > 3 && (
+                    {business.service_types && business.service_types.length > 3 && (
                       <Badge variant="outline" className="text-xs">
                         +{business.service_types.length - 3} more
                       </Badge>
@@ -649,7 +623,7 @@ export default function FindPage() {
 
                   <div className="flex gap-2">
                     <Button asChild className="flex-1">
-                      <Link href={`/b/${business.name.toLowerCase().replace(/\s+/g, '-')}`}>
+                      <Link href={`/b/${business.id}`}>
                         View Details
                       </Link>
                     </Button>
@@ -694,6 +668,11 @@ export default function FindPage() {
                                 Verified
                               </Badge>
                             )}
+                            {business.donation_badge && (
+                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                💚 Donation Partner
+                              </Badge>
+                            )}
                           </div>
                           
                           <div className="flex items-center gap-4 mb-2">
@@ -713,31 +692,32 @@ export default function FindPage() {
                           <p className="text-gray-600 text-sm mb-3 line-clamp-2">{business.description}</p>
 
                           <div className="flex flex-wrap gap-2 mb-3">
-                            {business.service_types.slice(0, 4).map((type) => (
+                             {business.service_types?.slice(0, 4).map((type) => (
                               <Badge key={type} variant="outline" className="text-xs">
                                 {type.replace('_', ' ')}
                               </Badge>
                             ))}
-                            {business.service_types.length > 4 && (
+                            {business.service_types && business.service_types.length > 4 && (
                               <Badge variant="outline" className="text-xs">
                                 +{business.service_types.length - 4} more
                               </Badge>
                             )}
                           </div>
 
+                          {/* Only show real data from database */}
                           <div className="flex items-center gap-4 text-sm text-gray-500">
-                            <div className="flex items-center">
-                              <Clock className="h-4 w-4 mr-1" />
-                              {business.response_time}
-                            </div>
-                            <div className="flex items-center">
-                              <Award className="h-4 w-4 mr-1" />
-                              {business.years_experience} years exp
-                            </div>
-                            <div className="flex items-center">
-                              <Shield className="h-4 w-4 mr-1" />
-                              {business.completion_rate}% completion
-                            </div>
+                            {business.phone && (
+                              <div className="flex items-center">
+                                <Phone className="h-4 w-4 mr-1" />
+                                {business.phone}
+                              </div>
+                            )}
+                            {business.service_radius_km && (
+                              <div className="flex items-center">
+                                <Navigation className="h-4 w-4 mr-1" />
+                                {business.service_radius_km}km radius
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -772,9 +752,17 @@ export default function FindPage() {
                           </div>
 
                           <div className="text-right">
-                            <div className="text-lg font-semibold">{formatPrice(business.base_rate_cents)}</div>
-                            <div className="text-sm text-gray-500">base rate</div>
-                            <div className="text-sm text-gray-500">{formatPrice(business.hourly_rate_cents)}/hr</div>
+                             {business.base_rate_cents && business.base_rate_cents > 0 ? (
+                              <>
+                                <div className="text-lg font-semibold">{formatPrice(business.base_rate_cents)}</div>
+                                <div className="text-sm text-gray-500">base rate</div>
+                                {business.hourly_rate_cents && business.hourly_rate_cents > 0 && (
+                                  <div className="text-sm text-gray-500">{formatPrice(business.hourly_rate_cents)}/hr</div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="text-sm text-gray-500">Contact for pricing</div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -782,7 +770,7 @@ export default function FindPage() {
                       <div className="flex items-center justify-between mt-4 pt-4 border-t">
                         <div className="flex gap-2">
                           <Button asChild>
-                            <Link href={`/b/${business.name.toLowerCase().replace(/\s+/g, '-')}`}>
+                            <Link href={`/b/${business.id}`}>
                               View Details
                             </Link>
                           </Button>
@@ -795,9 +783,7 @@ export default function FindPage() {
                             Call
                           </Button>
                         </div>
-                        <div className="text-sm text-gray-500">
-                          Last active: {business.last_active}
-                        </div>
+                        {/* Remove fake last active info */}
                       </div>
                     </div>
                   </div>

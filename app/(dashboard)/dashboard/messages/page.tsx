@@ -32,9 +32,16 @@ interface Message {
   id: string
   body: string
   created_at: string
+  sender_id: string
+  recipient_id: string
   is_read: boolean
   message_type: string
   sender: {
+    id: string
+    full_name: string
+    avatar_url?: string
+  }
+  recipient: {
     id: string
     full_name: string
     avatar_url?: string
@@ -232,6 +239,7 @@ export default function MessagesPage() {
         .select(`
           *,
           sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url),
+          recipient:profiles!messages_recipient_id_fkey(id, full_name, avatar_url),
           booking:bookings(id, status, business:businesses(name)),
           group:groups(id, name),
           reply_to:messages!messages_reply_to_fkey(id, body, sender:profiles!messages_sender_id_fkey(full_name))

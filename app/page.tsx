@@ -158,127 +158,188 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20 bg-white">
+      {/* Customer Support Section */}
+      <section className="py-16 bg-gray-50">
         <div className="container mx-auto px-4">
-          <div className="max-w-6xl mx-auto">
-            <div className="text-center mb-16">
-              <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                Why Choose Haulers.app?
-              </h2>
-              <p className="text-lg text-gray-600">
-                Built for transparency, community, and fair pricing
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              <Card className="text-center">
-                <CardHeader>
-                  <div className="mx-auto w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                    <Shield className="h-6 w-6 text-green-600" />
+          <div className="max-w-5xl mx-auto">
+            <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-200">
+              <div className="text-center">
+                <div className="mx-auto w-16 h-16 bg-gradient-to-r from-orange-500 to-red-500 rounded-full flex items-center justify-center mb-6">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192L5.636 18.364M12 2.25a9.75 9.75 0 100 19.5 9.75 9.75 0 000-19.5z" />
+                  </svg>
+                </div>
+                
+                <h2 className="text-3xl font-bold text-gray-900 mb-4">
+                  Having Issues? Let's Fix It Together
+                </h2>
+                
+                <p className="text-lg text-gray-600 mb-8 leading-relaxed max-w-3xl mx-auto">
+                  Whether it's a problem with a service provider, website glitch, booking issue, or anything else - 
+                  <br />
+                  <span className="text-orange-600 font-semibold">I'm personally committed to resolving every concern quickly and fairly.</span>
+                </p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Phone Contact */}
+                  <div className="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-6 border border-orange-200 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-center mb-4">
+                      <div className="w-12 h-12 bg-gradient-to-r from-orange-500 to-red-500 rounded-full flex items-center justify-center mr-3">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-gray-800">Call Me Directly</h3>
+                    </div>
+                    <a 
+                      href="tel:+13102954181" 
+                      className="text-2xl font-bold text-orange-600 hover:text-red-600 transition-colors block mb-2"
+                    >
+                      (310) 295-4181
+                    </a>
+                    <p className="text-sm text-gray-600">
+                      Available for immediate assistance and quick problem resolution
+                    </p>
                   </div>
-                  <CardTitle>Verified Providers</CardTitle>
-                  <CardDescription>
-                    All businesses are thoroughly verified and background checked
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ul className="text-sm text-gray-600 space-y-2">
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      License verification
-                    </li>
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      Insurance coverage
-                    </li>
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      Background checks
-                    </li>
-                  </ul>
-                </CardContent>
-              </Card>
-
-              <Card className="text-center">
-                <CardHeader>
-                  <div className="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-4">
-                    <Heart className="h-6 w-6 text-blue-600" />
+                  
+                  {/* Email Contact */}
+                  <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200 hover:shadow-md transition-shadow">
+                    <div className="flex items-center justify-center mb-4">
+                      <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mr-3">
+                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                      </div>
+                      <h3 className="text-xl font-semibold text-gray-800">Email Me</h3>
+                    </div>
+                    <a 
+                      href="mailto:contact.haulers@gmail.com" 
+                      className="text-lg font-semibold text-blue-600 hover:text-indigo-600 transition-colors break-all block mb-2"
+                    >
+                      contact.haulers@gmail.com
+                    </a>
+                    <p className="text-sm text-gray-600">
+                      Perfect for detailed issues or if you prefer written communication
+                    </p>
                   </div>
-                  <CardTitle>Nonprofit Model</CardTitle>
-                  <CardDescription>
-                    Low 2.5% platform fees with transparent financial reporting
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold text-blue-600 mb-2">2.5%</div>
-                  <p className="text-sm text-gray-600">
-                    Maximum platform fee (vs 10-15% for other platforms)
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card className="text-center">
-                <CardHeader>
-                  <div className="mx-auto w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mb-4">
-                    <BarChart3 className="h-6 w-6 text-purple-600" />
+                </div>
+                
+                <div className="mt-8 p-6 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl border border-gray-200">
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3">What I Can Help With:</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-600">
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Service provider disputes or quality issues
+                    </div>
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Website bugs or technical problems
+                    </div>
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Booking or scheduling conflicts
+                    </div>
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Payment or billing questions
+                    </div>
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Account or profile issues
+                    </div>
+                    <div className="flex items-center">
+                      <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
+                      Any other platform concerns
+                    </div>
                   </div>
-                  <CardTitle>Complete Transparency</CardTitle>
-                  <CardDescription>
-                    Monthly financial reports and public ledgers
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <ul className="text-sm text-gray-600 space-y-2">
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      Public financial reports
-                    </li>
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      Community reinvestment tracking
-                    </li>
-                    <li className="flex items-center justify-center">
-                      <CheckCircle className="h-4 w-4 text-green-500 mr-2" />
-                      Open source governance
-                    </li>
-                  </ul>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="py-20 bg-gray-50">
-        <div className="container mx-auto px-4">
+
+      {/* Community Values Section */}
+      <section className="relative py-20 bg-gray-50 overflow-hidden">
+        {/* Background Image */}
+        <div 
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-10"
+          style={{
+            backgroundImage: "url('/sweat-equity.png')"
+          }}
+        ></div>
+        
+        {/* Content */}
+        <div className="relative z-10 container mx-auto px-4">
           <div className="max-w-6xl mx-auto">
             <div className="text-center mb-16">
               <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                Trusted by the Community
+                Building Something Different
               </h2>
-              <p className="text-lg text-gray-600">
-                Real impact through transparent operations
+              <p className="text-lg text-gray-600 max-w-3xl mx-auto">
+                We're creating a transparent, community-focused marketplace where fairness and honesty come first. 
+                Join us in building something better than the status quo.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               <div className="text-center">
-                <div className="text-4xl font-bold text-blue-600 mb-2">500+</div>
-                <p className="text-gray-600">Verified Providers</p>
+                <div className="mx-auto w-16 h-16 bg-gradient-to-r from-orange-500 to-red-500 rounded-full flex items-center justify-center mb-6">
+                  <Heart className="h-8 w-8 text-white" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-4">Community First</h3>
+                <p className="text-gray-600 leading-relaxed">
+                  Every decision we make prioritizes our community over profits. 
+                  We're building this platform for you, not for shareholders.
+                </p>
               </div>
+
               <div className="text-center">
-                <div className="text-4xl font-bold text-green-600 mb-2">2,500+</div>
-                <p className="text-gray-600">Successful Jobs</p>
+                <div className="mx-auto w-16 h-16 bg-gradient-to-r from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mb-6">
+                  <BarChart3 className="h-8 w-8 text-white" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-4">Complete Transparency</h3>
+                <p className="text-gray-600 leading-relaxed">
+                  Our financial reports are public. You can see exactly how we're using 
+                  platform fees and where every dollar goes.
+                </p>
               </div>
+
               <div className="text-center">
-                <div className="text-4xl font-bold text-purple-600 mb-2">$50K+</div>
-                <p className="text-gray-600">Community Reinvestment</p>
+                <div className="mx-auto w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center mb-6">
+                  <Shield className="h-8 w-8 text-white" />
+                </div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-4">Fair for Everyone</h3>
+                <p className="text-gray-600 leading-relaxed">
+                  Low platform fees mean more money stays with service providers 
+                  and fairer prices for customers. All revenue is reinvested in the community.
+                </p>
               </div>
-              <div className="text-center">
-                <div className="text-4xl font-bold text-orange-600 mb-2">4.8★</div>
-                <p className="text-gray-600">Average Rating</p>
+            </div>
+
+            <div className="mt-16 text-center">
+              <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-8 shadow-lg border border-gray-200 max-w-4xl mx-auto">
+                <h3 className="text-2xl font-bold text-gray-900 mb-4">
+                  Ready to Be Part of Something Better?
+                </h3>
+                <p className="text-lg text-gray-600 mb-6">
+                  We're just getting started, but we're committed to building a platform 
+                  that actually serves our community. Your feedback and participation 
+                  help shape what we become.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                  <Link href="/auth/signup?role=provider">
+                    <Button size="lg" className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white">
+                      Join as Provider
+                    </Button>
+                  </Link>
+                  <Link href="/find">
+                    <Button size="lg" variant="outline" className="border-orange-500 text-orange-600 hover:bg-orange-50">
+                      Find Services
+                    </Button>
+                  </Link>
+                </div>
               </div>
             </div>
           </div>
@@ -334,23 +395,23 @@ export default function HomePage() {
       </section>
 
       {/* CTA Section */}
-      <section className="py-20 bg-blue-600">
+      <section className="py-20 bg-gradient-to-r from-orange-500 to-red-500">
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto text-center">
-            <h2 className="text-3xl font-bold text-white mb-4">
+            <h2 className="text-4xl font-bold text-white mb-4">
               Ready to Get Started?
             </h2>
-            <p className="text-xl text-blue-100 mb-8">
+            <p className="text-xl text-white/90 mb-8">
               Join our transparent marketplace and support local businesses
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/find">
-                <Button size="lg" variant="secondary" className="w-full sm:w-auto">
+                <Button size="lg" className="w-full sm:w-auto bg-white text-orange-600 hover:bg-orange-50 hover:text-orange-700 font-bold px-8 py-4 shadow-lg">
                   Find Services Now
                 </Button>
               </Link>
               <Link href="/transparency">
-                <Button size="lg" variant="outline" className="w-full sm:w-auto border-white text-white hover:bg-white hover:text-blue-600">
+                <Button size="lg" className="w-full sm:w-auto bg-orange-600 text-white hover:bg-orange-700 font-bold px-8 py-4 shadow-lg">
                   View Transparency Report
                 </Button>
               </Link>

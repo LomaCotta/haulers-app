@@ -28,6 +28,8 @@ interface Business {
   phone: string
   service_type: string
   verified: boolean
+  verification_status?: string
+  rejection_reason?: string
   rating_avg: number
   rating_count: number
   address: string
@@ -179,10 +181,15 @@ export default function BusinessDetailPage() {
             <CardContent className="space-y-4">
               <div className="flex items-center gap-2 mb-4">
                 <h3 className="text-xl font-semibold">{business.name}</h3>
-                {business.verified ? (
+                {business.verification_status === 'approved' || business.verified ? (
                   <Badge variant="default" className="flex items-center gap-1">
                     <CheckCircle className="w-3 h-3" />
                     Verified
+                  </Badge>
+                ) : business.verification_status === 'rejected' ? (
+                  <Badge variant="destructive" className="flex items-center gap-1">
+                    <XCircle className="w-3 h-3" />
+                    Rejected
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="flex items-center gap-1">
@@ -193,6 +200,19 @@ export default function BusinessDetailPage() {
               </div>
               
               <p className="text-gray-700">{business.description}</p>
+              
+              {/* Rejection Reason Display */}
+              {business.verification_status === 'rejected' && business.rejection_reason && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+                  <h4 className="text-sm font-semibold text-red-800 mb-2">Verification Rejected</h4>
+                  <p className="text-sm text-red-700">
+                    <strong>Reason:</strong> {business.rejection_reason}
+                  </p>
+                  <p className="text-xs text-red-600 mt-2">
+                    Please address the issues above and resubmit your business for verification.
+                  </p>
+                </div>
+              )}
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>

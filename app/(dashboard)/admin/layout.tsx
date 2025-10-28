@@ -16,7 +16,8 @@ import {
   Shield,
   DollarSign,
   AlertTriangle,
-  MessageSquare
+  MessageSquare,
+  Edit3
 } from 'lucide-react'
 
 interface Profile {
@@ -90,6 +91,7 @@ export default function AdminLayout({
   const navigation = [
     { name: 'Dashboard', href: '/admin', icon: Home },
     { name: 'Verify Businesses', href: '/admin/verify', icon: Shield },
+    { name: 'Edit Requests', href: '/admin/edit-requests', icon: Edit3 },
     { name: 'Manage Users', href: '/admin/users', icon: Users },
     { name: 'All Bookings', href: '/admin/bookings', icon: Building },
     { name: 'Platform Ledger', href: '/admin/ledger', icon: BarChart3 },

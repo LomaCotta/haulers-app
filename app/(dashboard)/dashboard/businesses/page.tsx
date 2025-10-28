@@ -23,6 +23,8 @@ interface Business {
   name: string
   description: string
   verified: boolean
+  verification_status?: string
+  rejection_reason?: string
   rating_avg: number
   rating_count: number
   service_types: string[]
@@ -35,6 +37,7 @@ export default function BusinessesPage() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [loading, setLoading] = useState(true)
   const [userRole, setUserRole] = useState<string>('')
+  const [resubmitting, setResubmitting] = useState<string | null>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -98,6 +101,30 @@ export default function BusinessesPage() {
     }
   }
 
+  const handleResubmitBusiness = async (businessId: string) => {
+    try {
+      setResubmitting(businessId)
+      
+      const { error } = await supabase.rpc('resubmit_business_verification', {
+        business_uuid: businessId
+      })
+
+      if (error) {
+        console.error('Error resubmitting business:', error)
+        alert(`Error resubmitting business: ${error.message}`)
+        return
+      }
+
+      alert('Business resubmitted successfully! Our team will review it shortly.')
+      await fetchBusinesses()
+    } catch (error) {
+      console.error('Error:', error)
+      alert('Error resubmitting business')
+    } finally {
+      setResubmitting(null)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -149,10 +176,15 @@ export default function BusinessesPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-2">
                       <h3 className="text-lg font-semibold">{business.name}</h3>
-                      {business.verified ? (
+                      {business.verification_status === 'approved' || business.verified ? (
                         <Badge variant="default" className="flex items-center gap-1">
                           <CheckCircle className="w-3 h-3" />
                           Verified
+                        </Badge>
+                      ) : business.verification_status === 'rejected' ? (
+                        <Badge variant="destructive" className="flex items-center gap-1">
+                          <XCircle className="w-3 h-3" />
+                          Rejected
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="flex items-center gap-1">
@@ -162,6 +194,15 @@ export default function BusinessesPage() {
                       )}
                     </div>
                     <p className="text-sm text-gray-600 line-clamp-2">{business.description}</p>
+                    
+                    {/* Rejection Reason Display */}
+                    {business.verification_status === 'rejected' && business.rejection_reason && (
+                      <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded-md">
+                        <p className="text-xs text-red-700">
+                          <strong>Rejection Reason:</strong> {business.rejection_reason}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </CardHeader>
@@ -200,6 +241,30 @@ export default function BusinessesPage() {
                         Edit
                       </Link>
                     </Button>
+                    
+                    {/* Resubmit button for rejected businesses */}
+                    {business.verification_status === 'rejected' && (
+                      <Button 
+                        size="sm" 
+                        variant="default" 
+                        onClick={() => handleResubmitBusiness(business.id)}
+                        disabled={resubmitting === business.id}
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        {resubmitting === business.id ? (
+                          <>
+                            <div className="w-4 h-4 mr-1 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                            Resubmitting...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="w-4 h-4 mr-1" />
+                            Resubmit
+                          </>
+                        )}
+                      </Button>
+                    )}
+                    
                     {/* Only admins can delete businesses */}
                     {userRole === 'admin' && (
                       <Button 

@@ -50,9 +50,9 @@ export default function TransparencyPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-green-600 mb-2">2.5%</div>
+              <div className="text-3xl font-bold text-green-600 mb-2">Low Fees</div>
               <p className="text-sm text-gray-600">
-                Maximum platform fee (vs 10-15% for other platforms)
+                Minimal platform fees with all revenue reinvested in the community
               </p>
             </CardContent>
           </Card>
