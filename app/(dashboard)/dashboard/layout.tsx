@@ -15,6 +15,7 @@ import {
   LogOut,
   User
 } from 'lucide-react'
+import { Avatar } from '@/components/ui/avatar'
 
 interface Profile {
   id: string
@@ -125,13 +126,11 @@ export default function DashboardLayout({
             </div>
 
             <div className="flex items-center space-x-3 mb-6">
-              <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                {profile.avatar_url ? (
-                  <img src={profile.avatar_url} alt={profile.full_name} className="w-10 h-10 rounded-full" />
-                ) : (
-                  <User className="w-5 h-5 text-gray-500" />
-                )}
-              </div>
+              <Avatar 
+                src={profile.avatar_url} 
+                alt={profile.full_name}
+                size="md"
+              />
               <div>
                 <p className="font-medium text-gray-900">{profile.full_name}</p>
               </div>

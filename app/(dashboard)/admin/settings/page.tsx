@@ -38,6 +38,8 @@ import {
   PieChart,
   LineChart
 } from 'lucide-react'
+import { AvatarUpload } from '@/components/ui/avatar-upload-resizable'
+import { Avatar } from '@/components/ui/avatar'
 import {
   Select,
   SelectContent,
@@ -89,6 +91,7 @@ export default function AdminSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState('overview')
   const [editingConfig, setEditingConfig] = useState<PlatformConfig | null>(null)
+  const [profile, setProfile] = useState<any>(null)
   const [configForm, setConfigForm] = useState({
     key: '',
     value: '',
@@ -110,7 +113,7 @@ export default function AdminSettingsPage() {
       // Check if user is admin
       const { data: profile } = await supabase
         .from('profiles')
-        .select('role')
+        .select('*')
         .eq('id', user.id)
         .single()
 
@@ -118,6 +121,8 @@ export default function AdminSettingsPage() {
         window.location.href = '/dashboard'
         return
       }
+
+      setProfile(profile)
 
       // Fetch all data in parallel
       const [configsResult, metricsResult, alertsResult] = await Promise.all([
@@ -310,8 +315,9 @@ export default function AdminSettingsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="config">Configuration</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
@@ -439,6 +445,69 @@ export default function AdminSettingsPage() {
                 )}
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        {/* Profile Tab */}
+        <TabsContent value="profile" className="space-y-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Admin Profile</CardTitle>
+                  <p className="text-sm text-gray-600">Manage your admin profile and avatar</p>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Avatar Upload Section */}
+                  <div className="border-b pb-6">
+                    <h3 className="text-sm font-medium mb-4">Profile Picture</h3>
+                    <AvatarUpload
+                      currentAvatarUrl={profile?.avatar_url}
+                      onAvatarChange={(newUrl) => {
+                        if (profile) {
+                          setProfile({ ...profile, avatar_url: newUrl || undefined })
+                        }
+                      }}
+                      userId={profile?.id || ''}
+                      size="xl"
+                    />
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">Role</label>
+                      <p className="text-sm text-gray-600 mt-1">Administrator</p>
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">User ID</label>
+                      <p className="text-sm text-gray-600 mt-1 font-mono">{profile?.id}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            
+            <div>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Profile Preview</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center space-y-4">
+                    <Avatar 
+                      src={profile?.avatar_url} 
+                      alt="Admin Profile Preview"
+                      size="xl"
+                      className="mx-auto"
+                    />
+                    <div>
+                      <p className="font-medium">Administrator</p>
+                      <p className="text-sm text-gray-500">Platform Admin</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </TabsContent>
 

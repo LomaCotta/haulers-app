@@ -12,6 +12,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { SERVICE_CATEGORIES } from '@/config/service-categories'
+import { BusinessPhotoUpload } from '@/components/ui/business-photo-upload'
 import { 
   ArrowLeft, 
   Save, 
@@ -29,7 +30,9 @@ import {
   Star,
   MapPin,
   Users,
-  Settings
+  Settings,
+  Camera,
+  Image as ImageIcon
 } from 'lucide-react'
 import Link from 'next/link'
 
@@ -66,6 +69,10 @@ interface Business {
   bonded?: boolean
   response_time_hours?: number
   min_booking_notice_hours?: number
+  // Photo fields
+  logo_url?: string
+  cover_photo_url?: string
+  gallery_photos?: string[]
 }
 
 const DAYS_OF_WEEK = [
@@ -138,6 +145,12 @@ export default function EditBusinessPage() {
     min_booking_notice_hours: 24,
   })
 
+  const [photos, setPhotos] = useState({
+    logo_url: '',
+    cover_photo_url: '',
+    gallery_photos: [] as string[]
+  })
+
   useEffect(() => {
     if (params.id) {
       fetchBusiness(params.id as string)
@@ -208,6 +221,12 @@ export default function EditBusinessPage() {
         response_time_hours: data.response_time_hours || 24,
         min_booking_notice_hours: data.min_booking_notice_hours || 24,
       })
+      
+      setPhotos({
+        logo_url: data.logo_url || '',
+        cover_photo_url: data.cover_photo_url || '',
+        gallery_photos: data.gallery_photos || []
+      })
     } catch (error) {
       console.error('Error:', error)
       router.push('/dashboard/businesses')
@@ -255,6 +274,10 @@ export default function EditBusinessPage() {
           response_time_hours: formData.response_time_hours,
           min_booking_notice_hours: formData.min_booking_notice_hours,
           name: formData.name, // Admins can change business name
+          // Photo data
+          logo_url: photos.logo_url,
+          cover_photo_url: photos.cover_photo_url,
+          gallery_photos: photos.gallery_photos,
         }
 
         const { error: updateError } = await supabase
@@ -297,6 +320,10 @@ export default function EditBusinessPage() {
           bonded: formData.bonded,
           response_time_hours: formData.response_time_hours,
           min_booking_notice_hours: formData.min_booking_notice_hours,
+          // Photo data
+          logo_url: photos.logo_url,
+          cover_photo_url: photos.cover_photo_url,
+          gallery_photos: photos.gallery_photos,
         }
 
         const { error: submitError } = await supabase
@@ -437,58 +464,92 @@ export default function EditBusinessPage() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/dashboard/businesses">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Link>
-        </Button>
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Edit Business</h1>
-          <p className="text-gray-600">Customize your business profile like Yelp</p>
+    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-red-50">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4 mb-4">
+            <Button variant="outline" size="sm" asChild className="bg-white/80 backdrop-blur-sm border-orange-200 hover:bg-orange-50">
+              <Link href="/dashboard/businesses">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Businesses
+              </Link>
+            </Button>
+          </div>
+          <div className="text-center">
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent mb-2">
+              Edit Business Profile
+            </h1>
+            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+              Showcase your business with photos, details, and services. Make it stand out to potential customers.
+            </p>
+          </div>
         </div>
-      </div>
 
-      {error && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-red-600">
-              <AlertCircle className="w-5 h-5" />
-              <span>{error}</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+        {/* Error Message */}
+        {error && (
+          <div className="mb-6">
+            <Card className="border-red-200 bg-red-50/80 backdrop-blur-sm shadow-lg">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 text-red-700">
+                  <AlertCircle className="w-6 h-6 flex-shrink-0" />
+                  <span className="font-medium">{error}</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
-      {/* Approval Notice for Business Owners */}
-      {userRole !== 'admin' && (
-        <Card className="border-blue-200 bg-blue-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-blue-700">
-              <AlertCircle className="w-5 h-5" />
-              <div>
-                <p className="font-medium">Changes Require Admin Approval</p>
-                <p className="text-sm text-blue-600">
-                  Your changes will be submitted for review and will only go live after admin approval.
-                </p>
+        {/* Approval Notice for Business Owners */}
+        {userRole !== 'admin' && (
+          <div className="mb-6">
+            <Card className="border-blue-200 bg-blue-50/80 backdrop-blur-sm shadow-lg">
+              <CardContent className="pt-6">
+                <div className="flex items-center gap-3 text-blue-700">
+                  <AlertCircle className="w-6 h-6 flex-shrink-0" />
+                  <div>
+                    <p className="font-semibold text-lg">Changes Require Admin Approval</p>
+                    <p className="text-blue-600 mt-1">
+                      Your changes will be submitted for review and will only go live after admin approval.
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Photo Upload Section */}
+        <div className="mb-8">
+          <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0">
+            <CardHeader className="text-center pb-4">
+              <div className="flex items-center justify-center gap-3 mb-2">
+                <Camera className="w-8 h-8 text-orange-500" />
+                <CardTitle className="text-2xl font-bold text-gray-800">Business Photos</CardTitle>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              <CardDescription className="text-gray-600 text-lg">
+                Upload your logo, cover photo, and gallery images to showcase your business
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <BusinessPhotoUpload
+                businessId={business.id}
+                currentPhotos={photos}
+                onPhotosChange={setPhotos}
+              />
+            </CardContent>
+          </Card>
+        </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-8">
         {/* Basic Information */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Settings className="w-5 h-5" />
+        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
+          <CardHeader className="bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-t-lg">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Settings className="w-6 h-6" />
               Basic Information
             </CardTitle>
-            <CardDescription>Update your business details</CardDescription>
+            <CardDescription className="text-orange-100">Update your business details and contact information</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Business Name - Only admins can edit */}
@@ -559,13 +620,13 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Pricing */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <DollarSign className="w-5 h-5" />
-              Pricing
+        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
+          <CardHeader className="bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-t-lg">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <DollarSign className="w-6 h-6" />
+              Pricing & Rates
             </CardTitle>
-            <CardDescription>Set your service rates</CardDescription>
+            <CardDescription className="text-green-100">Set competitive rates for your services</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -599,13 +660,13 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Services Offered */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="w-5 h-5" />
+        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
+          <CardHeader className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-t-lg">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Users className="w-6 h-6" />
               Services Offered
             </CardTitle>
-            <CardDescription>List all services you provide</CardDescription>
+            <CardDescription className="text-blue-100">List all the services you provide to customers</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex gap-2">
@@ -1090,22 +1151,27 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Submit Button */}
-        <div className="flex justify-end">
-          <Button type="submit" disabled={saving}>
+        <div className="flex justify-center pt-8">
+          <Button 
+            type="submit" 
+            disabled={saving}
+            className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-bold px-12 py-4 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:scale-105"
+          >
             {saving ? (
               <>
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                {userRole === 'admin' ? 'Saving...' : 'Submitting...'}
+                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                {userRole === 'admin' ? 'Saving Changes...' : 'Submitting for Approval...'}
               </>
             ) : (
               <>
-                <Save className="w-4 h-4 mr-2" />
-                {userRole === 'admin' ? 'Save Changes' : 'Submit for Approval'}
+                <Save className="w-5 h-5 mr-3" />
+                {userRole === 'admin' ? 'Save All Changes' : 'Submit for Admin Approval'}
               </>
             )}
           </Button>
         </div>
       </form>
     </div>
-  )
+  </div>
+)
 }

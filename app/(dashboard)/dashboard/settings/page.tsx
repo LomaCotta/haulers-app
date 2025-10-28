@@ -24,6 +24,8 @@ import {
   AlertCircle,
   CheckCircle
 } from 'lucide-react'
+import { AvatarUpload } from '@/components/ui/avatar-upload-resizable'
+import { Avatar } from '@/components/ui/avatar'
 
 interface Profile {
   id: string
@@ -62,8 +64,7 @@ export default function SettingsPage() {
 
   const [formData, setFormData] = useState({
     full_name: '',
-    phone: '',
-    avatar_url: ''
+    phone: ''
   })
 
   useEffect(() => {
@@ -86,8 +87,7 @@ export default function SettingsPage() {
         setProfile(profileData)
         setFormData({
           full_name: profileData.full_name || '',
-          phone: profileData.phone || '',
-          avatar_url: profileData.avatar_url || ''
+          phone: profileData.phone || ''
         })
       }
 
@@ -127,8 +127,7 @@ export default function SettingsPage() {
         .from('profiles')
         .update({
           full_name: formData.full_name,
-          phone: formData.phone,
-          avatar_url: formData.avatar_url
+          phone: formData.phone
         })
         .eq('id', user.id)
 
@@ -293,7 +292,21 @@ export default function SettingsPage() {
                 <CardTitle>Profile Information</CardTitle>
                 <CardDescription>Update your personal information</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-6">
+                {/* Avatar Upload Section */}
+                <div className="border-b pb-6">
+                  <Label className="text-sm font-medium mb-4 block">Profile Picture</Label>
+                  <AvatarUpload
+                    currentAvatarUrl={profile?.avatar_url}
+                    onAvatarChange={(newUrl) => {
+                      if (profile) {
+                        setProfile({ ...profile, avatar_url: newUrl || undefined })
+                      }
+                    }}
+                    userId={profile?.id || ''}
+                    size="xl"
+                  />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="full_name">Full Name</Label>
                   <Input
@@ -326,15 +339,6 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="avatar_url">Avatar URL</Label>
-                  <Input
-                    id="avatar_url"
-                    value={formData.avatar_url}
-                    onChange={(e) => setFormData({ ...formData, avatar_url: e.target.value })}
-                    placeholder="https://example.com/avatar.jpg"
-                  />
-                </div>
 
                 <Button onClick={saveProfile} disabled={saving}>
                   {saving ? (
@@ -360,13 +364,12 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <div className="text-center space-y-4">
-                  <div className="w-20 h-20 bg-gray-200 rounded-full flex items-center justify-center mx-auto">
-                    {formData.avatar_url ? (
-                      <img src={formData.avatar_url} alt="Avatar" className="w-20 h-20 rounded-full" />
-                    ) : (
-                      <User className="w-8 h-8 text-gray-500" />
-                    )}
-                  </div>
+                  <Avatar 
+                    src={profile?.avatar_url} 
+                    alt="Profile Preview"
+                    size="xl"
+                    className="mx-auto"
+                  />
                   <div>
                     <p className="font-medium">{formData.full_name || 'Your Name'}</p>
                     <p className="text-sm text-gray-500">{profile?.email}</p>
