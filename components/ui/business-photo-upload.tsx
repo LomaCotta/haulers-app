@@ -77,11 +77,29 @@ export function BusinessPhotoUpload({ businessId, currentPhotos, onPhotosChange 
         updatedPhotos.gallery_photos = [...(updatedPhotos.gallery_photos || []), uploadedUrl]
       }
 
+      // Save to database immediately
+      try {
+        const { error } = await supabase.rpc('update_business_photos', {
+          business_id: businessId,
+          logo_url: type === 'logo' ? uploadedUrl : updatedPhotos.logo_url,
+          cover_photo_url: type === 'cover' ? uploadedUrl : updatedPhotos.cover_photo_url,
+          gallery_photos: type === 'gallery' ? updatedPhotos.gallery_photos : updatedPhotos.gallery_photos
+        })
+
+        if (error) {
+          console.error('Error saving photos to database:', error)
+        } else {
+          console.log('Photos saved to database successfully')
+        }
+      } catch (error) {
+        console.error('Error calling update_business_photos:', error)
+      }
+
       onPhotosChange?.(updatedPhotos)
     }
   }
 
-  const removePhoto = (type: 'logo' | 'cover' | 'gallery', index?: number) => {
+  const removePhoto = async (type: 'logo' | 'cover' | 'gallery', index?: number) => {
     const updatedPhotos = { ...currentPhotos }
     
     if (type === 'logo') {
@@ -92,10 +110,28 @@ export function BusinessPhotoUpload({ businessId, currentPhotos, onPhotosChange 
       updatedPhotos.gallery_photos = updatedPhotos.gallery_photos?.filter((_, i) => i !== index)
     }
 
+    // Save to database immediately
+    try {
+      const { error } = await supabase.rpc('update_business_photos', {
+        business_id: businessId,
+        logo_url: updatedPhotos.logo_url,
+        cover_photo_url: updatedPhotos.cover_photo_url,
+        gallery_photos: updatedPhotos.gallery_photos
+      })
+
+      if (error) {
+        console.error('Error removing photos from database:', error)
+      } else {
+        console.log('Photos removed from database successfully')
+      }
+    } catch (error) {
+      console.error('Error calling update_business_photos:', error)
+    }
+
     onPhotosChange?.(updatedPhotos)
     
-    // Clear preview
-    setPreviewUrls(prev => ({ ...prev, [type]: undefined }))
+    // Clear preview (set to empty string to satisfy string index signature)
+    setPreviewUrls(prev => ({ ...prev, [type]: '' }))
   }
 
   const getPhotoUrl = (type: 'logo' | 'cover' | 'gallery', index?: number) => {
@@ -150,7 +186,7 @@ export function BusinessPhotoUpload({ businessId, currentPhotos, onPhotosChange 
                     Upload Logo
                   </Button>
                   <input
-                    ref={el => fileInputRefs.current.logo = el}
+                    ref={(el) => { fileInputRefs.current.logo = el }}
                     type="file"
                     accept="image/*"
                     className="hidden"
@@ -207,7 +243,7 @@ export function BusinessPhotoUpload({ businessId, currentPhotos, onPhotosChange 
                     Upload Cover Photo
                   </Button>
                   <input
-                    ref={el => fileInputRefs.current.cover = el}
+                    ref={(el) => { fileInputRefs.current.cover = el }}
                     type="file"
                     accept="image/*"
                     className="hidden"
@@ -263,7 +299,7 @@ export function BusinessPhotoUpload({ businessId, currentPhotos, onPhotosChange 
                 Add Gallery Photo
               </Button>
               <input
-                ref={el => fileInputRefs.current.gallery = el}
+                ref={(el) => { fileInputRefs.current.gallery = el }}
                 type="file"
                 accept="image/*"
                 className="hidden"

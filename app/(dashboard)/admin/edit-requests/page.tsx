@@ -143,7 +143,7 @@ export default function AdminEditRequestsPage() {
         return
       }
       
-      const { error } = await supabase.rpc('apply_business_edit_request', {
+      const { data, error } = await supabase.rpc('apply_business_edit_request', {
         edit_request_id: requestId
       })
 
@@ -152,6 +152,17 @@ export default function AdminEditRequestsPage() {
         console.error('Detailed error:', error)
         showToast('error', `Failed to approve request: ${error.message}`)
         return
+      }
+
+      // Check if the function returned an error
+      if (data && data.startsWith('ERROR:')) {
+        console.error('Function returned error:', data)
+        showToast('error', `Failed to approve request: ${data}`)
+        return
+      }
+
+      if (data && data.startsWith('SUCCESS:')) {
+        console.log('Function returned success:', data)
       }
 
       await fetchEditRequests()
@@ -172,7 +183,7 @@ export default function AdminEditRequestsPage() {
     try {
       setProcessing(true)
       
-      const { error } = await supabase.rpc('reject_business_edit_request', {
+      const { data, error } = await supabase.rpc('reject_business_edit_request', {
         edit_request_id: requestId,
         admin_notes: adminNotes || null
       })
@@ -182,6 +193,17 @@ export default function AdminEditRequestsPage() {
         console.error('Detailed error:', error)
         showToast('error', `Failed to reject request: ${error.message}`)
         return
+      }
+
+      // Check if the function returned an error
+      if (data && data.startsWith('ERROR:')) {
+        console.error('Function returned error:', data)
+        showToast('error', `Failed to reject request: ${data}`)
+        return
+      }
+
+      if (data && data.startsWith('SUCCESS:')) {
+        console.log('Function returned success:', data)
       }
 
       await fetchEditRequests()

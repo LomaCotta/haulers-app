@@ -1,4 +1,5 @@
 import Link from "next/link"
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN || 'haulers.app'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -91,7 +92,7 @@ export default function CategoriesPage() {
                           </div>
                           
                           <div className="pt-3 border-t">
-                            <Link href={`/find?category=${category.id}`}>
+                            <Link href={`https://${category.subdomain}.${ROOT_DOMAIN}/find?search=${encodeURIComponent(category.name.toLowerCase())}`}>
                               <div className="text-blue-600 hover:text-blue-800 font-medium text-sm">
                                 Browse {category.name} Services →
                               </div>

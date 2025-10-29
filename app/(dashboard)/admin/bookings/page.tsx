@@ -1,675 +1,534 @@
-'use client'
+"use client"
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { 
-  Search, 
-  Calendar,
-  MapPin,
+  Calendar, 
+  Clock, 
+  MapPin, 
+  Phone, 
+  Mail, 
+  User, 
+  Building, 
   DollarSign,
-  Clock,
-  User,
-  Building,
   Filter,
-  MoreHorizontal,
+  Search,
+  Eye,
   CheckCircle,
   XCircle,
   AlertCircle,
-  Eye,
-  Edit,
-  Trash2,
-  MessageSquare,
+  TrendingUp,
+  Users,
   Star
-} from 'lucide-react'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+} from "lucide-react"
+import { createClient } from "@/lib/supabase/client"
+import Link from "next/link"
 
 interface Booking {
   id: string
-  consumer_id: string
   business_id: string
-  status: 'requested' | 'quoted' | 'accepted' | 'scheduled' | 'completed' | 'canceled'
-  move_date: string
-  details: any
-  quote_cents?: number
-  deposit_cents?: number
-  stripe_payment_intent?: string
+  customer_id: string
+  service_type: string
+  booking_status: string
+  priority: string
+  requested_date: string
+  requested_time: string
+  service_address: string
+  service_city: string
+  service_state: string
+  total_price_cents: number
+  estimated_duration_hours: number
   created_at: string
-  updated_at: string
-  consumer?: {
-    id: string
-    full_name: string
-    phone?: string
-  }
-  business?: {
+  customer_notes: string
+  business_notes: string
+  customer_phone: string
+  customer_email: string
+  business: {
     id: string
     name: string
     owner_id: string
   }
-  business_owner?: {
+  customer: {
     id: string
     full_name: string
-    phone?: string
   }
-  review?: {
-    id: string
-    rating: number
-    body?: string
-  }
+}
+
+interface BookingStats {
+  total_bookings: number
+  pending_bookings: number
+  confirmed_bookings: number
+  completed_bookings: number
+  total_revenue: number
+  average_booking_value: number
 }
 
 export default function AdminBookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([])
-  const [filteredBookings, setFilteredBookings] = useState<Booking[]>([])
+  const [stats, setStats] = useState<BookingStats | null>(null)
   const [loading, setLoading] = useState(true)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [filters, setFilters] = useState({
+    search: '',
+    status: 'all',
+    priority: 'all',
+    dateRange: 'all'
+  })
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null)
+  
   const supabase = createClient()
 
+  // Load bookings and stats
   useEffect(() => {
-    fetchBookings()
-  }, [])
+    loadBookings()
+    loadStats()
+  }, [filters])
 
-  useEffect(() => {
-    filterBookings()
-  }, [bookings, searchTerm, statusFilter])
-
-  const fetchBookings = async () => {
+  const loadBookings = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
-        console.log('No authenticated user')
-        return
-      }
-
-      console.log('Current user:', user.id)
-
-      // Check if user is admin
-      const { data: profile, error: profileError } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-
-      if (profileError) {
-        console.error('Error fetching current user profile:', profileError)
-        return
-      }
-
-      console.log('Current user profile:', profile)
-
-      if (profile?.role !== 'admin') {
-        console.log('User is not admin, redirecting')
-        window.location.href = '/dashboard'
-        return
-      }
-
-      // Fetch all bookings with related data
-      console.log('Fetching all bookings...')
+      setLoading(true)
       
-      // First try a simple query to see if we can access bookings at all
-      const { data: simpleBookings, error: simpleError } = await supabase
-        .from('bookings')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      if (simpleError) {
-        console.error('Simple bookings query error:', simpleError)
-        alert(`Error accessing bookings: ${simpleError.message}`)
-        return
-      }
-      
-      console.log('Simple bookings query successful:', simpleBookings)
-      
-      // Now try the full query with joins
-      const { data: bookingsData, error } = await supabase
+      let query = supabase
         .from('bookings')
         .select(`
           *,
-          consumer:profiles!consumer_id(id, full_name, phone),
-          business:businesses!business_id(id, name, owner_id)
+          business:businesses(id, name, owner_id),
+          customer:profiles(id, full_name)
         `)
         .order('created_at', { ascending: false })
 
+      // Apply filters
+      if (filters.status !== 'all') {
+        query = query.eq('booking_status', filters.status)
+      }
+      
+      if (filters.priority !== 'all') {
+        query = query.eq('priority', filters.priority)
+      }
+      
+      if (filters.search) {
+        query = query.or(`service_type.ilike.%${filters.search}%,service_address.ilike.%${filters.search}%`)
+      }
+
+      const { data, error } = await query
+
       if (error) {
-        console.error('Complex bookings query error:', error)
-        console.error('Error details:', {
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
-          code: error.code
-        })
-        console.log('Falling back to simple query...')
-        
-        // Use the simple query as fallback
-        const fallbackBookings = (simpleBookings || []).map(booking => ({
-          ...booking,
-          consumer: null,
-          business: null,
-          business_owner: null,
-          review: null
-        }))
-        
-        setBookings(fallbackBookings)
+        console.error('Error loading bookings:', error)
         return
       }
 
-      console.log('Fetched bookings:', bookingsData)
-      
-      // Enrich bookings with additional data
-      const enrichedBookings = await Promise.all(
-        (bookingsData || []).map(async (booking) => {
-          // Get business owner info
-          let businessOwner = null
-          if (booking.business?.owner_id) {
-            const { data: ownerData } = await supabase
-              .from('profiles')
-              .select('id, full_name, phone')
-              .eq('id', booking.business.owner_id)
-              .single()
-            businessOwner = ownerData
-          }
-          
-          // Get review info
-          let review = null
-          const { data: reviewData } = await supabase
-            .from('reviews')
-            .select('id, rating, body')
-            .eq('booking_id', booking.id)
-            .single()
-          review = reviewData
-          
-          return {
-            ...booking,
-            business_owner: businessOwner,
-            review: review
-          }
-        })
-      )
-      
-      setBookings(enrichedBookings)
+      setBookings(data || [])
     } catch (error) {
-      console.error('Error fetching bookings:', error)
+      console.error('Unexpected error:', error)
     } finally {
       setLoading(false)
     }
   }
 
-  const filterBookings = () => {
-    let filtered = bookings
+  const loadStats = async () => {
+    try {
+      const { data, error } = await supabase.rpc('get_booking_stats')
+      
+      if (error) {
+        console.error('Error loading stats:', error)
+        return
+      }
 
-    // Filter by search term
-    if (searchTerm) {
-      filtered = filtered.filter(booking => 
-        booking.consumer?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.business?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.business_owner?.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        booking.id.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+      setStats(data)
+    } catch (error) {
+      console.error('Unexpected error loading stats:', error)
     }
-
-    // Filter by status
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(booking => booking.status === statusFilter)
-    }
-
-    setFilteredBookings(filtered)
   }
 
-  const handleStatusChange = async (bookingId: string, newStatus: string) => {
+  const updateBookingStatus = async (bookingId: string, newStatus: string, notes?: string) => {
     try {
       const { error } = await supabase
         .from('bookings')
         .update({ 
-          status: newStatus,
+          booking_status: newStatus,
+          admin_notes: notes,
           updated_at: new Date().toISOString()
         })
         .eq('id', bookingId)
 
       if (error) {
-        console.error('Error updating booking status:', error)
-        alert(`Error: ${error.message}`)
+        console.error('Error updating booking:', error)
         return
       }
 
-      alert('Booking status updated successfully')
-      fetchBookings() // Refresh the list
+      // Reload bookings
+      loadBookings()
+      loadStats()
+      
+      // Close modal
+      setSelectedBooking(null)
     } catch (error) {
-      console.error('Error updating booking status:', error)
-      alert('An unexpected error occurred')
+      console.error('Unexpected error:', error)
     }
   }
 
-  const handleDeleteBooking = async (bookingId: string, consumerName: string) => {
-    if (!confirm(`Are you sure you want to permanently delete this booking for ${consumerName}? This action cannot be undone.`)) {
-      return
+  const getStatusBadge = (status: string) => {
+    const statusConfig = {
+      pending: { color: 'bg-yellow-100 text-yellow-800', icon: Clock },
+      confirmed: { color: 'bg-blue-100 text-blue-800', icon: CheckCircle },
+      in_progress: { color: 'bg-purple-100 text-purple-800', icon: AlertCircle },
+      completed: { color: 'bg-green-100 text-green-800', icon: CheckCircle },
+      cancelled: { color: 'bg-red-100 text-red-800', icon: XCircle },
+      disputed: { color: 'bg-orange-100 text-orange-800', icon: AlertCircle }
     }
 
-    try {
-      const { error } = await supabase
-        .from('bookings')
-        .delete()
-        .eq('id', bookingId)
+    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.pending
+    const Icon = config.icon
 
-      if (error) {
-        console.error('Error deleting booking:', error)
-        alert(`Error: ${error.message}`)
-        return
-      }
+    return (
+      <Badge className={`${config.color} border-0`}>
+        <Icon className="h-3 w-3 mr-1" />
+        {status.replace('_', ' ').toUpperCase()}
+      </Badge>
+    )
+  }
 
-      alert('Booking deleted successfully')
-      fetchBookings() // Refresh the list
-    } catch (error) {
-      console.error('Error deleting booking:', error)
-      alert('An unexpected error occurred')
+  const getPriorityBadge = (priority: string) => {
+    const priorityConfig = {
+      low: { color: 'bg-gray-100 text-gray-800' },
+      normal: { color: 'bg-blue-100 text-blue-800' },
+      high: { color: 'bg-orange-100 text-orange-800' },
+      urgent: { color: 'bg-red-100 text-red-800' }
     }
+
+    const config = priorityConfig[priority as keyof typeof priorityConfig] || priorityConfig.normal
+
+    return (
+      <Badge className={`${config.color} border-0 text-xs`}>
+        {priority.toUpperCase()}
+      </Badge>
+    )
   }
 
-  const getStatusBadgeColor = (status: string) => {
-    switch (status) {
-      case 'requested':
-        return 'bg-blue-100 text-blue-800'
-      case 'quoted':
-        return 'bg-yellow-100 text-yellow-800'
-      case 'accepted':
-        return 'bg-green-100 text-green-800'
-      case 'scheduled':
-        return 'bg-purple-100 text-purple-800'
-      case 'completed':
-        return 'bg-gray-100 text-gray-800'
-      case 'canceled':
-        return 'bg-red-100 text-red-800'
-      default:
-        return 'bg-gray-100 text-gray-800'
-    }
-  }
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'requested':
-        return <AlertCircle className="w-3 h-3" />
-      case 'quoted':
-        return <DollarSign className="w-3 h-3" />
-      case 'accepted':
-        return <CheckCircle className="w-3 h-3" />
-      case 'scheduled':
-        return <Calendar className="w-3 h-3" />
-      case 'completed':
-        return <CheckCircle className="w-3 h-3" />
-      case 'canceled':
-        return <XCircle className="w-3 h-3" />
-      default:
-        return <AlertCircle className="w-3 h-3" />
-    }
-  }
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    })
-  }
-
-  const formatCurrency = (cents: number) => {
+  const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p>Loading bookings...</p>
-        </div>
-      </div>
-    )
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString()
+  }
+
+  const formatTime = (timeString: string) => {
+    return new Date(`2000-01-01T${timeString}`).toLocaleTimeString([], { 
+      hour: '2-digit', 
+      minute: '2-digit' 
+    })
   }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Manage Bookings</h1>
-          <p className="text-gray-600">View and manage all platform bookings</p>
+          <h1 className="text-3xl font-bold text-gray-900">Booking Management</h1>
+          <p className="text-gray-600">Manage and monitor all bookings across the platform</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline">
-            <Filter className="w-4 h-4 mr-2" />
-            Export
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={loadBookings}>
+            <Search className="h-4 w-4 mr-2" />
+            Refresh
           </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{bookings.length}</div>
-          </CardContent>
-        </Card>
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Calendar className="h-6 w-6 text-blue-600" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Total Bookings</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.total_bookings}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Requested</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {bookings.filter(b => b.status === 'requested').length}
-            </div>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="p-2 bg-yellow-100 rounded-lg">
+                  <Clock className="h-6 w-6 text-yellow-600" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Pending</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.pending_bookings}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Quoted</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">
-              {bookings.filter(b => b.status === 'quoted').length}
-            </div>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="p-2 bg-green-100 rounded-lg">
+                  <CheckCircle className="h-6 w-6 text-green-600" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Completed</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.completed_bookings}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Scheduled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">
-              {bookings.filter(b => b.status === 'scheduled').length}
-            </div>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <div className="p-2 bg-purple-100 rounded-lg">
+                  <DollarSign className="h-6 w-6 text-purple-600" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                  <p className="text-2xl font-bold text-gray-900">{formatPrice(stats.total_revenue)}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-600">
-              {bookings.filter(b => b.status === 'completed').length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Canceled</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {bookings.filter(b => b.status === 'canceled').length}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Search and Filters */}
+      {/* Filters */}
       <Card>
         <CardContent className="p-6">
-          <div className="flex gap-4 items-center">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-2 block">Search</label>
               <Input
-                placeholder="Search bookings by customer, business, or ID..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
+                placeholder="Search bookings..."
+                value={filters.search}
+                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
               />
             </div>
-            <div className="flex gap-2">
-              <Button
-                variant={statusFilter === 'all' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('all')}
-                size="sm"
-              >
-                All
-              </Button>
-              <Button
-                variant={statusFilter === 'requested' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('requested')}
-                size="sm"
-              >
-                Requested
-              </Button>
-              <Button
-                variant={statusFilter === 'quoted' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('quoted')}
-                size="sm"
-              >
-                Quoted
-              </Button>
-              <Button
-                variant={statusFilter === 'scheduled' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('scheduled')}
-                size="sm"
-              >
-                Scheduled
-              </Button>
-              <Button
-                variant={statusFilter === 'completed' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('completed')}
-                size="sm"
-              >
-                Completed
-              </Button>
-              <Button
-                variant={statusFilter === 'canceled' ? 'default' : 'outline'}
-                onClick={() => setStatusFilter('canceled')}
-                size="sm"
-              >
-                Canceled
-              </Button>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-2 block">Status</label>
+              <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="confirmed">Confirmed</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-2 block">Priority</label>
+              <Select value={filters.priority} onValueChange={(value) => setFilters(prev => ({ ...prev, priority: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Priorities</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="urgent">Urgent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-2 block">Date Range</label>
+              <Select value={filters.dateRange} onValueChange={(value) => setFilters(prev => ({ ...prev, dateRange: value }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Time</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="week">This Week</SelectItem>
+                  <SelectItem value="month">This Month</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Bookings Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Bookings ({filteredBookings.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {filteredBookings.map((booking) => (
-              <div key={booking.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 bg-gray-200 rounded-lg flex items-center justify-center">
-                    <Calendar className="w-6 h-6 text-gray-500" />
-                  </div>
+      {/* Bookings List */}
+      <div className="space-y-4">
+        {loading ? (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="text-gray-500 mt-2">Loading bookings...</p>
+          </div>
+        ) : bookings.length === 0 ? (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <Calendar className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">No bookings found</h3>
+              <p className="text-gray-500">No bookings match your current filters.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          bookings.map((booking) => (
+            <Card key={booking.id} className="hover:shadow-lg transition-shadow">
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <h3 className="font-medium text-gray-900">
-                        {booking.consumer?.full_name || `Customer ${booking.consumer_id?.substring(0, 8)}`}
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-lg font-semibold text-gray-900">
+                        {booking.service_type.replace('_', ' ').toUpperCase()}
                       </h3>
-                      <Badge className={getStatusBadgeColor(booking.status)}>
-                        {getStatusIcon(booking.status)}
-                        <span className="ml-1 capitalize">{booking.status}</span>
-                      </Badge>
+                      {getStatusBadge(booking.booking_status)}
+                      {getPriorityBadge(booking.priority)}
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm text-gray-500">
-                      <div className="flex items-center gap-1">
-                        <Building className="w-3 h-3" />
-                        {booking.business?.name || `Business ${booking.business_id?.substring(0, 8)}`}
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
+                      <div className="flex items-center gap-2">
+                        <Building className="h-4 w-4" />
+                        <span>{booking.business?.name}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3" />
-                        Move: {formatDate(booking.move_date)}
+                      <div className="flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        <span>{booking.customer?.full_name}</span>
                       </div>
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3 h-3" />
-                        Created: {formatDate(booking.created_at)}
+                      <div className="flex items-center gap-2">
+                        <Calendar className="h-4 w-4" />
+                        <span>{formatDate(booking.requested_date)} at {formatTime(booking.requested_time)}</span>
                       </div>
-                      {booking.quote_cents && (
-                        <div className="flex items-center gap-1">
-                          <DollarSign className="w-3 h-3" />
-                          {formatCurrency(booking.quote_cents)}
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="h-4 w-4" />
+                        <span className="font-semibold">{formatPrice(booking.total_price_cents)}</span>
+                      </div>
                     </div>
-                    {booking.details && (
-                      <div className="mt-2 text-xs text-gray-400">
-                        {booking.details.size && `Size: ${booking.details.size}`}
-                        {booking.details.notes && ` • Notes: ${booking.details.notes.substring(0, 50)}...`}
+                    
+                    <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+                      <MapPin className="h-4 w-4" />
+                      <span>{booking.service_address}, {booking.service_city}, {booking.service_state}</span>
+                    </div>
+                    
+                    {booking.customer_notes && (
+                      <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                        <p className="text-sm text-gray-700">
+                          <strong>Customer Notes:</strong> {booking.customer_notes}
+                        </p>
                       </div>
                     )}
                   </div>
+                  
+                  <div className="flex items-center gap-2 ml-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSelectedBooking(booking)}
+                    >
+                      <Eye className="h-4 w-4 mr-1" />
+                      View
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-56">
-                      {/* Status Changes */}
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'requested')}>
-                        <AlertCircle className="w-4 h-4 mr-2" />
-                        Mark as Requested
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'quoted')}>
-                        <DollarSign className="w-4 h-4 mr-2" />
-                        Mark as Quoted
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'accepted')}>
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Mark as Accepted
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'scheduled')}>
-                        <Calendar className="w-4 h-4 mr-2" />
-                        Mark as Scheduled
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'completed')}>
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Mark as Completed
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleStatusChange(booking.id, 'canceled')}>
-                        <XCircle className="w-4 h-4 mr-2" />
-                        Mark as Canceled
-                      </DropdownMenuItem>
-                      
-                      {/* Other Actions */}
-                      <DropdownMenuItem onClick={() => setSelectedBooking(booking)}>
-                        <Eye className="w-4 h-4 mr-2" />
-                        View Details
-                      </DropdownMenuItem>
-                      <DropdownMenuItem 
-                        onClick={() => handleDeleteBooking(booking.id, booking.consumer?.full_name || 'User')}
-                        className="text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete Booking
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            ))}
-            {filteredBookings.length === 0 && (
-              <div className="text-center py-8 text-gray-500">
-                No bookings found matching your criteria.
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
 
-      {/* Booking Details Modal */}
+      {/* Booking Detail Modal */}
       {selectedBooking && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold">Booking Details</h2>
-                <Button variant="ghost" onClick={() => setSelectedBooking(null)}>
-                  <XCircle className="w-4 h-4" />
+          <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                Booking Details
+                <Button variant="ghost" size="sm" onClick={() => setSelectedBooking(null)}>
+                  <XCircle className="h-4 w-4" />
                 </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Status and Priority */}
+              <div className="flex items-center gap-4">
+                {getStatusBadge(selectedBooking.booking_status)}
+                {getPriorityBadge(selectedBooking.priority)}
               </div>
               
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Customer</label>
-                    <p className="text-gray-900">{selectedBooking.consumer?.full_name || 'Unknown'}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Business</label>
-                    <p className="text-gray-900">{selectedBooking.business?.name || 'Unknown'}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Status</label>
-                    <Badge className={getStatusBadgeColor(selectedBooking.status)}>
-                      {getStatusIcon(selectedBooking.status)}
-                      <span className="ml-1 capitalize">{selectedBooking.status}</span>
-                    </Badge>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Move Date</label>
-                    <p className="text-gray-900">{formatDate(selectedBooking.move_date)}</p>
+              {/* Basic Info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Service Information</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Type:</strong> {selectedBooking.service_type}</p>
+                    <p><strong>Date:</strong> {formatDate(selectedBooking.requested_date)}</p>
+                    <p><strong>Time:</strong> {formatTime(selectedBooking.requested_time)}</p>
+                    <p><strong>Duration:</strong> {selectedBooking.estimated_duration_hours} hours</p>
+                    <p><strong>Price:</strong> {formatPrice(selectedBooking.total_price_cents)}</p>
                   </div>
                 </div>
-
-                {selectedBooking.details && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Details</label>
-                    <pre className="bg-gray-100 p-3 rounded text-sm overflow-x-auto">
-                      {JSON.stringify(selectedBooking.details, null, 2)}
-                    </pre>
+                
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Contact Information</h4>
+                  <div className="space-y-1 text-sm">
+                    <p><strong>Customer:</strong> {selectedBooking.customer?.full_name}</p>
+                    <p><strong>Phone:</strong> {selectedBooking.customer_phone}</p>
+                    <p><strong>Email:</strong> {selectedBooking.customer_email}</p>
+                    <p><strong>Business:</strong> {selectedBooking.business?.name}</p>
                   </div>
-                )}
-
-                {selectedBooking.quote_cents && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Quote</label>
-                    <p className="text-gray-900 text-lg font-semibold">
-                      {formatCurrency(selectedBooking.quote_cents)}
-                    </p>
-                  </div>
-                )}
-
-                {selectedBooking.review && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-600">Review</label>
-                    <div className="flex items-center gap-2">
-                      <div className="flex">
-                        {[...Array(5)].map((_, i) => (
-                          <Star
-                            key={i}
-                            className={`w-4 h-4 ${
-                              i < selectedBooking.review!.rating
-                                ? 'text-yellow-400 fill-current'
-                                : 'text-gray-300'
-                            }`}
-                          />
-                        ))}
-                      </div>
-                      <span className="text-sm text-gray-600">
-                        {selectedBooking.review.rating}/5
-                      </span>
-                    </div>
-                    {selectedBooking.review.body && (
-                      <p className="text-gray-700 mt-1">{selectedBooking.review.body}</p>
-                    )}
-                  </div>
-                )}
+                </div>
               </div>
-            </div>
-          </div>
+              
+              {/* Location */}
+              <div>
+                <h4 className="font-semibold text-gray-900 mb-2">Service Location</h4>
+                <p className="text-sm text-gray-600">
+                  {selectedBooking.service_address}, {selectedBooking.service_city}, {selectedBooking.service_state}
+                </p>
+              </div>
+              
+              {/* Notes */}
+              {selectedBooking.customer_notes && (
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Customer Notes</h4>
+                  <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg">
+                    {selectedBooking.customer_notes}
+                  </p>
+                </div>
+              )}
+              
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-4 border-t">
+                <Button
+                  onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
+                  disabled={selectedBooking.booking_status !== 'pending'}
+                >
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  Confirm
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
+                  disabled={selectedBooking.booking_status === 'completed'}
+                >
+                  <XCircle className="h-4 w-4 mr-1" />
+                  Cancel
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => updateBookingStatus(selectedBooking.id, 'completed')}
+                  disabled={selectedBooking.booking_status !== 'in_progress'}
+                >
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  Mark Complete
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
     </div>

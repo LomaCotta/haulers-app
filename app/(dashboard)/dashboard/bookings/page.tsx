@@ -21,11 +21,19 @@ import {
 
 interface Booking {
   id: string
-  status: 'requested' | 'quoted' | 'accepted' | 'scheduled' | 'completed' | 'canceled'
-  move_date: string
-  details: any
-  quote_cents: number
-  deposit_cents: number
+  booking_status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'disputed'
+  requested_date: string
+  requested_time: string
+  service_type: string
+  service_details: any
+  total_price_cents: number
+  base_price_cents: number
+  hourly_rate_cents: number
+  estimated_duration_hours: number
+  service_address: string
+  service_city: string
+  service_state: string
+  customer_notes: string
   created_at: string
   business: {
     id: string
@@ -57,7 +65,7 @@ export default function ConsumerBookingsPage() {
           *,
           business:businesses(id, name, city, state, rating_avg, rating_count)
         `)
-        .eq('consumer_id', user.id)
+        .eq('customer_id', user.id)
         .order('created_at', { ascending: false })
 
       if (error) {
@@ -75,12 +83,12 @@ export default function ConsumerBookingsPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'requested': return 'bg-blue-100 text-blue-800'
-      case 'quoted': return 'bg-yellow-100 text-yellow-800'
-      case 'accepted': return 'bg-green-100 text-green-800'
-      case 'scheduled': return 'bg-purple-100 text-purple-800'
+      case 'pending': return 'bg-blue-100 text-blue-800'
+      case 'confirmed': return 'bg-green-100 text-green-800'
+      case 'in_progress': return 'bg-purple-100 text-purple-800'
       case 'completed': return 'bg-gray-100 text-gray-800'
-      case 'canceled': return 'bg-red-100 text-red-800'
+      case 'cancelled': return 'bg-red-100 text-red-800'
+      case 'disputed': return 'bg-orange-100 text-orange-800'
       default: return 'bg-gray-100 text-gray-800'
     }
   }
@@ -132,7 +140,7 @@ export default function ConsumerBookingsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-blue-600">
-              {bookings.filter(b => ['requested', 'quoted', 'accepted', 'scheduled'].includes(b.status)).length}
+              {bookings.filter(b => ['pending', 'confirmed', 'in_progress'].includes(b.booking_status)).length}
             </div>
           </CardContent>
         </Card>
@@ -143,7 +151,7 @@ export default function ConsumerBookingsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">
-              {bookings.filter(b => b.status === 'completed').length}
+              {bookings.filter(b => b.booking_status === 'completed').length}
             </div>
           </CardContent>
         </Card>
@@ -154,7 +162,7 @@ export default function ConsumerBookingsPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatPrice(bookings.filter(b => b.status === 'completed').reduce((sum, b) => sum + (b.quote_cents || 0), 0))}
+              {formatPrice(bookings.filter(b => b.booking_status === 'completed').reduce((sum, b) => sum + (b.total_price_cents || 0), 0))}
             </div>
           </CardContent>
         </Card>
@@ -186,40 +194,58 @@ export default function ConsumerBookingsPage() {
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-lg font-semibold">{booking.business.name}</h3>
-                      <Badge className={getStatusColor(booking.status)}>
-                        {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
+                      <Badge className={getStatusColor(booking.booking_status)}>
+                        {booking.booking_status.charAt(0).toUpperCase() + booking.booking_status.slice(1)}
                       </Badge>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <Calendar className="w-4 h-4" />
-                        <span>{new Date(booking.move_date).toLocaleDateString()}</span>
+                        <span>{new Date(booking.requested_date).toLocaleDateString()}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <Clock className="w-4 h-4" />
+                        <span>{booking.requested_time} ({booking.estimated_duration_hours}h)</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <MapPin className="w-4 h-4" />
-                        <span>{booking.business.city}, {booking.business.state}</span>
+                        <span>{booking.service_city}, {booking.service_state}</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm text-gray-600">
                         <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
                         <span>{booking.business.rating_avg} ({booking.business.rating_count})</span>
                       </div>
                     </div>
+                    
+                    <div className="text-sm text-gray-600 mb-4">
+                      <span className="font-medium">Service Type:</span> {booking.service_type}
+                    </div>
 
-                    {booking.quote_cents && (
+                    {booking.total_price_cents && (
                       <div className="flex items-center gap-2 text-sm text-gray-600 mb-4">
                         <DollarSign className="w-4 h-4" />
-                        <span className="font-medium">Quote: {formatPrice(booking.quote_cents)}</span>
-                        {booking.deposit_cents && (
-                          <span>• Deposit: {formatPrice(booking.deposit_cents)}</span>
+                        <span className="font-medium">Total: {formatPrice(booking.total_price_cents)}</span>
+                        {booking.base_price_cents && (
+                          <span>• Base: {formatPrice(booking.base_price_cents)}</span>
+                        )}
+                        {booking.hourly_rate_cents && (
+                          <span>• Rate: {formatPrice(booking.hourly_rate_cents)}/hr</span>
                         )}
                       </div>
                     )}
 
-                    {booking.details && (
+                    {booking.service_details && Object.keys(booking.service_details).length > 0 && (
                       <div className="text-sm text-gray-600 mb-4">
-                        <p className="font-medium">Details:</p>
-                        <p>{JSON.stringify(booking.details, null, 2)}</p>
+                        <p className="font-medium">Service Details:</p>
+                        <p>{JSON.stringify(booking.service_details, null, 2)}</p>
+                      </div>
+                    )}
+                    
+                    {booking.customer_notes && (
+                      <div className="text-sm text-gray-600 mb-4">
+                        <p className="font-medium">Your Notes:</p>
+                        <p>{booking.customer_notes}</p>
                       </div>
                     )}
                   </div>
@@ -231,7 +257,7 @@ export default function ConsumerBookingsPage() {
                         Message
                       </Link>
                     </Button>
-                    {booking.status === 'completed' && (
+                    {booking.booking_status === 'completed' && (
                       <Button size="sm" variant="outline" asChild>
                         <Link href={`/dashboard/reviews/${booking.id}`}>
                           <Star className="w-4 h-4 mr-1" />

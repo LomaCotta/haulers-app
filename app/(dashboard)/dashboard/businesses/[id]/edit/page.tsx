@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
 import { SERVICE_CATEGORIES } from '@/config/service-categories'
 import { BusinessPhotoUpload } from '@/components/ui/business-photo-upload'
+import { ApprovalDialog } from '@/components/ui/approval-dialog'
 import { 
   ArrowLeft, 
   Save, 
@@ -113,6 +114,8 @@ export default function EditBusinessPage() {
   const [newFeature, setNewFeature] = useState('')
   const [newLanguage, setNewLanguage] = useState('')
   const [newCertification, setNewCertification] = useState('')
+  const [showApprovalDialog, setShowApprovalDialog] = useState(false)
+  const [submissionTime, setSubmissionTime] = useState<Date | null>(null)
   const supabase = createClient()
 
   const [formData, setFormData] = useState({
@@ -131,6 +134,7 @@ export default function EditBusinessPage() {
     hourly_rate_cents: 0,
     availability_days: [] as string[],
     availability_hours: { start: '09:00', end: '17:00' },
+    daily_availability: {} as Record<string, { start: string; end: string; enabled: boolean }>,
     services_offered: [] as string[],
     features: [] as string[],
     years_experience: 0,
@@ -208,6 +212,15 @@ export default function EditBusinessPage() {
         hourly_rate_cents: data.hourly_rate_cents || 0,
         availability_days: data.availability_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
         availability_hours: data.availability_hours || { start: '09:00', end: '17:00' },
+        daily_availability: data.daily_availability || {
+          Monday: { start: '09:00', end: '17:00', enabled: true },
+          Tuesday: { start: '09:00', end: '17:00', enabled: true },
+          Wednesday: { start: '09:00', end: '17:00', enabled: true },
+          Thursday: { start: '09:00', end: '17:00', enabled: true },
+          Friday: { start: '09:00', end: '17:00', enabled: true },
+          Saturday: { start: '10:00', end: '15:00', enabled: false },
+          Sunday: { start: '10:00', end: '15:00', enabled: false },
+        },
         services_offered: data.services_offered || [],
         features: data.features || [],
         years_experience: data.years_experience || 0,
@@ -261,6 +274,7 @@ export default function EditBusinessPage() {
           hourly_rate_cents: formData.hourly_rate_cents,
           availability_days: formData.availability_days,
           availability_hours: formData.availability_hours,
+          daily_availability: formData.daily_availability,
           services_offered: formData.services_offered,
           features: formData.features,
           years_experience: formData.years_experience,
@@ -308,6 +322,7 @@ export default function EditBusinessPage() {
           hourly_rate_cents: formData.hourly_rate_cents,
           availability_days: formData.availability_days,
           availability_hours: formData.availability_hours,
+          daily_availability: formData.daily_availability,
           services_offered: formData.services_offered,
           features: formData.features,
           years_experience: formData.years_experience,
@@ -346,9 +361,9 @@ export default function EditBusinessPage() {
           return
         }
 
-        // Show success message and redirect
-        alert('Changes submitted for admin approval. You will be notified when they are reviewed.')
-        router.push('/dashboard/businesses')
+        // Show success dialog
+        setSubmissionTime(new Date())
+        setShowApprovalDialog(true)
       }
     } catch (err) {
       setError('An unexpected error occurred')
@@ -430,8 +445,46 @@ export default function EditBusinessPage() {
       ...prev,
       availability_days: prev.availability_days.includes(day)
         ? prev.availability_days.filter(d => d !== day)
-        : [...prev.availability_days, day]
+        : [...prev.availability_days, day],
+      daily_availability: {
+        ...prev.daily_availability,
+        [day]: {
+          ...prev.daily_availability[day],
+          enabled: !prev.daily_availability[day]?.enabled
+        }
+      }
     }))
+  }
+
+  const updateDayTime = (day: string, field: 'start' | 'end', value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      daily_availability: {
+        ...prev.daily_availability,
+        [day]: {
+          ...prev.daily_availability[day],
+          [field]: value
+        }
+      }
+    }))
+  }
+
+  const toggleDayEnabled = (day: string) => {
+    setFormData(prev => ({
+      ...prev,
+      daily_availability: {
+        ...prev.daily_availability,
+        [day]: {
+          ...prev.daily_availability[day],
+          enabled: !prev.daily_availability[day]?.enabled
+        }
+      }
+    }))
+  }
+
+  const handleApprovalDialogClose = () => {
+    setShowApprovalDialog(false)
+    router.push('/dashboard/businesses')
   }
 
   if (loading) {
@@ -464,12 +517,12 @@ export default function EditBusinessPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-red-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-100">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-4 mb-4">
-            <Button variant="outline" size="sm" asChild className="bg-white/80 backdrop-blur-sm border-orange-200 hover:bg-orange-50">
+        <div className="mb-12">
+          <div className="flex items-center gap-4 mb-6">
+            <Button variant="outline" size="sm" asChild className="bg-white/90 backdrop-blur-sm border-slate-200 hover:bg-slate-50 shadow-sm">
               <Link href="/dashboard/businesses">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back to Businesses
@@ -477,10 +530,10 @@ export default function EditBusinessPage() {
             </Button>
           </div>
           <div className="text-center">
-            <h1 className="text-4xl font-bold bg-gradient-to-r from-orange-600 to-red-600 bg-clip-text text-transparent mb-2">
+            <h1 className="text-5xl font-bold bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent mb-4">
               Edit Business Profile
             </h1>
-            <p className="text-lg text-gray-600 max-w-2xl mx-auto">
+            <p className="text-xl text-slate-600 max-w-3xl mx-auto leading-relaxed">
               Showcase your business with photos, details, and services. Make it stand out to potential customers.
             </p>
           </div>
@@ -488,8 +541,8 @@ export default function EditBusinessPage() {
 
         {/* Error Message */}
         {error && (
-          <div className="mb-6">
-            <Card className="border-red-200 bg-red-50/80 backdrop-blur-sm shadow-lg">
+          <div className="mb-8">
+            <Card className="border-red-200 bg-red-50/90 backdrop-blur-sm shadow-xl">
               <CardContent className="pt-6">
                 <div className="flex items-center gap-3 text-red-700">
                   <AlertCircle className="w-6 h-6 flex-shrink-0" />
@@ -502,8 +555,8 @@ export default function EditBusinessPage() {
 
         {/* Approval Notice for Business Owners */}
         {userRole !== 'admin' && (
-          <div className="mb-6">
-            <Card className="border-blue-200 bg-blue-50/80 backdrop-blur-sm shadow-lg">
+          <div className="mb-8">
+            <Card className="border-blue-200 bg-blue-50/90 backdrop-blur-sm shadow-xl">
               <CardContent className="pt-6">
                 <div className="flex items-center gap-3 text-blue-700">
                   <AlertCircle className="w-6 h-6 flex-shrink-0" />
@@ -520,14 +573,14 @@ export default function EditBusinessPage() {
         )}
 
         {/* Photo Upload Section */}
-        <div className="mb-8">
-          <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0">
-            <CardHeader className="text-center pb-4">
-              <div className="flex items-center justify-center gap-3 mb-2">
-                <Camera className="w-8 h-8 text-orange-500" />
-                <CardTitle className="text-2xl font-bold text-gray-800">Business Photos</CardTitle>
+        <div className="mb-10">
+          <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 rounded-2xl">
+            <CardHeader className="text-center pb-6">
+              <div className="flex items-center justify-center gap-3 mb-3">
+                <Camera className="w-8 h-8 text-blue-500" />
+                <CardTitle className="text-2xl font-bold text-slate-800">Business Photos</CardTitle>
               </div>
-              <CardDescription className="text-gray-600 text-lg">
+              <CardDescription className="text-slate-600 text-lg">
                 Upload your logo, cover photo, and gallery images to showcase your business
               </CardDescription>
             </CardHeader>
@@ -535,26 +588,32 @@ export default function EditBusinessPage() {
               <BusinessPhotoUpload
                 businessId={business.id}
                 currentPhotos={photos}
-                onPhotosChange={setPhotos}
+                onPhotosChange={(updated) =>
+                  setPhotos((prev) => ({
+                    logo_url: updated.logo_url ?? prev.logo_url,
+                    cover_photo_url: updated.cover_photo_url ?? prev.cover_photo_url,
+                    gallery_photos: updated.gallery_photos ?? prev.gallery_photos,
+                  }))
+                }
               />
             </CardContent>
           </Card>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form onSubmit={handleSubmit} className="space-y-10">
         {/* Basic Information */}
-        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
-          <CardHeader className="bg-gradient-to-r from-orange-500 to-red-500 text-white rounded-t-lg">
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-blue-500 via-purple-500 to-indigo-500 text-white">
             <CardTitle className="flex items-center gap-3 text-xl">
               <Settings className="w-6 h-6" />
               Basic Information
             </CardTitle>
-            <CardDescription className="text-orange-100">Update your business details and contact information</CardDescription>
+            <CardDescription className="text-blue-100">Update your business details and contact information</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-8 space-y-6">
             {/* Business Name - Only admins can edit */}
-            <div className="space-y-2">
-              <Label htmlFor="name">Business Name *</Label>
+            <div className="space-y-3">
+              <Label htmlFor="name" className="text-lg font-semibold text-slate-700">Business Name *</Label>
               {userRole === 'admin' ? (
                 <Input
                   id="name"
@@ -562,57 +621,62 @@ export default function EditBusinessPage() {
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Enter business name"
                   required
+                  className="text-xl font-bold border-2 border-blue-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
                 />
               ) : (
-                <div className="p-3 bg-gray-100 rounded-md">
-                  <p className="font-medium">{formData.name}</p>
-                  <p className="text-sm text-gray-500">Only administrators can change business names</p>
+                <div className="p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-200 rounded-xl shadow-sm">
+                  <p className="text-2xl font-bold text-slate-800 mb-2">{formData.name}</p>
+                  <p className="text-sm text-blue-600 font-medium">Only administrators can change business names</p>
                 </div>
               )}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+            <div className="space-y-3">
+              <Label htmlFor="description" className="text-lg font-semibold text-slate-700">Description</Label>
               <Textarea
                 id="description"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder="Describe your business and services"
                 rows={4}
+                className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-lg"
               />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="space-y-3">
+                <Label htmlFor="phone" className="text-lg font-semibold text-slate-700">Phone Number</Label>
                 <Input
                   id="phone"
                   type="tel"
                   value={formData.phone}
                   onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                   placeholder="(555) 123-4567"
+                  className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-lg"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+              <div className="space-y-3">
+                <Label htmlFor="email" className="text-lg font-semibold text-slate-700">Email</Label>
                 <Input
                   id="email"
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                   placeholder="contact@business.com"
+                  className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-lg"
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="website">Website</Label>
+              <div className="space-y-3">
+                <Label htmlFor="website" className="text-lg font-semibold text-slate-700">Website</Label>
                 <Input
                   id="website"
                   type="url"
                   value={formData.website}
                   onChange={(e) => setFormData({ ...formData, website: e.target.value })}
                   placeholder="https://www.business.com"
+                  className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200 text-lg"
                 />
               </div>
             </div>
@@ -620,16 +684,16 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Pricing */}
-        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
-          <CardHeader className="bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-t-lg">
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 text-white">
             <CardTitle className="flex items-center gap-3 text-xl">
               <DollarSign className="w-6 h-6" />
               Pricing & Rates
             </CardTitle>
-            <CardDescription className="text-green-100">Set competitive rates for your services</CardDescription>
+            <CardDescription className="text-emerald-100">Set competitive rates for your services</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <CardContent className="p-8 space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
                 <Label htmlFor="base_rate_cents">Base Rate (cents)</Label>
                 <Input
@@ -660,15 +724,15 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Services Offered */}
-        <Card className="bg-white/80 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-shadow duration-300">
-          <CardHeader className="bg-gradient-to-r from-blue-500 to-indigo-500 text-white rounded-t-lg">
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 text-white">
             <CardTitle className="flex items-center gap-3 text-xl">
               <Users className="w-6 h-6" />
               Services Offered
             </CardTitle>
-            <CardDescription className="text-blue-100">List all the services you provide to customers</CardDescription>
+            <CardDescription className="text-violet-100">List all the services you provide to customers</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-8 space-y-6">
             <div className="flex gap-2">
               <Input
                 value={newService}
@@ -722,71 +786,158 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Availability */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5" />
-              Availability
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-amber-500 via-orange-500 to-red-500 text-white">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Calendar className="w-6 h-6" />
+              Availability Schedule
             </CardTitle>
-            <CardDescription>Set your working days and hours</CardDescription>
+            <CardDescription className="text-amber-100">Set different working hours for each day of the week</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Working Days</Label>
-              <div className="flex flex-wrap gap-2">
-                {DAYS_OF_WEEK.map((day) => (
-                  <div key={day} className="flex items-center space-x-2">
-                    <Checkbox
-                      id={day}
-                      checked={formData.availability_days.includes(day)}
-                      onCheckedChange={() => toggleDay(day)}
-                    />
-                    <Label htmlFor={day} className="text-sm">{day}</Label>
-                  </div>
-                ))}
+          <CardContent className="p-8 space-y-8">
+            {/* Quick Setup */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-xl border border-blue-200">
+              <h3 className="text-lg font-semibold text-slate-700 mb-4">Quick Setup</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <Label htmlFor="default_start_time" className="text-sm font-medium text-slate-600">Default Start Time</Label>
+                  <Input
+                    id="default_start_time"
+                    type="time"
+                    value={formData.availability_hours.start}
+                    onChange={(e) => {
+                      const newStart = e.target.value
+                      setFormData(prev => ({
+                        ...prev,
+                        availability_hours: { ...prev.availability_hours, start: newStart },
+                        daily_availability: Object.keys(prev.daily_availability).reduce((acc, day) => ({
+                          ...acc,
+                          [day]: { ...prev.daily_availability[day], start: newStart }
+                        }), {})
+                      }))
+                    }}
+                    className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <Label htmlFor="default_end_time" className="text-sm font-medium text-slate-600">Default End Time</Label>
+                  <Input
+                    id="default_end_time"
+                    type="time"
+                    value={formData.availability_hours.end}
+                    onChange={(e) => {
+                      const newEnd = e.target.value
+                      setFormData(prev => ({
+                        ...prev,
+                        availability_hours: { ...prev.availability_hours, end: newEnd },
+                        daily_availability: Object.keys(prev.daily_availability).reduce((acc, day) => ({
+                          ...acc,
+                          [day]: { ...prev.daily_availability[day], end: newEnd }
+                        }), {})
+                      }))
+                    }}
+                    className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                  />
+                </div>
+              </div>
+              <p className="text-sm text-blue-600 mt-2">This will update all enabled days with the same times</p>
+            </div>
+
+            {/* Daily Schedule */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-semibold text-slate-700">Daily Schedule</h3>
+              <div className="space-y-3">
+                {DAYS_OF_WEEK.map((day) => {
+                  const dayData = formData.daily_availability[day] || { start: '09:00', end: '17:00', enabled: false }
+                  return (
+                    <div key={day} className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-3">
+                          <Checkbox
+                            id={`day-${day}`}
+                            checked={dayData.enabled}
+                            onCheckedChange={() => toggleDayEnabled(day)}
+                            className="w-5 h-5"
+                          />
+                          <Label htmlFor={`day-${day}`} className="text-lg font-semibold text-slate-700 cursor-pointer">
+                            {day}
+                          </Label>
+                        </div>
+                        <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+                          dayData.enabled 
+                            ? 'bg-green-100 text-green-700' 
+                            : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {dayData.enabled ? 'Available' : 'Unavailable'}
+                        </div>
+                      </div>
+                      
+                      {dayData.enabled && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 ml-8">
+                          <div className="space-y-2">
+                            <Label htmlFor={`${day}-start`} className="text-sm font-medium text-slate-600">Start Time</Label>
+                            <Input
+                              id={`${day}-start`}
+                              type="time"
+                              value={dayData.start}
+                              onChange={(e) => updateDayTime(day, 'start', e.target.value)}
+                              className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`${day}-end`} className="text-sm font-medium text-slate-600">End Time</Label>
+                            <Input
+                              id={`${day}-end`}
+                              type="time"
+                              value={dayData.end}
+                              onChange={(e) => updateDayTime(day, 'end', e.target.value)}
+                              className="border-2 border-slate-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {/* Summary */}
+            <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-6 rounded-xl border border-green-200">
+              <h3 className="text-lg font-semibold text-slate-700 mb-3">Availability Summary</h3>
               <div className="space-y-2">
-                <Label htmlFor="start_time">Start Time</Label>
-                <Input
-                  id="start_time"
-                  type="time"
-                  value={formData.availability_hours.start}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    availability_hours: { ...prev.availability_hours, start: e.target.value }
-                  }))}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="end_time">End Time</Label>
-                <Input
-                  id="end_time"
-                  type="time"
-                  value={formData.availability_hours.end}
-                  onChange={(e) => setFormData(prev => ({
-                    ...prev,
-                    availability_hours: { ...prev.availability_hours, end: e.target.value }
-                  }))}
-                />
+                {DAYS_OF_WEEK.map((day) => {
+                  const dayData = formData.daily_availability[day]
+                  if (dayData?.enabled) {
+                    return (
+                      <div key={day} className="flex items-center justify-between text-sm">
+                        <span className="font-medium text-slate-600">{day}</span>
+                        <span className="text-green-700 font-medium">
+                          {dayData.start} - {dayData.end}
+                        </span>
+                      </div>
+                    )
+                  }
+                  return null
+                })}
+                {!DAYS_OF_WEEK.some(day => formData.daily_availability[day]?.enabled) && (
+                  <p className="text-gray-500 text-sm">No days selected for availability</p>
+                )}
               </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Features */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Award className="w-5 h-5" />
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-rose-500 via-pink-500 to-purple-500 text-white">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Award className="w-6 h-6" />
               Features & Benefits
             </CardTitle>
-            <CardDescription>Highlight what makes your business special</CardDescription>
+            <CardDescription className="text-rose-100">Highlight what makes your business special</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-8 space-y-6">
             <div className="flex gap-2">
               <Input
                 value={newFeature}
@@ -840,15 +991,15 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Business Details */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Star className="w-5 h-5" />
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 text-white">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Star className="w-6 h-6" />
               Business Details
             </CardTitle>
-            <CardDescription>Additional information about your business</CardDescription>
+            <CardDescription className="text-indigo-100">Additional information about your business</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="p-8 space-y-6">
             <div className="space-y-2">
               <Label htmlFor="years_experience">Years of Experience</Label>
               <Input
@@ -1151,26 +1302,34 @@ export default function EditBusinessPage() {
         </Card>
 
         {/* Submit Button */}
-        <div className="flex justify-center pt-8">
+        <div className="flex justify-center pt-12">
           <Button 
             type="submit" 
             disabled={saving}
-            className="bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white font-bold px-12 py-4 text-lg shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:scale-105"
+            className="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 hover:from-blue-700 hover:via-purple-700 hover:to-indigo-700 text-white font-bold px-16 py-6 text-xl shadow-2xl hover:shadow-3xl transition-all duration-300 transform hover:scale-105 rounded-2xl"
           >
             {saving ? (
               <>
-                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-3" />
+                <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin mr-4" />
                 {userRole === 'admin' ? 'Saving Changes...' : 'Submitting for Approval...'}
               </>
             ) : (
               <>
-                <Save className="w-5 h-5 mr-3" />
+                <Save className="w-6 h-6 mr-4" />
                 {userRole === 'admin' ? 'Save All Changes' : 'Submit for Admin Approval'}
               </>
             )}
           </Button>
         </div>
       </form>
+
+      {/* Approval Dialog */}
+      <ApprovalDialog
+        isOpen={showApprovalDialog}
+        onClose={handleApprovalDialogClose}
+        businessName={business?.name}
+        submittedAt={submissionTime || undefined}
+      />
     </div>
   </div>
 )

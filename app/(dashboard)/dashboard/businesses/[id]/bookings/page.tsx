@@ -3,13 +3,10 @@ import { createClient } from "@/lib/supabase/server"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { MapPin, Calendar, DollarSign, User, Phone, Mail } from "lucide-react"
+import { MapPin, Calendar, DollarSign, User, Phone, Mail, CheckCircle2, Clock, XCircle } from "lucide-react"
 import { format } from "date-fns"
 import Link from "next/link"
+import { QuoteForm } from "@/components/quote-form"
 
 interface BusinessBookingsPageProps {
   params: Promise<{
@@ -41,16 +38,39 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
   // Get bookings for this business
   const { data: bookings, error: bookingsError } = await supabase
     .from("bookings")
-    .select(`
-      *,
-      customer:profiles!bookings_customer_id_fkey(*)
-    `)
+    .select("*")
     .eq("business_id", id)
     .order("created_at", { ascending: false })
 
   if (bookingsError) {
     return <div>Error loading bookings: {bookingsError.message}</div>
   }
+
+  // Fetch customer profiles separately
+  const customerIds = bookings?.map(b => b.customer_id).filter(Boolean) || []
+  const { data: customers } = customerIds.length > 0 
+    ? await supabase
+        .from("profiles")
+        .select("id, full_name, email")
+        .in("id", customerIds)
+    : { data: [] }
+
+  // Fetch quotes for bookings
+  const bookingIds = bookings?.map(b => b.id) || []
+  const { data: quotes } = bookingIds.length > 0
+    ? await supabase
+        .from("quotes")
+        .select("*")
+        .in("booking_id", bookingIds)
+        .order("created_at", { ascending: false })
+    : { data: [] }
+
+  // Map customers and quotes to bookings
+  const bookingsWithCustomers = bookings?.map(booking => ({
+    ...booking,
+    customer: customers?.find(c => c.id === booking.customer_id) || null,
+    quote: quotes?.find(q => q.booking_id === booking.id) || null
+  })) || []
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -78,8 +98,8 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
 
         {/* Bookings List */}
         <div className="space-y-6">
-          {bookings && bookings.length > 0 ? (
-            bookings.map((booking) => (
+          {bookingsWithCustomers && bookingsWithCustomers.length > 0 ? (
+            bookingsWithCustomers.map((booking) => (
               <Card key={booking.id} className="hover:shadow-md transition-shadow">
                 <CardContent className="p-6">
                   <div className="flex items-start justify-between mb-4">
@@ -87,17 +107,14 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
                       <h3 className="text-lg font-semibold">
                         Booking #{booking.id.slice(0, 8)}
                       </h3>
-                      <Badge className={getStatusColor(booking.status)}>
-                        {booking.status.replace("_", " ").toUpperCase()}
+                      <Badge className={getStatusColor(booking.booking_status || 'pending')}>
+                        {(booking.booking_status || 'pending').replace(/_/g, " ").toUpperCase()}
                       </Badge>
                     </div>
                     <div className="flex space-x-2">
                       <Link href={`/dashboard/bookings/${booking.id}`}>
                         <Button variant="outline" size="sm">View Details</Button>
                       </Link>
-                      {booking.status === "pending" && (
-                        <Button size="sm">Send Quote</Button>
-                      )}
                     </div>
                   </div>
 
@@ -107,23 +124,29 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
                       <div className="flex items-start space-x-3">
                         <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
                         <div>
-                          <p className="font-medium text-sm">Pickup</p>
-                          <p className="text-sm text-muted-foreground">{booking.pickup_address}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-start space-x-3">
-                        <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
-                        <div>
-                          <p className="font-medium text-sm">Dropoff</p>
-                          <p className="text-sm text-muted-foreground">{booking.dropoff_address}</p>
+                          <p className="font-medium text-sm">Service Address</p>
+                          <p className="text-sm text-muted-foreground">
+                            {booking.service_address || 'Not specified'}
+                            {booking.service_city && booking.service_state && (
+                              <>, {booking.service_city}, {booking.service_state}</>
+                            )}
+                          </p>
                         </div>
                       </div>
 
-                      {booking.description && (
+                      {booking.service_type && (
                         <div>
-                          <p className="font-medium text-sm">Description</p>
-                          <p className="text-sm text-muted-foreground">{booking.description}</p>
+                          <p className="font-medium text-sm">Service Type</p>
+                          <p className="text-sm text-muted-foreground">{booking.service_type}</p>
+                        </div>
+                      )}
+
+                      {(booking.special_requirements || booking.customer_notes) && (
+                        <div>
+                          <p className="font-medium text-sm">Details</p>
+                          <p className="text-sm text-muted-foreground">
+                            {booking.special_requirements || booking.customer_notes}
+                          </p>
                         </div>
                       )}
 
@@ -132,13 +155,28 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
                           <Calendar className="h-4 w-4" />
                           <span>Requested {format(new Date(booking.created_at), "MMM d, yyyy")}</span>
                         </div>
-                        {booking.preferred_date && (
+                        {booking.requested_date && (
                           <div className="flex items-center space-x-2">
                             <Calendar className="h-4 w-4" />
-                            <span>Prefers {format(new Date(booking.preferred_date), "MMM d, yyyy")}</span>
+                            <span>Scheduled {format(new Date(booking.requested_date), "MMM d, yyyy")}</span>
+                            {booking.requested_time && (
+                              <span>at {booking.requested_time}</span>
+                            )}
                           </div>
                         )}
                       </div>
+
+                      {booking.total_price_cents > 0 && (
+                        <div className="flex items-center space-x-2">
+                          <DollarSign className="h-4 w-4 text-muted-foreground" />
+                          <div>
+                            <p className="font-medium text-sm">Total Price</p>
+                            <p className="text-sm text-muted-foreground">
+                              ${(booking.total_price_cents / 100).toFixed(2)}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Customer Info */}
@@ -153,72 +191,98 @@ export default async function BusinessBookingsPage({ params }: BusinessBookingsP
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-3">
-                        <Phone className="h-5 w-5 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium text-sm">Phone</p>
-                          <p className="text-sm text-muted-foreground">{booking.contact_phone}</p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center space-x-3">
-                        <Mail className="h-5 w-5 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium text-sm">Email</p>
-                          <p className="text-sm text-muted-foreground">{booking.contact_email}</p>
-                        </div>
-                      </div>
-
-                      {booking.estimated_value && (
+                      {booking.customer_phone && (
                         <div className="flex items-center space-x-3">
-                          <DollarSign className="h-5 w-5 text-muted-foreground" />
+                          <Phone className="h-5 w-5 text-muted-foreground" />
                           <div>
-                            <p className="font-medium text-sm">Estimated Value</p>
-                            <p className="text-sm text-muted-foreground">${booking.estimated_value}</p>
+                            <p className="font-medium text-sm">Phone</p>
+                            <p className="text-sm text-muted-foreground">{booking.customer_phone}</p>
+                          </div>
+                        </div>
+                      )}
+
+                      {booking.customer_email && (
+                        <div className="flex items-center space-x-3">
+                          <Mail className="h-5 w-5 text-muted-foreground" />
+                          <div>
+                            <p className="font-medium text-sm">Email</p>
+                            <p className="text-sm text-muted-foreground">{booking.customer_email}</p>
                           </div>
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Quote Section */}
-                  {booking.status === "pending" && (
+                  {/* Quote Status Section */}
+                  {booking.quote ? (
                     <div className="mt-6 pt-6 border-t">
-                      <h4 className="font-medium mb-4">Send Quote</h4>
-                      <form className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <Label htmlFor="quote-amount">Quote Amount ($)</Label>
-                            <Input
-                              id="quote-amount"
-                              type="number"
-                              placeholder="0.00"
-                              step="0.01"
-                            />
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <div className="flex items-start justify-between">
+                          <div className="flex items-start space-x-3">
+                            {booking.quote.quote_status === 'accepted' ? (
+                              <CheckCircle2 className="h-6 w-6 text-green-600 mt-0.5" />
+                            ) : booking.quote.quote_status === 'rejected' ? (
+                              <XCircle className="h-6 w-6 text-red-600 mt-0.5" />
+                            ) : booking.quote.quote_status === 'viewed' ? (
+                              <Clock className="h-6 w-6 text-blue-600 mt-0.5" />
+                            ) : (
+                              <Clock className="h-6 w-6 text-yellow-600 mt-0.5" />
+                            )}
+                            <div className="flex-1">
+                              <div className="flex items-center space-x-2 mb-2">
+                                <h4 className="font-semibold text-gray-900">Quote Sent</h4>
+                                <Badge className={
+                                  booking.quote.quote_status === 'accepted' ? 'bg-green-100 text-green-800' :
+                                  booking.quote.quote_status === 'rejected' ? 'bg-red-100 text-red-800' :
+                                  booking.quote.quote_status === 'viewed' ? 'bg-blue-100 text-blue-800' :
+                                  'bg-yellow-100 text-yellow-800'
+                                }>
+                                  {booking.quote.quote_status.toUpperCase()}
+                                </Badge>
+                              </div>
+                              <p className="text-lg font-bold text-gray-900 mb-2">
+                                ${(booking.quote.total_price_cents / 100).toFixed(2)}
+                              </p>
+                              {booking.quote.sent_at && (
+                                <p className="text-sm text-gray-600 mb-2">
+                                  Sent on {format(new Date(booking.quote.sent_at), "MMM d, yyyy 'at' h:mm a")}
+                                </p>
+                              )}
+                              {booking.quote.viewed_at && (
+                                <p className="text-sm text-green-600 mb-2">
+                                  ✓ Viewed by customer
+                                </p>
+                              )}
+                              {booking.quote.accepted_at && (
+                                <p className="text-sm text-green-600 mb-2">
+                                  ✓ Accepted on {format(new Date(booking.quote.accepted_at), "MMM d, yyyy")}
+                                </p>
+                              )}
+                              {booking.quote.rejected_at && (
+                                <p className="text-sm text-red-600 mb-2">
+                                  ✗ Rejected on {format(new Date(booking.quote.rejected_at), "MMM d, yyyy")}
+                                  {booking.quote.rejection_reason && ` - ${booking.quote.rejection_reason}`}
+                                </p>
+                              )}
+                              {booking.quote.expires_at && new Date(booking.quote.expires_at) > new Date() && (
+                                <p className="text-sm text-gray-500">
+                                  Expires on {format(new Date(booking.quote.expires_at), "MMM d, yyyy")}
+                                </p>
+                              )}
+                              {booking.quote.quote_message && (
+                                <div className="mt-3 pt-3 border-t border-blue-200">
+                                  <p className="text-sm font-medium text-gray-700 mb-1">Your Message:</p>
+                                  <p className="text-sm text-gray-600">{booking.quote.quote_message}</p>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <Label htmlFor="quote-notes">Notes</Label>
-                            <Input
-                              id="quote-notes"
-                              placeholder="Additional details..."
-                            />
-                          </div>
                         </div>
-                        <div>
-                          <Label htmlFor="quote-message">Message to Customer</Label>
-                          <Textarea
-                            id="quote-message"
-                            placeholder="Explain your quote and any conditions..."
-                            rows={3}
-                          />
-                        </div>
-                        <div className="flex space-x-2">
-                          <Button type="submit">Send Quote</Button>
-                          <Button type="button" variant="outline">Decline</Button>
-                        </div>
-                      </form>
+                      </div>
                     </div>
-                  )}
+                  ) : booking.booking_status === "pending" ? (
+                    <QuoteForm bookingId={booking.id} />
+                  ) : null}
                 </CardContent>
               </Card>
             ))

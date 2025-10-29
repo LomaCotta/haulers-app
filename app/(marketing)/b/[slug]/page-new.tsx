@@ -33,6 +33,7 @@ import {
   DollarSign,
   Timer,
   Languages,
+  Award as Certificate,
   ThumbsUp,
   MessageSquare,
   PhoneCall,
@@ -42,7 +43,6 @@ import {
 } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
-import ModernBookingSystem from '@/components/modern-booking-system'
 
 interface Business {
   id: string
@@ -66,15 +66,14 @@ interface Business {
   gallery_photos?: string[]
   availability_days: string[]
   availability_hours: { start: string; end: string }
-  daily_availability?: { [day: string]: { start?: string; end?: string; closed?: boolean } } | null
   services_offered: string[]
   features: string[]
-  years_experience: number | null
+  years_experience: number
   insurance_verified: boolean
   background_checked: boolean
-  response_time_hours: number | null
-  completion_rate: number | null
-  total_jobs: number | null
+  response_time_hours: number
+  completion_rate: number
+  total_jobs: number
   languages_spoken: string[]
   certifications: string[]
   owner_name: string
@@ -102,27 +101,29 @@ export default function BusinessProfilePage() {
   const [business, setBusiness] = useState<Business | null>(null)
   const [reviews, setReviews] = useState<Review[]>([])
   const [loading, setLoading] = useState(true)
-  const [showBookingForm, setShowBookingForm] = useState(false)
+  const [showContactForm, setShowContactForm] = useState(false)
+  const [isBookingForm, setIsBookingForm] = useState(false)
   const [expandedSection, setExpandedSection] = useState<string | null>(null)
+  const [contactForm, setContactForm] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    message: '',
+    serviceType: '',
+    preferredDate: '',
+    preferredTime: ''
+  })
   const supabase = createClient()
 
   useEffect(() => {
     const fetchBusiness = async () => {
-      if (!businessId) {
-        console.log('No businessId provided')
-        return
-      }
-      
-      console.log('Fetching business with ID:', businessId)
+      if (!businessId) return
       
       try {
         setLoading(true)
         
         // Fetch business data with all related information
-        let businessData, error
-        
-        // Try the main query first
-        const mainQuery = await supabase
+        const { data: businessData, error } = await supabase
           .from('businesses')
           .select(`
             *,
@@ -130,47 +131,15 @@ export default function BusinessProfilePage() {
           `)
           .eq('id', businessId)
           .single()
-        
-        if (mainQuery.error) {
-          console.log('Main query failed, trying fallback query:', mainQuery.error)
-          
-          // Fallback: try without the JOIN
-          const fallbackQuery = await supabase
-            .from('businesses')
-            .select('*')
-            .eq('id', businessId)
-            .single()
-          
-          businessData = fallbackQuery.data
-          error = fallbackQuery.error
-        } else {
-          businessData = mainQuery.data
-          error = mainQuery.error
-        }
 
         if (error) {
-          console.error('Error fetching business:', {
-            error,
-            businessId,
-            errorMessage: error.message,
-            errorCode: error.code,
-            errorDetails: error.details,
-            errorHint: error.hint,
-            errorString: JSON.stringify(error)
-          })
+          console.error('Error fetching business:', error)
           return
         }
 
         if (businessData) {
-          console.log('Business data fetched successfully:', {
-            id: businessData.id,
-            name: businessData.name,
-            verified: businessData.verified,
-            verification_status: businessData.verification_status
-          })
-          
           // Fetch reviews
-          const { data: reviewsData, error: reviewsError } = await supabase
+          const { data: reviewsData } = await supabase
             .from('reviews')
             .select(`
               *,
@@ -178,10 +147,6 @@ export default function BusinessProfilePage() {
             `)
             .eq('business_id', businessId)
             .order('created_at', { ascending: false })
-
-          if (reviewsError) {
-            console.error('Error fetching reviews:', reviewsError)
-          }
 
           const transformedReviews: Review[] = (reviewsData || []).map(review => ({
             id: review.id,
@@ -200,57 +165,48 @@ export default function BusinessProfilePage() {
             : 0
 
           // Transform business data
-          console.log('Starting business data transformation...')
-          
-          try {
-            const transformedBusiness: Business = {
-              id: businessData.id,
-              name: businessData.name,
-              description: businessData.description,
-              rating_avg: avgRating,
-              rating_count: totalReviews,
-              verified: businessData.verified,
-              base_rate_cents: businessData.base_rate_cents || 0,
-              hourly_rate_cents: businessData.hourly_rate_cents || 0,
-              service_types: businessData.service_type ? [businessData.service_type] : [],
-              city: businessData.city || '',
-              state: businessData.state || '',
-              address: businessData.address || '',
-              phone: businessData.phone,
-              email: businessData.email,
-              website: businessData.website,
-              distance_km: 0,
-              image_url: businessData.logo_url,
-              cover_photo_url: businessData.cover_photo_url,
-              gallery_photos: businessData.gallery_photos || [],
-              availability_days: businessData.availability_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-              availability_hours: businessData.availability_hours || { start: '09:00', end: '17:00' },
-              daily_availability: businessData.daily_availability || null,
-              services_offered: businessData.services_offered || [],
-              features: businessData.features || [],
-              years_experience: businessData.years_experience ?? null,
-              insurance_verified: businessData.insurance_verified || false,
-              background_checked: businessData.background_checked || false,
-              response_time_hours: businessData.response_time_hours ?? null,
-              completion_rate: businessData.completion_rate ?? null,
-              total_jobs: businessData.total_jobs ?? null,
-              languages_spoken: businessData.languages_spoken || ['English'],
-              certifications: businessData.certifications || [],
-              owner_name: businessData.owner?.full_name || 'Business Owner',
-              created_at: businessData.created_at,
-              last_active: businessData.last_active || 'Recently active',
-              emergency_service: businessData.emergency_service || false,
-              same_day_service: businessData.same_day_service || false,
-              min_booking_notice_hours: businessData.min_booking_notice_hours || 24
-            }
-            
-            console.log('Business data transformed successfully:', transformedBusiness)
-            setBusiness(transformedBusiness)
-            setReviews(transformedReviews)
-          } catch (transformError) {
-            console.error('Error transforming business data:', transformError)
-            throw transformError
+          const transformedBusiness: Business = {
+            id: businessData.id,
+            name: businessData.name,
+            description: businessData.description,
+            rating_avg: avgRating,
+            rating_count: totalReviews,
+            verified: businessData.verified,
+            base_rate_cents: businessData.base_rate_cents || 0,
+            hourly_rate_cents: businessData.hourly_rate_cents || 0,
+            service_types: businessData.service_type ? [businessData.service_type] : [],
+            city: businessData.city || '',
+            state: businessData.state || '',
+            address: businessData.address || '',
+            phone: businessData.phone,
+            email: businessData.email,
+            website: businessData.website,
+            distance_km: 0,
+            image_url: businessData.logo_url,
+            cover_photo_url: businessData.cover_photo_url,
+            gallery_photos: businessData.gallery_photos || [],
+            availability_days: businessData.availability_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+            availability_hours: businessData.availability_hours || { start: '09:00', end: '17:00' },
+            services_offered: businessData.services_offered || [],
+            features: businessData.features || [],
+            years_experience: businessData.years_experience || 0,
+            insurance_verified: businessData.insurance_verified || false,
+            background_checked: businessData.background_checked || false,
+            response_time_hours: businessData.response_time_hours || 24,
+            completion_rate: businessData.completion_rate || 95,
+            total_jobs: businessData.total_jobs || 0,
+            languages_spoken: businessData.languages_spoken || ['English'],
+            certifications: businessData.certifications || [],
+            owner_name: businessData.owner?.full_name || 'Business Owner',
+            created_at: businessData.created_at,
+            last_active: businessData.last_active || 'Recently active',
+            emergency_service: businessData.emergency_service || false,
+            same_day_service: businessData.same_day_service || false,
+            min_booking_notice_hours: businessData.min_booking_notice_hours || 24
           }
+          
+          setBusiness(transformedBusiness)
+          setReviews(transformedReviews)
         }
       } catch (error) {
         console.error('Unexpected error:', error)
@@ -285,7 +241,6 @@ export default function BusinessProfilePage() {
   const getResponseTimeText = () => {
     if (!business) return 'No info yet'
     const hours = business.response_time_hours
-    if (hours == null) return 'No info yet'
     if (hours < 1) return 'Under 1 hour'
     if (hours < 24) return `${hours} hours`
     return `${Math.floor(hours / 24)} days`
@@ -295,11 +250,6 @@ export default function BusinessProfilePage() {
     if (!business) return 'No info yet'
     if (business.last_active === 'Recently active') return 'Recently active'
     return business.last_active
-  }
-
-  const handleBookingSuccess = (bookingId: string) => {
-    console.log('Booking created successfully:', bookingId)
-    setShowBookingForm(false)
   }
 
   if (loading) {
@@ -328,22 +278,9 @@ export default function BusinessProfilePage() {
             </Button>
           </div>
         </div>
-        {/* Debug component - remove in production */}
-        <div className="max-w-4xl mx-auto p-4">
-        </div>
       </div>
     )
   }
-
-  // Derived visibility flags for trustworthy display
-  const hasYears = business.years_experience != null && business.years_experience > 0
-  const hasCompletion = business.completion_rate != null && business.completion_rate > 0
-  const hasJobs = business.total_jobs != null && business.total_jobs > 0
-  // Only show response time if we have bookings or reviews to compute it from
-  const hasResponse = business.response_time_hours != null 
-    && business.response_time_hours > 0 
-    && ((business.total_jobs ?? 0) > 0 || business.rating_count > 0)
-  const hasTrustFlags = Boolean(business.insurance_verified || business.background_checked)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
@@ -401,23 +338,21 @@ export default function BusinessProfilePage() {
                   </div>
                   
                   <div className="flex items-center space-x-6 text-lg">
-                    {business.rating_count > 0 && (
-                      <div className="flex items-center space-x-1">
-                        <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                        <span className="font-semibold">{business.rating_avg.toFixed(1)}</span>
-                        <span className="text-gray-300">({business.rating_count} reviews)</span>
-                      </div>
-                    )}
+                    <div className="flex items-center space-x-1">
+                      <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+                      <span className="font-semibold">{business.rating_avg.toFixed(1)}</span>
+                      <span className="text-gray-300">({business.rating_count} reviews)</span>
+                    </div>
                     
                     <div className="flex items-center space-x-1">
                       <MapPin className="w-5 h-5" />
                       <span>{business.city}, {business.state}</span>
                     </div>
                     
-                    {(business.years_experience ?? 0) > 0 && (
+                    {business.years_experience > 0 && (
                       <div className="flex items-center space-x-1">
                         <Award className="w-5 h-5" />
-                        <span>{business.years_experience ?? 0} years experience</span>
+                        <span>{business.years_experience} years experience</span>
                       </div>
                     )}
                   </div>
@@ -444,19 +379,6 @@ export default function BusinessProfilePage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
-            {/* About / Description */}
-            {business.description && business.description.trim().length > 0 && (
-              <Card className="border-0 shadow-xl">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-2xl font-bold">About</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">
-                    {business.description}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
             {/* Pricing & Booking Card */}
             <Card className="border-0 shadow-xl bg-gradient-to-r from-green-50 to-emerald-50">
               <CardContent className="p-8">
@@ -478,19 +400,17 @@ export default function BusinessProfilePage() {
                     </div>
                   </div>
                   
-                  {hasResponse && (
-                    <div className="text-right">
-                      <div className="text-sm text-gray-600 mb-1">Response Time</div>
-                      <div className="text-lg font-semibold text-blue-600">{getResponseTimeText()}</div>
-                    </div>
-                  )}
+                  <div className="text-right">
+                    <div className="text-sm text-gray-600 mb-1">Response Time</div>
+                    <div className="text-lg font-semibold text-blue-600">{getResponseTimeText()}</div>
+                  </div>
                 </div>
                 
                 <div className="flex space-x-4">
                   <Button 
                     size="lg" 
                     className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 text-lg font-semibold shadow-lg"
-                    onClick={() => setShowBookingForm(true)}
+                    onClick={() => setShowContactForm(true)}
                   >
                     <Calendar className="w-5 h-5 mr-2" />
                     Book Now
@@ -540,39 +460,16 @@ export default function BusinessProfilePage() {
                   <Clock className="w-6 h-6 text-green-600 mt-1" />
                   <div>
                     <h3 className="font-semibold text-gray-900 mb-2">Availability</h3>
-                    {business.daily_availability ? (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
-                        {['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map((day) => {
-                          const entry = business.daily_availability?.[day]
-                          const isClosed = entry?.closed === true || (!entry?.start && !entry?.end)
-                          return (
-                            <div key={day} className="flex items-center justify-between border-b border-gray-100 py-1">
-                              <span className="text-gray-700 font-medium mr-4 w-28">{day}</span>
-                              <span className="text-gray-600">
-                                {isClosed ? (
-                                  <Badge variant="secondary" className="px-2 py-0.5">Closed</Badge>
-                                ) : (
-                                  <>{entry?.start ? formatTime(entry.start) : ''} {entry?.start && entry?.end ? ' - ' : ''} {entry?.end ? formatTime(entry.end) : ''}</>
-                                )}
-                              </span>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="flex flex-wrap gap-2 mb-2">
-                          {business.availability_days.map((day) => (
-                            <Badge key={day} variant="secondary" className="px-3 py-1">
-                              {day}
-                            </Badge>
-                          ))}
-                        </div>
-                        <p className="text-gray-700">
-                          {formatTime(business.availability_hours.start)} - {formatTime(business.availability_hours.end)}
-                        </p>
-                      </>
-                    )}
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {business.availability_days.map((day) => (
+                        <Badge key={day} variant="secondary" className="px-3 py-1">
+                          {day}
+                        </Badge>
+                      ))}
+                    </div>
+                    <p className="text-gray-700">
+                      {formatTime(business.availability_hours.start)} - {formatTime(business.availability_hours.end)}
+                    </p>
                     {business.emergency_service && (
                       <Badge className="bg-red-100 text-red-800 mt-2">
                         <Zap className="w-3 h-3 mr-1" />
@@ -623,7 +520,7 @@ export default function BusinessProfilePage() {
                 {/* Certifications */}
                 {business.certifications.length > 0 && (
                   <div className="flex items-start space-x-4">
-                    <Award className="w-6 h-6 text-indigo-600 mt-1" />
+                    <Certificate className="w-6 h-6 text-indigo-600 mt-1" />
                     <div>
                       <h3 className="font-semibold text-gray-900 mb-2">Certifications</h3>
                       <div className="flex flex-wrap gap-2">
@@ -640,7 +537,6 @@ export default function BusinessProfilePage() {
             </Card>
 
             {/* Performance Stats */}
-            {(hasYears || hasCompletion || hasJobs || hasResponse || hasTrustFlags) && (
             <Card className="border-0 shadow-xl">
               <CardHeader className="pb-4">
                 <CardTitle className="text-2xl font-bold flex items-center">
@@ -650,41 +546,33 @@ export default function BusinessProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  {hasYears && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-blue-600 mb-1">
-                        {business.years_experience}
-                      </div>
-                      <div className="text-sm text-gray-600">Years Experience</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-blue-600 mb-1">
+                      {business.years_experience || 'New'}
                     </div>
-                  )}
+                    <div className="text-sm text-gray-600">Years Experience</div>
+                  </div>
                   
-                  {hasCompletion && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-green-600 mb-1">
-                        {business.completion_rate}%
-                      </div>
-                      <div className="text-sm text-gray-600">Completion Rate</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-green-600 mb-1">
+                      {business.completion_rate}%
                     </div>
-                  )}
+                    <div className="text-sm text-gray-600">Completion Rate</div>
+                  </div>
                   
-                  {hasJobs && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-purple-600 mb-1">
-                        {business.total_jobs}
-                      </div>
-                      <div className="text-sm text-gray-600">Total Jobs</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-purple-600 mb-1">
+                      {business.total_jobs || 'New'}
                     </div>
-                  )}
+                    <div className="text-sm text-gray-600">Total Jobs</div>
+                  </div>
                   
-                  {hasResponse && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-orange-600 mb-1">
-                        {getResponseTimeText()}
-                      </div>
-                      <div className="text-sm text-gray-600">Response Time</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-orange-600 mb-1">
+                      {getResponseTimeText()}
                     </div>
-                  )}
+                    <div className="text-sm text-gray-600">Response Time</div>
+                  </div>
                 </div>
                 
                 <div className="mt-6 flex flex-wrap gap-4">
@@ -704,10 +592,8 @@ export default function BusinessProfilePage() {
                 </div>
               </CardContent>
             </Card>
-            )}
 
             {/* Reviews Section */}
-            {reviews.length > 0 && (
             <Card className="border-0 shadow-xl">
               <CardHeader className="pb-4">
                 <CardTitle className="text-2xl font-bold flex items-center">
@@ -716,6 +602,7 @@ export default function BusinessProfilePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
+                {reviews.length > 0 ? (
                   <div className="space-y-6">
                     {reviews.map((review) => (
                       <div key={review.id} className="border-b border-gray-100 pb-6 last:border-b-0">
@@ -750,9 +637,24 @@ export default function BusinessProfilePage() {
                       </div>
                     ))}
                   </div>
+                ) : (
+                  <div className="text-center py-12">
+                    <Star className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">No Reviews Yet</h3>
+                    <p className="text-gray-600 mb-6">
+                      This business is new to our platform. Be the first to book and leave a review!
+                    </p>
+                    <Button 
+                      onClick={() => setShowContactForm(true)}
+                      className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                    >
+                      <Calendar className="w-4 h-4 mr-2" />
+                      Book Now & Be First to Review
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
-            )}
           </div>
 
           {/* Sidebar */}
@@ -842,7 +744,7 @@ export default function BusinessProfilePage() {
                   <Button 
                     className="w-full justify-start" 
                     variant="outline"
-                    onClick={() => setShowBookingForm(true)}
+                    onClick={() => setShowContactForm(true)}
                   >
                     <MessageSquare className="w-4 h-4 mr-2" />
                     Send Message
@@ -872,16 +774,123 @@ export default function BusinessProfilePage() {
         </div>
       </div>
 
-      {/* Modern Booking System */}
-      {showBookingForm && business && (
-        <ModernBookingSystem
-          businessId={business.id}
-          businessName={business.name}
-          baseRateCents={business.base_rate_cents}
-          hourlyRateCents={business.hourly_rate_cents}
-          serviceTypes={business.service_types}
-          onBookingSuccess={handleBookingSuccess}
-        />
+      {/* Contact/Booking Modal */}
+      {showContactForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <Card className="w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <CardHeader>
+              <CardTitle className="text-xl font-bold">
+                {isBookingForm ? 'Book Service' : 'Contact Business'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={(e) => e.preventDefault()} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Your Name
+                  </label>
+                  <Input
+                    value={contactForm.name}
+                    onChange={(e) => setContactForm(prev => ({ ...prev, name: e.target.value }))}
+                    placeholder="Enter your name"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Email
+                  </label>
+                  <Input
+                    type="email"
+                    value={contactForm.email}
+                    onChange={(e) => setContactForm(prev => ({ ...prev, email: e.target.value }))}
+                    placeholder="Enter your email"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Phone
+                  </label>
+                  <Input
+                    value={contactForm.phone}
+                    onChange={(e) => setContactForm(prev => ({ ...prev, phone: e.target.value }))}
+                    placeholder="Enter your phone number"
+                  />
+                </div>
+                
+                {isBookingForm && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Service Type
+                      </label>
+                      <Input
+                        value={contactForm.serviceType}
+                        onChange={(e) => setContactForm(prev => ({ ...prev, serviceType: e.target.value }))}
+                        placeholder="What service do you need?"
+                      />
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Preferred Date
+                        </label>
+                        <Input
+                          type="date"
+                          value={contactForm.preferredDate}
+                          onChange={(e) => setContactForm(prev => ({ ...prev, preferredDate: e.target.value }))}
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Preferred Time
+                        </label>
+                        <Input
+                          type="time"
+                          value={contactForm.preferredTime}
+                          onChange={(e) => setContactForm(prev => ({ ...prev, preferredTime: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Message
+                  </label>
+                  <Textarea
+                    value={contactForm.message}
+                    onChange={(e) => setContactForm(prev => ({ ...prev, message: e.target.value }))}
+                    placeholder="Tell us about your needs..."
+                    rows={4}
+                  />
+                </div>
+                
+                <div className="flex space-x-3 pt-4">
+                  <Button 
+                    type="submit" 
+                    className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                  >
+                    {isBookingForm ? 'Send Booking Request' : 'Send Message'}
+                  </Button>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setShowContactForm(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   )

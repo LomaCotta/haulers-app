@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -132,8 +132,26 @@ export default function FindPage() {
   const [viewMode, setViewMode] = useState<'map' | 'list' | 'grid'>('list')
   const [showFilters, setShowFilters] = useState(false)
   const [selectedBusiness, setSelectedBusiness] = useState<Business | null>(null)
+  
+  // Get search parameter from URL
+  const [urlSearch, setUrlSearch] = useState('')
+  
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search)
+      const searchParam = urlParams.get('search')
+      if (searchParam) {
+        setUrlSearch(searchParam)
+        setFilters(prev => ({
+          ...prev,
+          search: searchParam
+        }))
+      }
+    }
+  }, [])
+  
   const [filters, setFilters] = useState<FilterState>({
-    search: '',
+    search: urlSearch,
     location: '',
     category: serviceCategory?.id || '',
     service_types: [],
@@ -165,7 +183,7 @@ export default function FindPage() {
     ]
   }, [serviceCategory])
 
-  const handleSearch = async () => {
+  const handleSearch = useCallback(async () => {
     try {
       setLoading(true)
       
@@ -207,6 +225,15 @@ export default function FindPage() {
         return
       }
 
+      // Debug: Log business data to see what's available
+      console.log('Business data from find page:', data?.map(b => ({
+        id: b.id,
+        name: b.name,
+        logo_url: b.logo_url,
+        cover_photo_url: b.cover_photo_url,
+        image_url: b.image_url
+      })))
+
       // Transform the data to match the expected format - NO FAKE DATA
       const transformedBusinesses = (data || []).map(business => ({
         ...business,
@@ -214,6 +241,8 @@ export default function FindPage() {
         service_types: business.service_type ? [business.service_type] : [],
         base_rate_cents: business.base_rate_cents || 0,
         hourly_rate_cents: business.hourly_rate_cents || 0,
+        // Map logo_url to image_url for display
+        image_url: business.logo_url || business.cover_photo_url || undefined,
         // Remove all fake/mock data - only show what's actually in the database
         is_favorite: false,
         is_bookmarked: false
@@ -226,7 +255,14 @@ export default function FindPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filters, supabase])
+
+  // Auto-search when URL search parameter is set
+  useEffect(() => {
+    if (urlSearch) {
+      handleSearch()
+    }
+  }, [urlSearch, handleSearch])
 
   const handleFilterChange = (key: keyof FilterState, value: any) => {
     setFilters(prev => ({ ...prev, [key]: value }))
@@ -554,11 +590,20 @@ export default function FindPage() {
                         )}
                       </div>
                       <div className="flex items-center gap-2 mb-2">
-                        <div className="flex items-center">
-                          <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                          <span className="ml-1 font-medium">{business.rating_avg}</span>
-                        </div>
-                        <span className="text-gray-500 text-sm">({business.rating_count} reviews)</span>
+                        {business.rating_count > 0 ? (
+                          <>
+                            <div className="flex items-center">
+                              <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                              <span className="ml-1 font-medium">{business.rating_avg.toFixed(1)}</span>
+                            </div>
+                            <span className="text-gray-500 text-sm">({business.rating_count} reviews)</span>
+                          </>
+                        ) : (
+                          <div className="flex items-center text-blue-600 text-sm">
+                            <Star className="h-4 w-4 text-blue-400" />
+                            <span className="ml-1">New to Haulers</span>
+                          </div>
+                        )}
                         {business.distance_km && (
                           <span className="text-gray-500 text-sm">• {formatDistance(business.distance_km)}</span>
                         )}
@@ -676,11 +721,18 @@ export default function FindPage() {
                           </div>
                           
                           <div className="flex items-center gap-4 mb-2">
-                            <div className="flex items-center">
-                              <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                              <span className="ml-1 font-medium">{business.rating_avg}</span>
-                              <span className="ml-1 text-gray-500 text-sm">({business.rating_count} reviews)</span>
-                            </div>
+                            {business.rating_count > 0 ? (
+                              <div className="flex items-center">
+                                <Star className="h-4 w-4 text-yellow-400 fill-current" />
+                                <span className="ml-1 font-medium">{business.rating_avg.toFixed(1)}</span>
+                                <span className="ml-1 text-gray-500 text-sm">({business.rating_count} reviews)</span>
+                              </div>
+                            ) : (
+                              <div className="flex items-center text-blue-600 text-sm">
+                                <Star className="h-4 w-4 text-blue-400" />
+                                <span className="ml-1">New to Haulers</span>
+                              </div>
+                            )}
                             {business.distance_km && (
                               <div className="flex items-center text-gray-500 text-sm">
                                 <Navigation className="h-4 w-4 mr-1" />
