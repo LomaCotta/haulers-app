@@ -60,12 +60,16 @@ export async function middleware(request: NextRequest) {
     response.headers.set('Referrer-Policy', 'origin-when-cross-origin')
     response.headers.set('X-Robots-Tag', 'noindex, nofollow')
     
-    // Redirect to the main domain with category parameter for now
-    // In production, you'd want to handle this differently
+    // Redirect to add the category query param in development only once
+    // Avoid redirect loops by checking if it's already set
     if (process.env.NODE_ENV === 'development') {
-      // For development, we'll use query parameters
-      url.searchParams.set('category', category.id)
-      return NextResponse.redirect(url)
+      const currentCategoryParam = url.searchParams.get('category')
+      if (currentCategoryParam !== category.id) {
+        url.searchParams.set('category', category.id)
+        return NextResponse.redirect(url)
+      }
+      // If already present, just continue without redirect
+      return response
     }
     
     return response

@@ -61,6 +61,11 @@ A nonprofit, transparent directory and marketplace for local moving and hauling 
    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_your_key
    STRIPE_SECRET_KEY=sk_test_your_key
    STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret
+
+   # Movers module (Google Calendar)
+   GOOGLE_SERVICE_ACCOUNT_EMAIL=svc-...@project.iam.gserviceaccount.com
+   GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+   GOOGLE_CALENDAR_ID=your_calendar_id@group.calendar.google.com
    ```
 
 ### Database Setup

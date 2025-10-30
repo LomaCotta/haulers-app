@@ -336,9 +336,24 @@ export default function BusinessProfilePage() {
   }
 
   // Derived visibility flags for trustworthy display
+  const isMovers = Array.isArray((business as any).service_types)
+    ? (business as any).service_types.some((t: string) => (t || '').toLowerCase().includes('moving'))
+    : true
   const hasYears = business.years_experience != null && business.years_experience > 0
   const hasCompletion = business.completion_rate != null && business.completion_rate > 0
   const hasJobs = business.total_jobs != null && business.total_jobs > 0
+  const BookingCTA = () => (
+    <div className="flex gap-3">
+      {isMovers && (
+        <Button asChild>
+          <Link href={`/movers/book?providerId=${business.id}`}>
+            Book Now
+          </Link>
+        </Button>
+      )}
+    </div>
+  )
+
   // Only show response time if we have bookings or reviews to compute it from
   const hasResponse = business.response_time_hours != null 
     && business.response_time_hours > 0 
@@ -435,6 +450,8 @@ export default function BusinessProfilePage() {
                   Share
                 </Button>
               </div>
+              {/* Booking CTA for movers */}
+              <BookingCTA />
             </div>
           </div>
         </div>
@@ -490,10 +507,12 @@ export default function BusinessProfilePage() {
                   <Button 
                     size="lg" 
                     className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 text-lg font-semibold shadow-lg"
-                    onClick={() => setShowBookingForm(true)}
+                    asChild
                   >
-                    <Calendar className="w-5 h-5 mr-2" />
-                    Book Now
+                    <Link href={`/movers/book?providerId=${business.id}`}>
+                      <Calendar className="w-5 h-5 mr-2" />
+                      Book Now
+                    </Link>
                   </Button>
                   
                   <Button size="lg" variant="outline" className="px-6 py-4">
@@ -839,13 +858,11 @@ export default function BusinessProfilePage() {
               <CardContent className="p-6">
                 <h3 className="font-bold text-lg mb-4">Quick Actions</h3>
                 <div className="space-y-3">
-                  <Button 
-                    className="w-full justify-start" 
-                    variant="outline"
-                    onClick={() => setShowBookingForm(true)}
-                  >
-                    <MessageSquare className="w-4 h-4 mr-2" />
-                    Send Message
+                  <Button className="w-full justify-start" variant="outline" asChild>
+                    <Link href={`/movers/book?providerId=${business.id}`}>
+                      <MessageSquare className="w-4 h-4 mr-2" />
+                      Send Message
+                    </Link>
                   </Button>
                   
                   <Button 
@@ -872,17 +889,7 @@ export default function BusinessProfilePage() {
         </div>
       </div>
 
-      {/* Modern Booking System */}
-      {showBookingForm && business && (
-        <ModernBookingSystem
-          businessId={business.id}
-          businessName={business.name}
-          baseRateCents={business.base_rate_cents}
-          hourlyRateCents={business.hourly_rate_cents}
-          serviceTypes={business.service_types}
-          onBookingSuccess={handleBookingSuccess}
-        />
-      )}
+      {/* Modern Booking System disabled in favor of new movers wizard */}
     </div>
   )
 }

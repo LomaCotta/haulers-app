@@ -241,6 +241,19 @@ export default function BusinessesPage() {
                         Edit
                       </Link>
                     </Button>
+                  {/* Movers-specific manage + book actions: force-visible for testing */}
+                  <>
+                    <Button size="sm" variant="default" asChild>
+                      <Link href={`/dashboard/movers/settings?businessId=${business.id}`}>
+                        Manage Movers
+                      </Link>
+                    </Button>
+                    <Button size="sm" variant="outline" asChild>
+                      <Link href={`/movers/book?providerId=${business.id}`}>
+                        Book
+                      </Link>
+                    </Button>
+                  </>
                     
                     {/* Resubmit button for rejected businesses */}
                     {business.verification_status === 'rejected' && (
