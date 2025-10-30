@@ -5,7 +5,7 @@ const stripeSecret = process.env.STRIPE_SECRET_KEY
 if (!stripeSecret) {
   console.warn('STRIPE_SECRET_KEY not set; payments API will return 503')
 }
-const stripe = stripeSecret ? new Stripe(stripeSecret, { apiVersion: '2024-06-20' }) : null
+const stripe = stripeSecret ? new Stripe(stripeSecret, { apiVersion: '2023-10-16' }) : null
 
 export async function POST(request: NextRequest) {
   try {

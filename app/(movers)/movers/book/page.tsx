@@ -1,6 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react"
+export const dynamic = 'force-dynamic'
+
+import { Suspense, useMemo, useState } from "react"
 import { useSearchParams } from 'next/navigation'
 
 type MoveDetails = {
@@ -13,7 +15,7 @@ type MoveDetails = {
   moveDate: string
 }
 
-export default function MoversBookingWizard() {
+function WizardInner() {
   const [step, setStep] = useState(1)
   const [details, setDetails] = useState<MoveDetails>({
     pickupAddress: "",
@@ -170,6 +172,14 @@ export default function MoversBookingWizard() {
         </section>
       )}
     </div>
+  )
+}
+
+export default function MoversBookingWizard() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <WizardInner />
+    </Suspense>
   )
 }
 

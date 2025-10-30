@@ -1,5 +1,8 @@
 "use client";
 
+export const dynamic = 'force-dynamic'
+
+import { Suspense } from 'react'
 import { Elements } from '@stripe/react-stripe-js'
 import { loadStripe } from '@stripe/stripe-js'
 import { PaymentForm } from '@/components/movers/PaymentForm'
@@ -7,7 +10,7 @@ import { useSearchParams } from 'next/navigation'
 
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '')
 
-export default function MoversCheckoutPage() {
+function CheckoutInner() {
   const params = useSearchParams()
   const quoteId = params.get('quoteId') || 'demo-quote'
   const amount = Number(params.get('amount') || 200)
@@ -23,6 +26,14 @@ export default function MoversCheckoutPage() {
         <PaymentForm quoteId={quoteId} amount={amount} />
       </Elements>
     </div>
+  )
+}
+
+export default function MoversCheckoutPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading…</div>}>
+      <CheckoutInner />
+    </Suspense>
   )
 }
 
