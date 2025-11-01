@@ -248,10 +248,13 @@ export default function BusinessesPage() {
                         Manage Movers
                       </Link>
                     </Button>
-                    <Button size="sm" variant="outline" asChild>
-                      <Link href={`/movers/book?providerId=${business.id}`}>
-                        Book
-                      </Link>
+                    <Button size="sm" variant="outline" onClick={() => {
+                      const makeSlug = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+                      const citySlug = makeSlug(business.city)
+                      const companySlug = makeSlug(business.name)
+                      window.location.href = `/movers/${citySlug}/${companySlug}/book`
+                    }}>
+                      Book
                     </Button>
                   </>
                     

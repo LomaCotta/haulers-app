@@ -4,6 +4,7 @@ import { z } from 'zod'
 export const quoteSchema = z.object({
   pickup_address: z.string().optional().default(''),
   dropoff_address: z.string().optional().default(''),
+  all_addresses: z.array(z.string()).optional().default([]), // All addresses for furthest calculation
   move_size: z.string().optional().default(''),
   move_date: z.coerce.date().optional(),
   full_name: z.string().optional().default(''),
@@ -12,10 +13,22 @@ export const quoteSchema = z.object({
 
   // Service options
   packing_help: z.string().optional().default('none'),
+  packing_rooms: z.number().int().min(0).optional().default(0),
+  packing_materials: z.array(z.object({
+    name: z.string(),
+    price_cents: z.number(),
+    quantity: z.number().optional().default(1)
+  })).optional().default([]),
   storage: z.string().optional().default('none'),
   storage_size: z.string().optional().default(''),
   storage_duration: z.string().optional().default(''),
   ins_coverage: z.string().optional().default('base'),
+  stairs_flights: z.number().int().min(0).optional().default(0),
+  heavy_items: z.array(z.object({
+    band: z.string(),
+    count: z.number().int().min(0),
+    price_cents: z.number().int().min(0)
+  })).optional().default([]),
 
   // Timing
   arrival_time: z.string().optional().default(''),

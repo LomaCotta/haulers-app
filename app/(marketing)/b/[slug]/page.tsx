@@ -342,17 +342,32 @@ export default function BusinessProfilePage() {
   const hasYears = business.years_experience != null && business.years_experience > 0
   const hasCompletion = business.completion_rate != null && business.completion_rate > 0
   const hasJobs = business.total_jobs != null && business.total_jobs > 0
-  const BookingCTA = () => (
-    <div className="flex gap-3">
-      {isMovers && (
-        <Button asChild>
-          <Link href={`/movers/book?providerId=${business.id}`}>
-            Book Now
-          </Link>
-        </Button>
-      )}
-    </div>
-  )
+  const BookingCTA = () => {
+    const [providerLink, setProviderLink] = useState<string>('')
+    const makeSlug = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+    useEffect(() => {
+      (async () => {
+        try {
+          const citySlug = makeSlug(business.city || '')
+          const companySlug = makeSlug(business.name || '')
+          setProviderLink(`/movers/${citySlug}/${companySlug}/book`)
+        } catch {}
+      })()
+    }, [business.id, supabase])
+    return (
+      <div className="flex">
+        {isMovers && (
+          <Button
+            size="lg"
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white shadow-xl px-6 py-3 rounded-xl"
+            asChild
+          >
+            <Link href={providerLink}>Book Now</Link>
+          </Button>
+        )}
+      </div>
+    )
+  }
 
   // Only show response time if we have bookings or reviews to compute it from
   const hasResponse = business.response_time_hours != null 
@@ -439,17 +454,7 @@ export default function BusinessProfilePage() {
                 </div>
               </div>
               
-              {/* Action Buttons */}
-              <div className="flex space-x-3">
-                <Button size="sm" variant="outline" className="bg-white/20 border-white/30 text-white hover:bg-white/30">
-                  <Heart className="w-4 h-4 mr-2" />
-                  Save
-                </Button>
-                <Button size="sm" variant="outline" className="bg-white/20 border-white/30 text-white hover:bg-white/30">
-                  <Share2 className="w-4 h-4 mr-2" />
-                  Share
-                </Button>
-              </div>
+              {/* Action Buttons removed per design */}
               {/* Booking CTA for movers */}
               <BookingCTA />
             </div>
@@ -462,76 +467,44 @@ export default function BusinessProfilePage() {
           {/* Main Content */}
           <div className="lg:col-span-2 space-y-6">
             {/* About / Description */}
-            {business.description && business.description.trim().length > 0 && (
-              <Card className="border-0 shadow-xl">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-2xl font-bold">About</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-700 leading-relaxed whitespace-pre-line">
+            <Card className="border-0 shadow-xl">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-2xl font-bold">About</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {business.description && business.description.trim().length > 0 && (
+                  <p className="text-gray-800 leading-relaxed text-lg">
                     {business.description}
                   </p>
-                </CardContent>
-              </Card>
-            )}
+                )}
+                {Array.isArray(business.service_types) && business.service_types.length > 0 && (
+                  <div className="flex flex-wrap gap-2">
+                    {business.service_types
+                      .filter((t: string) => (t || '').toLowerCase() !== 'moving-services' && (t || '').toLowerCase() !== 'moving services')
+                      .map((t: string) => (
+                      <Badge key={t} variant="secondary" className="px-3 py-1 text-sm">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
             {/* Pricing & Booking Card */}
             <Card className="border-0 shadow-xl bg-gradient-to-r from-green-50 to-emerald-50">
               <CardContent className="p-8">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Pricing & Booking</h2>
-                    <div className="flex items-center space-x-4">
-                      {business.base_rate_cents > 0 && (
-                        <div className="text-3xl font-bold text-green-600">
-                          {formatPrice(business.base_rate_cents)}
-                          <span className="text-lg text-gray-600 ml-2">base rate</span>
-                        </div>
-                      )}
-                      {business.hourly_rate_cents > 0 && (
-                        <div className="text-2xl font-semibold text-gray-700">
-                          {formatPrice(business.hourly_rate_cents)}/hour
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  
-                  {hasResponse && (
-                    <div className="text-right">
-                      <div className="text-sm text-gray-600 mb-1">Response Time</div>
-                      <div className="text-lg font-semibold text-blue-600">{getResponseTimeText()}</div>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="flex space-x-4">
+                <div className="flex">
                   <Button 
                     size="lg" 
                     className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 text-lg font-semibold shadow-lg"
                     asChild
                   >
-                    <Link href={`/movers/book?providerId=${business.id}`}>
+                    <Link href={`/movers/book?businessId=${business.id}`}>
                       <Calendar className="w-5 h-5 mr-2" />
                       Book Now
                     </Link>
                   </Button>
-                  
-                  <Button size="lg" variant="outline" className="px-6 py-4">
-                    <MessageCircle className="w-5 h-5 mr-2" />
-                    Message
-                  </Button>
-                  
-                  <Button size="lg" variant="outline" className="px-6 py-4">
-                    <Phone className="w-5 h-5 mr-2" />
-                    Call
-                  </Button>
                 </div>
-                
-                {business.phone && (
-                  <div className="mt-4 flex items-center text-gray-600">
-                    <Phone className="w-4 h-4 mr-2" />
-                    <span className="font-medium">{business.phone}</span>
-                  </div>
-                )}
               </CardContent>
             </Card>
 
@@ -859,7 +832,7 @@ export default function BusinessProfilePage() {
                 <h3 className="font-bold text-lg mb-4">Quick Actions</h3>
                 <div className="space-y-3">
                   <Button className="w-full justify-start" variant="outline" asChild>
-                    <Link href={`/movers/book?providerId=${business.id}`}>
+                    <Link href={`/movers/${(business.city||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')}/${(business.name||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/(^-|-$)/g,'')}/book`}>
                       <MessageSquare className="w-4 h-4 mr-2" />
                       Send Message
                     </Link>
