@@ -252,14 +252,84 @@ export async function POST(request: NextRequest) {
     
     // If we get here, availability is confirmed - proceed with booking
 
-    // Create scheduled job using security definer function to bypass RLS
+    // STEP 1: ALWAYS create or update quote record FIRST using security definer function
+    // This ensures we have a quote_id before creating the scheduled job and bypasses RLS
+    let finalQuoteId: string | null = quoteId && quoteId !== 'null' ? quoteId : null
+    const userId = user?.id || null
+    
+    console.log('[Reservations API] STEP 1: Creating/updating quote')
+    console.log('[Reservations API] Provided quoteId:', quoteId)
+    console.log('[Reservations API] Customer info:', { fullName, email, phone, userId })
+    
+    // Use RPC function to create/update quote (bypasses RLS)
+    const { data: quoteIdFromRpc, error: quoteRpcError } = await supabase.rpc('create_or_update_movers_quote', {
+      p_provider_id: resolvedProviderId || null,
+      p_customer_id: userId,
+      p_full_name: fullName || '',
+      p_email: email || '',
+      p_phone: phone || '',
+      p_pickup_address: pickupAddresses?.[0] || '',
+      p_dropoff_address: deliveryAddresses?.[0] || '',
+      p_move_date: moveDate,
+      p_crew_size: teamSize || 2,
+      p_price_total_cents: totalPriceCents || 0,
+      p_status: 'confirmed',
+      p_existing_quote_id: finalQuoteId || null, // If quoteId provided, update it, otherwise create new
+    })
+    
+    if (quoteRpcError) {
+      console.error('[Reservations API] ❌ Error creating/updating quote via RPC:', quoteRpcError)
+      console.error('[Reservations API] Quote RPC error details:', JSON.stringify(quoteRpcError, null, 2))
+      
+      // Fallback: Try to find existing draft quote and update it manually
+      if (!finalQuoteId) {
+        console.log('[Reservations API] RPC failed, trying to find existing draft quote')
+        const { data: existingDraftQuote } = await supabase
+          .from('movers_quotes')
+          .select('id')
+          .eq('provider_id', resolvedProviderId)
+          .eq('move_date', moveDate)
+          .eq('status', 'draft')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        
+        if (existingDraftQuote?.id) {
+          finalQuoteId = existingDraftQuote.id
+          console.log('[Reservations API] Found draft quote to use:', finalQuoteId)
+        }
+      }
+      
+      // If still no quote_id, this is a critical error but we'll continue
+      if (!finalQuoteId) {
+        console.error('[Reservations API] ⚠️ CRITICAL: Could not create or find quote. Reservation will proceed without quote_id.')
+      }
+    } else if (quoteIdFromRpc) {
+      finalQuoteId = quoteIdFromRpc
+      console.log('[Reservations API] ✅ Successfully created/updated quote via RPC:', finalQuoteId)
+    } else {
+      console.error('[Reservations API] ❌ RPC returned no quote_id. This should not happen!')
+    }
+    
+    // Validate we have a quote_id before proceeding
+    if (!finalQuoteId) {
+      console.error('[Reservations API] ⚠️ WARNING: No quote_id available. Scheduled job will be created without quote link.')
+      console.error('[Reservations API] This means customer info will not be linked to the reservation.')
+    } else {
+      console.log('[Reservations API] ✅ Quote ID confirmed:', finalQuoteId)
+    }
+
+    // STEP 2: Create scheduled job using security definer function to bypass RLS
+    // Now we have finalQuoteId to link it properly
     const scheduledStartTime = timeSlot === 'morning' ? '08:00:00' : '12:00:00'
     const scheduledEndTime = timeSlot === 'morning' ? '12:00:00' : '17:00:00'
+
+    console.log('[Reservations API] Creating scheduled job with quote_id:', finalQuoteId)
 
     // Use RPC function to create scheduled job (bypasses RLS)
     const { data: jobId, error: jobError } = await supabase.rpc('create_movers_scheduled_job', {
       p_provider_id: resolvedProviderId,
-      p_quote_id: quoteId || null,
+      p_quote_id: finalQuoteId || null, // Use the quote we just created/updated
       p_scheduled_date: moveDate,
       p_time_slot: timeSlot,
       p_scheduled_start_time: scheduledStartTime,
@@ -294,6 +364,8 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
+    console.log('[Reservations API] ✅ Created scheduled job:', jobId, 'with quote_id:', finalQuoteId)
+
     // Fetch the created scheduled job to return it
     const { data: scheduledJob, error: fetchError } = await supabase
       .from('movers_scheduled_jobs')
@@ -306,72 +378,102 @@ export async function POST(request: NextRequest) {
       // Continue anyway - the job was created, we just can't return it
     }
 
-           // Create or update quote record
-           let finalQuoteId = quoteId
-           if (!quoteId || quoteId === 'null') {
-             // Quote wasn't created yet (might be due to RLS for unauthenticated users)
-             // Create it now during reservation
-             console.log('[Reservations API] Creating quote record during reservation')
-             // Get user ID if authenticated
-             const userId = user?.id || null
-             
-             const { data: newQuote, error: quoteCreateError } = await supabase
-               .from('movers_quotes')
-               .insert({
-                 provider_id: resolvedProviderId || null,
-                 customer_id: userId, // Link to user if authenticated
-                 full_name: fullName,
-                 email: email,
-                 phone: phone,
-                 pickup_address: pickupAddresses?.[0] || '',
-                 dropoff_address: deliveryAddresses?.[0] || '',
-                 move_date: moveDate,
-                 crew_size: teamSize || 2,
-                 price_total_cents: totalPriceCents || 0,
-                 status: 'confirmed',
-               })
-               .select('id')
-               .single()
-             
-             if (quoteCreateError) {
-               console.error('[Reservations API] Error creating quote:', quoteCreateError)
-               // Non-fatal - continue with reservation
-             } else if (newQuote) {
-               finalQuoteId = newQuote.id
-               console.log('[Reservations API] Created quote:', finalQuoteId)
-             }
-           } else {
-             // Update existing quote status
-             await supabase
-               .from('movers_quotes')
-               .update({ 
-                 status: 'confirmed',
-                 full_name: fullName,
-                 email: email,
-                 phone: phone,
-               })
-               .eq('id', quoteId)
-           }
-           
-           // Update scheduled job with quote ID if we have one
-           if (finalQuoteId && jobId) {
-             // Use RPC function or direct update - but we need to update via function or service role
-             // For now, try to update - if it fails due to RLS, that's okay, we'll update it on provider side
-             try {
-               const { error: updateError } = await supabase
-                 .from('movers_scheduled_jobs')
-                 .update({ quote_id: finalQuoteId })
-                 .eq('id', jobId)
-               
-               if (updateError) {
-                 console.warn('[Reservations API] Could not update quote_id on scheduled job (RLS):', updateError)
-                 // Non-fatal - quote will be linked when provider views the job
-               }
-             } catch (err) {
-               console.warn('[Reservations API] Exception updating quote_id on scheduled job:', err)
-               // Non-fatal - quote will be linked when provider views the job
-             }
-           }
+    // CRITICAL: Also create a row in the bookings table so customers can see their reservations
+    let bookingId: string | null = null
+    if (userId && businessId) {
+      // Get business info for booking
+      const { data: business } = await supabase
+        .from('businesses')
+        .select('id, name')
+        .eq('id', businessId)
+        .maybeSingle()
+
+      if (business) {
+        // Convert time slot to time format
+        const timeSlotMap: Record<string, string> = {
+          'morning': '08:00:00',
+          'afternoon': '12:00:00',
+          'full_day': '08:00:00'
+        }
+        
+        // Get pickup and delivery addresses
+        const pickupAddr = pickupAddresses?.[0] || ''
+        const deliveryAddr = deliveryAddresses?.[0] || ''
+        const serviceAddress = pickupAddr || deliveryAddr || ''
+        
+        // Extract city/state/zip from address (improved parsing)
+        // Typical format: "123 Main St, City, State ZIP" or "123 Main St, City, State"
+        let city = ''
+        let state = ''
+        let zip = ''
+        
+        if (serviceAddress) {
+          const addressParts = serviceAddress.split(',').map((s: string) => s.trim())
+          // Last part should be "State ZIP" or just "State"
+          if (addressParts.length >= 2) {
+            city = addressParts[addressParts.length - 2] || ''
+            const stateZipPart = addressParts[addressParts.length - 1] || ''
+            // Try to parse state and zip (format: "CA 90210" or "California 90210")
+            const stateZipMatch = stateZipPart.match(/^(.+?)\s+(\d{5}(?:-\d{4})?)$/)
+            if (stateZipMatch) {
+              state = stateZipMatch[1].trim()
+              zip = stateZipMatch[2].trim()
+            } else {
+              // No zip found, just use as state
+              state = stateZipPart.trim()
+            }
+          } else if (addressParts.length === 1) {
+            // Single part address - try to extract what we can
+            city = addressParts[0] || ''
+          }
+        }
+        
+        // Create booking record for customer visibility
+        const { data: booking, error: bookingError } = await supabase
+          .from('bookings')
+          .insert({
+            customer_id: userId,
+            business_id: businessId,
+            service_type: 'moving',
+            booking_status: 'confirmed',
+            requested_date: moveDate,
+            requested_time: timeSlotMap[timeSlot] || '09:00:00',
+            estimated_duration_hours: timeSlot === 'full_day' ? 8 : 4,
+            service_address: serviceAddress,
+            service_city: city || '',
+            service_state: state || '',
+            service_postal_code: zip || '',
+            base_price_cents: totalPriceCents || 0,
+            total_price_cents: totalPriceCents || 0,
+            customer_phone: phone,
+            customer_email: email,
+            customer_notes: `Reservation via movers booking system. Quote ID: ${finalQuoteId || 'N/A'}`,
+            service_details: {
+              quote_id: finalQuoteId,
+              scheduled_job_id: jobId,
+              pickup_addresses: pickupAddresses || [],
+              delivery_addresses: deliveryAddresses || [],
+              crew_size: teamSize || 2,
+              time_slot: timeSlot,
+              source: 'movers_reservation'
+            }
+          })
+          .select('id')
+          .single()
+        
+        if (bookingError) {
+          console.error('[Reservations API] Error creating booking record:', bookingError)
+          console.error('[Reservations API] Booking error details:', JSON.stringify(bookingError, null, 2))
+          // This is critical - without this, customers can't see their reservation
+          // But don't fail the whole reservation
+        } else if (booking) {
+          bookingId = booking.id
+          console.log('[Reservations API] Successfully created booking record for customer:', bookingId)
+        }
+      }
+    } else {
+      console.warn('[Reservations API] Cannot create booking record - missing userId or businessId:', { userId, businessId })
+    }
 
     // Get provider owner user_id for notifications
     const { data: provider } = await supabase
@@ -406,8 +508,19 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ 
       success: true,
+      reservation_id: jobId || scheduledJob?.id,
+      scheduled_job_id: jobId || scheduledJob?.id,
+      quote_id: finalQuoteId,
+      booking_id: bookingId,
       scheduled_job: scheduledJob || { id: jobId },
-      reservation_id: jobId || scheduledJob?.id
+      // Provide reference IDs for client to track their reservation
+      references: {
+        scheduled_job_id: jobId || scheduledJob?.id,
+        quote_id: finalQuoteId,
+        booking_id: bookingId,
+        provider_id: resolvedProviderId,
+        business_id: businessId
+      }
     })
   } catch (error) {
     console.error('[Reservations API] Error creating reservation:', error)

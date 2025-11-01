@@ -712,6 +712,7 @@ function ReservationSubmissionStep({
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reservationData, setReservationData] = useState<any>(null)
 
   const handleSubmit = async () => {
     console.log('[Reservation Submit] Checking required fields:', {
@@ -788,6 +789,8 @@ function ReservationSubmissionStep({
         throw fullError
       }
 
+      // Store reservation data including quote_id for display
+      setReservationData(data)
       setSuccess(true)
     } catch (e) {
       console.error('Error submitting reservation:', e)
@@ -808,23 +811,82 @@ function ReservationSubmissionStep({
   }
 
   if (success) {
+    const quoteId = reservationData?.quote_id || reservationData?.references?.quote_id
+    const bookingId = reservationData?.booking_id || reservationData?.references?.booking_id
+    const reservationId = reservationData?.reservation_id || reservationData?.scheduled_job_id
+    
     return (
-      <section className="text-center py-12">
+      <section className="text-center py-12 max-w-2xl mx-auto px-4">
         <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-6">
           <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
         </div>
         <h1 className="text-3xl font-bold text-gray-900 mb-4">Reservation Confirmed!</h1>
-        <p className="text-lg text-gray-600 mb-8">
+        <p className="text-lg text-gray-600 mb-6">
           Your move has been scheduled. We'll send you a confirmation email shortly.
         </p>
-        <button
-          className="px-8 py-4 rounded-xl bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white font-semibold text-lg shadow-lg shadow-orange-500/20 hover:shadow-xl"
-          onClick={() => window.location.href = '/dashboard/bookings'}
-        >
-          View My Bookings →
-        </button>
+        
+        {/* Reference Information */}
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 mb-8 text-left">
+          <h3 className="font-semibold text-gray-900 mb-4">Your Reservation Details</h3>
+          <div className="space-y-2 text-sm">
+            {quoteId && (
+              <div className="flex items-center justify-between py-2 border-b border-gray-200">
+                <span className="text-gray-600 font-medium">Quote ID:</span>
+                <div className="flex items-center gap-2">
+                  <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
+                    {quoteId.slice(0, 8)}...
+                  </code>
+                  <a
+                    href={`/quotes/${quoteId}`}
+                    className="text-orange-600 hover:text-orange-700 font-medium underline text-xs"
+                  >
+                    View Quote/Receipt
+                  </a>
+                </div>
+              </div>
+            )}
+            {bookingId && (
+              <div className="flex items-center justify-between py-2 border-b border-gray-200">
+                <span className="text-gray-600 font-medium">Booking ID:</span>
+                <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
+                  {bookingId.slice(0, 8)}...
+                </code>
+              </div>
+            )}
+            {reservationId && (
+              <div className="flex items-center justify-between py-2">
+                <span className="text-gray-600 font-medium">Reservation ID:</span>
+                <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
+                  {reservationId.slice(0, 8)}...
+                </code>
+              </div>
+            )}
+          </div>
+          {quoteId && (
+            <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-200">
+              💡 Save your Quote ID for reference: <code className="font-mono">{quoteId}</code>
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          {quoteId && (
+            <button
+              className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-lg"
+              onClick={() => window.location.href = `/quotes/${quoteId}`}
+            >
+              View Quote & Receipt
+            </button>
+          )}
+          <button
+            className="px-8 py-4 rounded-xl bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white font-semibold text-lg shadow-lg shadow-orange-500/20 hover:shadow-xl"
+            onClick={() => window.location.href = '/dashboard/bookings'}
+          >
+            View My Bookings →
+          </button>
+        </div>
       </section>
     )
   }

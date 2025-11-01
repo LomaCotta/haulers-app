@@ -23,7 +23,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Save,
-  Settings
+  Settings,
+  FileText
 } from 'lucide-react'
 
 interface Booking {
@@ -1388,11 +1389,32 @@ export default function BookingsPage() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {bookings.map((booking) => (
+          {bookings.map((booking) => {
+            // Extract quote_id from service_details if it's a movers reservation
+            const serviceDetails = booking.service_details || {}
+            const quoteId = serviceDetails.quote_id || serviceDetails.quoteId || null
+            const isMoversReservation = serviceDetails.source === 'movers_reservation'
+            
+            return (
             <Card key={booking.id} className="hover:shadow-md transition-shadow">
               <CardContent className="p-6">
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
+                    {/* Quote ID Badge */}
+                    {quoteId && (
+                      <div className="mb-3 flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          <FileText className="w-3 h-3 mr-1" />
+                          Quote: {quoteId.slice(0, 8)}...
+                        </Badge>
+                        <Link 
+                          href={`/quotes/${quoteId}`}
+                          className="text-xs text-blue-600 hover:text-blue-800 underline"
+                        >
+                          View Quote & Receipt
+                        </Link>
+                      </div>
+                    )}
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="text-lg font-semibold">{booking.business?.name || 'Booking'}</h3>
                       <Badge className={getStatusColor(booking.booking_status || (booking as any).status || 'pending')}>
@@ -1471,7 +1493,8 @@ export default function BookingsPage() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            )
+          })}
         </div>
       )}
         </>
