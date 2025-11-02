@@ -42,6 +42,7 @@ import { useServiceCategory } from "@/hooks/use-service-category"
 import { SERVICE_CATEGORIES } from "@/config/service-categories"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 
 interface Business {
   id: string
@@ -124,6 +125,7 @@ const FEATURE_FILTERS = [
 ]
 
 export default function FindPage() {
+  const router = useRouter()
   const serviceCategory = useServiceCategory()
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [loading, setLoading] = useState(false)
@@ -763,13 +765,14 @@ export default function FindPage() {
                             ) : (
                               <div className="flex flex-col items-end gap-1">
                                 <Button 
-                                  asChild 
                                   className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-11 px-6 rounded-lg font-semibold text-sm sm:text-base transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 whitespace-nowrap"
-                                  onClick={(e) => e.stopPropagation()}
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    router.push(`/movers/book?businessId=${business.id}`)
+                                  }}
                                 >
-                                  <Link href={getBookingUrl(business)} onClick={(e) => e.stopPropagation()}>
-                                    Book Now
-                                  </Link>
+                                  Book Now
                                 </Button>
                                 {business.service_types && business.service_types.length > 0 && (
                                   <span className="text-xs text-gray-400 opacity-50">

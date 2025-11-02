@@ -4,7 +4,7 @@ import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Button } from "@/components/ui/button"
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { Sheet, SheetContent, SheetTrigger, SheetTitle, SheetHeader } from "@/components/ui/sheet"
 import { Menu, X, User, Building2, BookOpen, Shield, DollarSign } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/hooks/use-auth"
@@ -20,6 +20,11 @@ export function Navigation({ user: propUser }: NavigationProps) {
   const { user, loading, signOut } = useAuth()
   const [isOpen, setIsOpen] = useState(false)
   const pathname = usePathname()
+
+  // Hide navigation on dashboard/admin pages (they have their own sidebar)
+  if (pathname?.startsWith('/dashboard') || pathname?.startsWith('/admin')) {
+    return null
+  }
 
   // Use prop user if provided, otherwise use auth hook
   const currentUser = propUser || user
@@ -49,9 +54,7 @@ export function Navigation({ user: propUser }: NavigationProps) {
     { href: "/dashboard/bookings", label: "My Bookings", icon: BookOpen },
   ]
 
-  const authLinks = currentUser ? [
-    { href: "/dashboard", label: "Dashboard" },
-  ] : [
+  const authLinks = currentUser ? [] : [
     { href: "/auth/signin", label: "Sign In" },
     { href: "/auth/signup", label: "Sign Up" },
   ]
@@ -116,42 +119,40 @@ export function Navigation({ user: propUser }: NavigationProps) {
             </div>
           )}
 
-          {/* Mobile Menu */}
+          {/* Mobile Menu - Premium Design */}
           <Sheet open={isOpen} onOpenChange={setIsOpen}>
             <SheetTrigger asChild>
-              <Button variant="ghost" size="sm" className="md:hidden">
+              <Button variant="ghost" size="sm" className="md:hidden hover:bg-orange-50 hover:text-orange-600">
                 <Menu className="h-5 w-5" />
               </Button>
             </SheetTrigger>
-            <SheetContent side="right" className="w-80">
-              <div className="flex flex-col space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-lg">Menu</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsOpen(false)}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
+            <SheetContent side="right" className="w-80 bg-gradient-to-br from-white to-gray-50 border-l border-gray-200">
+              <SheetHeader className="pb-6 border-b border-gray-200">
+                <SheetTitle className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  Menu
+                </SheetTitle>
+              </SheetHeader>
 
+              <div className="flex flex-col space-y-6 pt-6">
                 {/* Public Links */}
                 <div className="space-y-2">
-                  <h3 className="font-medium text-sm text-muted-foreground">Public</h3>
+                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider px-3 mb-2">Public</h3>
                   {publicLinks.map((link) => (
                     <Link
                       key={link.href}
                       href={link.href}
                       className={cn(
-                        "block px-3 py-2 text-sm rounded-md transition-colors",
+                        "flex items-center px-4 py-3 text-base rounded-lg transition-all duration-200 min-h-[44px]",
                         isActive(link.href) 
-                          ? "bg-primary text-primary-foreground" 
-                          : "hover:bg-muted"
+                          ? "bg-gradient-to-r from-orange-50 to-orange-50/50 text-orange-600 shadow-sm border-l-4 border-orange-500 font-semibold" 
+                          : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 font-medium"
                       )}
                       onClick={() => setIsOpen(false)}
                     >
-                      {link.label}
+                      <span>{link.label}</span>
+                      {isActive(link.href) && (
+                        <div className="ml-auto w-1.5 h-1.5 bg-orange-500 rounded-full"></div>
+                      )}
                     </Link>
                   ))}
                 </div>
@@ -159,56 +160,73 @@ export function Navigation({ user: propUser }: NavigationProps) {
                 {/* Dashboard Links */}
                 {currentUser && (
                   <div className="space-y-2">
-                    <h3 className="font-medium text-sm text-muted-foreground">Dashboard</h3>
+                    <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider px-3 mb-2">Dashboard</h3>
                     {dashboardLinks.map((link) => (
                       <Link
                         key={link.href}
                         href={link.href}
                         className={cn(
-                          "flex items-center space-x-2 px-3 py-2 text-sm rounded-md transition-colors",
+                          "flex items-center space-x-3 px-4 py-3 text-base rounded-lg transition-all duration-200 min-h-[44px]",
                           isActive(link.href) 
-                            ? "bg-primary text-primary-foreground" 
-                            : "hover:bg-muted"
+                            ? "bg-gradient-to-r from-orange-50 to-orange-50/50 text-orange-600 shadow-sm border-l-4 border-orange-500 font-semibold" 
+                            : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 font-medium"
                         )}
                         onClick={() => setIsOpen(false)}
                       >
-                        {link.icon && <link.icon className="h-4 w-4" />}
+                        {link.icon && (
+                          <link.icon className={cn(
+                            "h-5 w-5 flex-shrink-0",
+                            isActive(link.href) ? "text-orange-600" : "text-gray-500"
+                          )} />
+                        )}
                         <span>{link.label}</span>
+                        {isActive(link.href) && (
+                          <div className="ml-auto w-1.5 h-1.5 bg-orange-500 rounded-full"></div>
+                        )}
                       </Link>
                     ))}
                   </div>
                 )}
 
-                {/* Auth Links */}
-                <div className="space-y-2">
-                  <h3 className="font-medium text-sm text-muted-foreground">Account</h3>
-                  {authLinks.map((link) => (
-                    <Link
-                      key={link.href}
-                      href={link.href}
-                      className={cn(
-                        "block px-3 py-2 text-sm rounded-md transition-colors",
-                        isActive(link.href) 
-                          ? "bg-primary text-primary-foreground" 
-                          : "hover:bg-muted"
-                      )}
-                      onClick={() => setIsOpen(false)}
-                    >
-                      {link.label}
-                    </Link>
-                  ))}
-                  {currentUser && (
+                {/* Account Actions */}
+                {authLinks.length > 0 && (
+                  <div className="space-y-2 pt-4 border-t border-gray-200">
+                    <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider px-3 mb-2">Account</h3>
+                    {authLinks.map((link) => (
+                      <Link
+                        key={link.href}
+                        href={link.href}
+                        className={cn(
+                          "flex items-center px-4 py-3 text-base rounded-lg transition-all duration-200 min-h-[44px]",
+                          isActive(link.href) 
+                            ? "bg-gradient-to-r from-orange-50 to-orange-50/50 text-orange-600 shadow-sm border-l-4 border-orange-500 font-semibold" 
+                            : "text-gray-700 hover:bg-gray-50 hover:text-gray-900 font-medium"
+                        )}
+                        onClick={() => setIsOpen(false)}
+                      >
+                        <span>{link.label}</span>
+                        {isActive(link.href) && (
+                          <div className="ml-auto w-1.5 h-1.5 bg-orange-500 rounded-full"></div>
+                        )}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Sign Out Button */}
+                {currentUser && (
+                  <div className="pt-4 border-t border-gray-200">
                     <button
                       onClick={() => {
                         signOut()
                         setIsOpen(false)
                       }}
-                      className="block w-full text-left px-3 py-2 text-sm rounded-md transition-colors hover:bg-muted"
+                      className="flex items-center w-full text-left px-4 py-3 text-base rounded-lg transition-all duration-200 min-h-[44px] text-gray-700 hover:bg-red-50 hover:text-red-600 font-medium"
                     >
-                      Sign Out
+                      <span>Sign Out</span>
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </SheetContent>
           </Sheet>

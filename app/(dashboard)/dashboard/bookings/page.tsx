@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,7 +13,6 @@ import {
   Calendar, 
   Building, 
   Star, 
-  MessageSquare,
   MapPin,
   Clock,
   DollarSign,
@@ -24,7 +23,13 @@ import {
   ChevronRight,
   Save,
   Settings,
-  FileText
+  Package,
+  Home,
+  Truck,
+  Stairs,
+  ShoppingBag,
+  Users,
+  PackageSearch
 } from 'lucide-react'
 
 interface Booking {
@@ -106,7 +111,19 @@ export default function BookingsPage() {
   const [saving, setSaving] = useState(false)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
+  const [eventsInitialized, setEventsInitialized] = useState(false)
+  const lastEventsRef = useRef<string>('')
+  const [userId, setUserId] = useState<string | null>(null)
   const supabase = createClient()
+
+  // Get user ID on mount
+  useEffect(() => {
+    const getUser = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      setUserId(user?.id || null)
+    }
+    getUser()
+  }, [supabase])
 
   useEffect(() => {
     checkUserType()
@@ -124,11 +141,72 @@ export default function BookingsPage() {
       } else {
         console.warn('isProvider is true but businessId is not set!')
       }
+      // ALSO fetch bookings where provider is the customer (they ordered from other providers)
+      fetchProviderCustomerBookings()
     } else {
       console.log('User is not a provider, fetching consumer bookings')
       fetchBookings()
     }
   }, [isProvider, providerId, businessId, currentMonth])
+
+  // Fetch bookings where the provider is the customer (bookings they made to other providers)
+  const fetchProviderCustomerBookings = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      console.log('Fetching bookings where provider is the customer:', user.id)
+      
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('customer_id', user.id)
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error('Error fetching provider customer bookings:', error)
+        return
+      }
+
+      console.log('Loaded provider customer bookings:', data?.length || 0)
+      
+      // Fetch business data for these bookings
+      const bookingsWithBusiness = await Promise.all((data || []).map(async (booking: any) => {
+        try {
+          const businessResult = booking.business_id ? await supabase
+            .from('businesses')
+            .select('id, name, city, state, rating_avg, rating_count')
+            .eq('id', booking.business_id)
+            .maybeSingle() : { data: null }
+          
+          return {
+            ...booking,
+            business: businessResult.data || null,
+            customer: null // They are the customer
+          }
+        } catch (err) {
+          console.error('Error fetching business for booking:', booking.id, err)
+          return booking
+        }
+      }))
+
+      // Add these to the bookings state (they'll show up in calendar)
+      setProviderBookings(prev => {
+        // Avoid duplicates
+        const existingIds = new Set(prev.map(b => b.id))
+        const newBookings = bookingsWithBusiness.filter(b => !existingIds.has(b.id))
+        const updated = [...prev, ...newBookings]
+        // Only mark as not loading if we have data or if this was the last fetch
+        if (updated.length > 0) {
+          setLoading(false)
+        }
+        return updated
+      })
+    } catch (error) {
+      console.error('Error in fetchProviderCustomerBookings:', error)
+      setLoading(false)
+    }
+  }
 
   // Fetch bookings for provider's business (in case they're not in movers_scheduled_jobs)
   const fetchProviderBookings = async () => {
@@ -318,6 +396,7 @@ export default function BookingsPage() {
       }))
       
       setProviderBookings(bookingsWithRelations)
+      setLoading(false) // Mark as loaded after fetching bookings
       
       // Also convert bookings to scheduled jobs format for calendar display
       if (data && data.length > 0) {
@@ -376,42 +455,50 @@ export default function BookingsPage() {
 
   // Convert scheduledJobs AND providerBookings to calendar events for providers
   useEffect(() => {
-    if (isProvider) {
+    if (!isProvider) {
+      console.log('Not a provider, skipping event conversion')
+      return
+    }
+    
+    console.log('🔄 Event conversion useEffect triggered', {
+      loading,
+      eventsInitialized,
+      scheduledJobsCount: scheduledJobs?.length || 0,
+      providerBookingsCount: providerBookings?.length || 0,
+      currentEventsCount: calendarEvents.length
+    })
+    
+    // ONLY skip if we're still loading AND have existing events (don't clear what's already there)
+    // If loading but no events yet, still proceed (might get initial data)
+    if (loading && eventsInitialized && calendarEvents.length > 0) {
+      console.log('⏸️ Skipping - still loading but have existing events (preserving)')
+      return
+    }
+    
+    const convertToEvents = async () => {
+      console.log('🔄 Starting event conversion...')
       const allEvents: CalendarEvent[] = []
       
       // Convert scheduledJobs to calendar events
       if (scheduledJobs && scheduledJobs.length > 0) {
-        console.log('Converting scheduled jobs to calendar events:', scheduledJobs.length, 'jobs')
         const jobEvents: CalendarEvent[] = scheduledJobs
-          .filter(job => {
-            const hasDate = job.scheduled_date
-            if (!hasDate) {
-              console.warn('Scheduled job missing date:', job.id)
-            }
-            return hasDate
-          })
+          .filter(job => job.scheduled_date)
           .map((job) => {
-            // Ensure date is in YYYY-MM-DD format
             let date: string = job.scheduled_date
             if (typeof date === 'string') {
-              // If it's already a string, make sure it's YYYY-MM-DD
               const dateObj = new Date(date)
               if (!isNaN(dateObj.getTime())) {
                 date = dateObj.toISOString().split('T')[0]
               }
             } else {
-              // Convert Date to string if needed
               date = String(date)
             }
             
-            // Map job status to CalendarEvent status type
             let status: 'scheduled' | 'completed' | 'confirmed' | 'in_progress' | 'cancelled' | undefined = 'scheduled'
             if (job.status === 'completed') status = 'completed'
             else if (job.status === 'confirmed') status = 'confirmed'
             else if (job.status === 'in_progress') status = 'in_progress'
             else if (job.status === 'cancelled') status = 'cancelled'
-            
-            console.log('Converting scheduled job:', job.id, 'date:', date, 'status:', job.status)
             
             return {
               id: job.id,
@@ -430,22 +517,16 @@ export default function BookingsPage() {
             }
           })
         allEvents.push(...jobEvents)
-        console.log('Created calendar events from scheduled jobs:', jobEvents.length)
       }
       
-      // Also convert providerBookings directly to calendar events (in addition to scheduledJobs)
+      // Convert providerBookings to calendar events
       if (providerBookings && providerBookings.length > 0) {
-        console.log('Converting provider bookings to calendar events:', providerBookings.length, 'bookings')
+        const { data: { user } } = await supabase.auth.getUser()
+        const userId = user?.id
+        
         const bookingEvents: CalendarEvent[] = providerBookings
-          .filter(booking => {
-            const hasDate = booking.requested_date || (booking as any).move_date
-            if (!hasDate) {
-              console.warn('Provider booking missing requested_date:', booking.id)
-            }
-            return hasDate
-          })
+          .filter(booking => booking.requested_date || (booking as any).move_date)
           .map((booking: any) => {
-            // Ensure date is in YYYY-MM-DD format
             let date = booking.requested_date || (booking as any).move_date
             if (date && typeof date === 'object' && date instanceof Date) {
               date = date.toISOString().split('T')[0]
@@ -456,7 +537,6 @@ export default function BookingsPage() {
               }
             }
             
-            // Map booking_status to CalendarEvent status type
             const bookingStatus = booking.booking_status || (booking as any).status || 'pending'
             let status: 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | undefined
             if (bookingStatus === 'confirmed' || bookingStatus === 'accepted') status = 'confirmed'
@@ -466,34 +546,39 @@ export default function BookingsPage() {
             else if (bookingStatus === 'pending' || bookingStatus === 'requested') status = 'scheduled'
             else status = 'scheduled'
             
-            // Get address
             const address = booking.service_address || 
                           (booking.service_details?.from_address) ||
                           (booking.service_details?.address) ||
                           ''
             
-            const customerName = booking.customer?.full_name || 
-                                booking.customer_email || 
-                                booking.customer_phone ||
-                                'Customer'
+            const isCustomerBooking = booking.customer_id === userId
             
-            console.log('Converting provider booking:', booking.id, 'date:', date, 'status:', status, 'customer:', customerName)
+            let title = ''
+            if (isCustomerBooking) {
+              title = booking.business?.name || 'Booking with Provider'
+            } else {
+              title = booking.customer?.full_name || 
+                      booking.customer_email || 
+                      booking.customer_phone ||
+                      'Customer'
+            }
             
             return {
               id: `provider-booking-${booking.id}`,
               date: date,
-              title: customerName,
+              title: title,
               time: booking.requested_time || '',
               type: 'booking' as const,
               status: status,
               metadata: {
-                customer: customerName,
+                customer: booking.customer?.full_name,
                 address: address,
                 city: booking.service_city || '',
                 state: booking.service_state || '',
                 price: booking.total_price_cents || booking.base_price_cents || 0,
                 serviceType: booking.service_type || '',
                 business: booking.business?.name,
+                isCustomerBooking: isCustomerBooking,
               },
             }
           })
@@ -502,20 +587,26 @@ export default function BookingsPage() {
         const existingIds = new Set(allEvents.map(e => e.id))
         const newBookingEvents = bookingEvents.filter(e => !existingIds.has(e.id))
         allEvents.push(...newBookingEvents)
-        console.log('Created calendar events from provider bookings:', bookingEvents.length, '(new:', newBookingEvents.length, ')')
       }
       
-      console.log('Total calendar events for provider:', allEvents.length)
+      // ALWAYS set events if we have any - never skip or compare
+      console.log('✅ Converting to events complete:', allEvents.length, 'events')
       if (allEvents.length > 0) {
-        console.log('Sample provider calendar events:', allEvents.slice(0, 3))
-        console.log('All provider event dates:', allEvents.map(e => e.date))
+        console.log('📅 Events being set:', allEvents.map(e => `${e.title} on ${e.date}`))
+        setCalendarEvents(allEvents)
+        setEventsInitialized(true)
+        lastEventsRef.current = JSON.stringify(allEvents.map(e => ({ id: e.id, date: e.date })).sort())
+      } else {
+        // Only mark as initialized if no events - don't clear existing events
+        if (!eventsInitialized) {
+          console.log('⏸️ No events yet - marking as initialized')
+          setEventsInitialized(true)
+        }
       }
-      setCalendarEvents(allEvents)
-    } else if (isProvider && (!scheduledJobs || scheduledJobs.length === 0) && (!providerBookings || providerBookings.length === 0)) {
-      console.log('No scheduled jobs or provider bookings to convert to calendar events')
-      setCalendarEvents([])
     }
-  }, [isProvider, scheduledJobs, providerBookings])
+    
+    convertToEvents()
+  }, [isProvider, scheduledJobs, providerBookings, loading])
 
       // Convert bookings to calendar events for consumers
   useEffect(() => {
@@ -889,39 +980,101 @@ export default function BookingsPage() {
             <h1 className="text-3xl font-bold text-gray-900">Manage Calendar</h1>
             <p className="text-gray-600">Set your availability and view scheduled jobs</p>
           </div>
-          <div className="flex gap-2 rounded-lg border border-gray-300 p-1 bg-white">
-            <Button
-              size="sm"
-              variant={viewMode === 'calendar' ? 'default' : 'ghost'}
-              onClick={() => setViewMode('calendar')}
-            >
-              <Calendar className="w-4 h-4 mr-2" />
-              Calendar
-            </Button>
-            <Button
-              size="sm"
-              variant={viewMode === 'list' ? 'default' : 'ghost'}
-              onClick={() => setViewMode('list')}
-            >
-              <Filter className="w-4 h-4 mr-2" />
-              List
-            </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <Button
+                size="sm"
+                onClick={() => setViewMode('calendar')}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'calendar'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                Calendar
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => setViewMode('list')}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'list'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Filter className="w-4 h-4 mr-2" />
+                List
+              </Button>
+            </div>
           </div>
         </div>
 
         {viewMode === 'calendar' ? (
           <div className="space-y-6">
-            {/* Availability Rules Editor */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Settings className="w-5 h-5" />
+            {/* Modern Calendar with Events */}
+            <Card className="border border-gray-200 shadow-sm overflow-hidden">
+              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                <CardTitle className="text-2xl font-semibold text-gray-900">Calendar</CardTitle>
+                <CardDescription>Click on any date or event to view full details</CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                {/* Debug: Show events count */}
+                {process.env.NODE_ENV === 'development' && (
+                  <div className="p-2 bg-yellow-100 text-xs">
+                    Events in state: {calendarEvents.length} | 
+                    Scheduled Jobs: {scheduledJobs?.length || 0} | 
+                    Provider Bookings: {providerBookings?.length || 0} |
+                    Loading: {loading ? 'yes' : 'no'} |
+                    Initialized: {eventsInitialized ? 'yes' : 'no'}
+                  </div>
+                )}
+                <ModernCalendar
+                  events={calendarEvents}
+                  onDateClick={(date) => {
+                    const dateStr = date.toISOString().split('T')[0]
+                    const dayEvents = calendarEvents.filter(e => e.date === dateStr)
+                    console.log('Date clicked:', dateStr, 'Events for date:', dayEvents.length, dayEvents.map(e => e.title))
+                    if (dayEvents.length > 0) {
+                      // Show first event (user can click on individual events for others)
+                      setSelectedEvent(dayEvents[0])
+                    } else {
+                      // Show empty state modal so user can see the date was clicked
+                      setSelectedEvent({
+                        id: `date-${dateStr}`,
+                        date: dateStr,
+                        title: `No events scheduled for ${new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+                        type: 'custom',
+                        metadata: {}
+                      })
+                    }
+                  }}
+                  onEventClick={(event) => {
+                    console.log('onEventClick called with event:', event.id, event.title)
+                    setSelectedEvent(event)
+                  }}
+                />
+              </CardContent>
+            </Card>
+
+            {selectedEvent && (
+              <EventModal
+                event={selectedEvent}
+                onClose={() => setSelectedEvent(null)}
+              />
+            )}
+
+            {/* Availability Rules Editor - Moved Below Calendar */}
+            <Card className="border border-gray-200 shadow-sm">
+              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+                <CardTitle className="flex items-center gap-2 text-xl font-semibold">
+                  <Settings className="w-5 h-5 text-orange-600" />
                   Weekly Availability Settings
                 </CardTitle>
                 <CardDescription>Set how many jobs you can take per day for morning and afternoon slots</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
+              <CardContent className="pt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {[0, 1, 2, 3, 4, 5, 6].map((weekday) => {
                     const rule = availabilityRules.find(r => r.weekday === weekday) || {
                       weekday,
@@ -937,11 +1090,11 @@ export default function BookingsPage() {
                     const ruleIndex = availabilityRules.findIndex(r => r.weekday === weekday)
 
                     return (
-                      <div key={weekday} className="p-4 border rounded-lg bg-gray-50">
+                      <div key={weekday} className="p-4 border-2 border-gray-200 rounded-xl bg-white hover:border-orange-300 transition-all duration-200">
                         <div className="flex items-center justify-between mb-4">
                           <h3 className="font-semibold text-gray-900">{fullDayNames[weekday]}</h3>
                         </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-4">
                           <div className="space-y-2">
                             <label className="text-sm font-medium text-gray-700">Morning Jobs</label>
                             <Input
@@ -957,6 +1110,7 @@ export default function BookingsPage() {
                                 }
                                 setAvailabilityRules(newRules)
                               }}
+                              className="border-gray-200 focus:border-orange-500 focus:ring-orange-500"
                             />
                             <p className="text-xs text-gray-500">Max jobs: 8:00 AM - 12:00 PM</p>
                           </div>
@@ -975,6 +1129,7 @@ export default function BookingsPage() {
                                 }
                                 setAvailabilityRules(newRules)
                               }}
+                              className="border-gray-200 focus:border-orange-500 focus:ring-orange-500"
                             />
                             <p className="text-xs text-gray-500">Max jobs: 12:00 PM - 5:00 PM</p>
                           </div>
@@ -984,32 +1139,17 @@ export default function BookingsPage() {
                   })}
                 </div>
                 <div className="mt-6 flex justify-end">
-                  <Button onClick={saveAvailabilityRules} disabled={saving}>
+                  <Button 
+                    onClick={saveAvailabilityRules} 
+                    disabled={saving}
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-11 px-6 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                  >
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? 'Saving...' : 'Save Availability Settings'}
                   </Button>
                 </div>
               </CardContent>
             </Card>
-
-            {/* Modern Calendar with Events */}
-            <ModernCalendar
-              events={calendarEvents}
-              onDateClick={(date) => {
-                const dateStr = date.toISOString().split('T')[0]
-                const dayEvents = calendarEvents.filter(e => e.date === dateStr)
-                if (dayEvents.length > 0) {
-                  setSelectedEvent(dayEvents[0])
-                }
-              }}
-              onEventClick={(event) => setSelectedEvent(event)}
-            />
-            {selectedEvent && (
-              <EventModal
-                event={selectedEvent}
-                onClose={() => setSelectedEvent(null)}
-              />
-            )}
           </div>
         ) : (
           <div className="space-y-6">
@@ -1126,107 +1266,212 @@ export default function BookingsPage() {
               </div>
             )}
 
-            {/* Bookings List - Bookings from bookings table */}
-            {providerBookings.length > 0 && (
-              <div>
-                <h2 className="text-xl font-semibold mb-4">Booking Requests</h2>
-                <div className="space-y-4">
-                  {providerBookings.map((booking) => {
-                    // Use actual schema columns
-                    const serviceDetails = booking.service_details || {}
-                    const fromAddress = serviceDetails.from_address || booking.service_address || ''
-                    const toAddress = serviceDetails.to_address || serviceDetails.delivery_address || ''
-                    const notes = booking.customer_notes || booking.business_notes || ''
-                    
-                    // Get customer name from booking relations
-                    const customerName = booking.customer?.full_name || 
-                                       booking.customer_phone || 
-                                       booking.customer_email ||
-                                       'Customer'
-                    
-                    // Map booking_status to display
-                    const bookingStatus = booking.booking_status || 'pending'
-                    
-                    return (
-                      <Card key={booking.id}>
-                        <CardContent className="p-6">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-3 mb-2">
-                                <Badge className={
-                                  bookingStatus === 'pending' || bookingStatus === 'requested'
-                                    ? 'bg-yellow-100 text-yellow-800'
-                                    : bookingStatus === 'confirmed'
-                                    ? 'bg-green-100 text-green-800'
-                                    : bookingStatus === 'in_progress'
-                                    ? 'bg-blue-100 text-blue-800'
-                                    : bookingStatus === 'completed'
-                                    ? 'bg-gray-100 text-gray-800'
-                                    : bookingStatus === 'cancelled' || bookingStatus === 'canceled'
-                                    ? 'bg-red-100 text-red-800'
-                                    : 'bg-gray-100 text-gray-800'
-                                }>
-                                  {bookingStatus.toUpperCase()}
-                                </Badge>
-                              </div>
-                              <div className="space-y-1 text-sm mb-3">
-                                <div><strong>Customer:</strong> {customerName}</div>
-                                {booking.customer_phone && (
-                                  <div><strong>Phone:</strong> {booking.customer_phone}</div>
-                                )}
-                                {booking.customer_email && (
-                                  <div><strong>Email:</strong> {booking.customer_email}</div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
-                                <div className="flex items-center gap-1">
-                                  <Calendar className="w-4 h-4" />
-                                  {booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}
+            {/* Separate Bookings: Booking Requests (for their business) vs My Orders (orders they made) */}
+            {providerBookings.length > 0 && (() => {
+              // Separate bookings into two categories
+              const bookingRequests = userId ? providerBookings.filter(b => b.customer_id !== userId) : providerBookings // Bookings FOR their business
+              const myOrders = userId ? providerBookings.filter(b => b.customer_id === userId) : [] // Bookings they MADE to other providers
+              
+              return (
+                <>
+                  {/* Booking Requests - bookings customers made to their business */}
+                  {bookingRequests.length > 0 && (
+                    <div>
+                      <h2 className="text-xl font-semibold mb-4">Booking Requests</h2>
+                      <div className="space-y-4">
+                        {bookingRequests.map((booking) => {
+                          // Use actual schema columns
+                          const serviceDetails = booking.service_details || {}
+                          const fromAddress = serviceDetails.from_address || booking.service_address || ''
+                          const notes = booking.customer_notes || booking.business_notes || ''
+                          
+                          // Get customer name from booking relations
+                          const customerName = booking.customer?.full_name || 
+                                             booking.customer_phone || 
+                                             booking.customer_email ||
+                                             'Customer'
+                          
+                          // Map booking_status to display
+                          const bookingStatus = booking.booking_status || 'pending'
+                          
+                          return (
+                            <Card key={booking.id}>
+                              <CardContent className="p-6">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                      <Badge className={
+                                        bookingStatus === 'pending' || bookingStatus === 'requested'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : bookingStatus === 'confirmed'
+                                          ? 'bg-green-100 text-green-800'
+                                          : bookingStatus === 'in_progress'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : bookingStatus === 'completed'
+                                          ? 'bg-gray-100 text-gray-800'
+                                          : bookingStatus === 'cancelled' || bookingStatus === 'canceled'
+                                          ? 'bg-red-100 text-red-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                      }>
+                                        {bookingStatus.toUpperCase()}
+                                      </Badge>
+                                    </div>
+                                    <div className="space-y-1 text-sm mb-3">
+                                      <div><strong>Customer:</strong> {customerName}</div>
+                                      {booking.customer_phone && (
+                                        <div><strong>Phone:</strong> {booking.customer_phone}</div>
+                                      )}
+                                      {booking.customer_email && (
+                                        <div><strong>Email:</strong> {booking.customer_email}</div>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
+                                      <div className="flex items-center gap-1">
+                                        <Calendar className="w-4 h-4" />
+                                        {booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}
+                                      </div>
+                                      {booking.requested_time && (
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="w-4 h-4" />
+                                          {booking.requested_time}
+                                        </div>
+                                      )}
+                                      {booking.created_at && (
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="w-4 h-4" />
+                                          Created: {new Date(booking.created_at).toLocaleDateString()}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="space-y-1 text-sm mt-3">
+                                      {fromAddress && (
+                                        <div className="flex items-start gap-1">
+                                          <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-600" />
+                                          <span><strong>Address:</strong> {fromAddress}</span>
+                                        </div>
+                                      )}
+                                      {booking.service_city && (
+                                        <div><strong>City:</strong> {booking.service_city}, {booking.service_state}</div>
+                                      )}
+                                      {booking.service_type && (
+                                        <div><strong>Service Type:</strong> {booking.service_type}</div>
+                                      )}
+                                      {booking.total_price_cents && booking.total_price_cents > 0 && (
+                                        <div><strong>Price:</strong> ${(booking.total_price_cents / 100).toFixed(2)}</div>
+                                      )}
+                                      {notes && (
+                                        <div className="mt-2 p-2 bg-gray-50 rounded">
+                                          <strong>Notes:</strong> {notes}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
                                 </div>
-                                {booking.requested_time && (
-                                  <div className="flex items-center gap-1">
-                                    <Clock className="w-4 h-4" />
-                                    {booking.requested_time}
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* My Orders - bookings they made to other providers */}
+                  {myOrders.length > 0 && (
+                    <div>
+                      <h2 className="text-xl font-semibold mb-4">My Orders</h2>
+                      <div className="space-y-4">
+                        {myOrders.map((booking) => {
+                          // Use actual schema columns
+                          const serviceDetails = booking.service_details || {}
+                          const fromAddress = serviceDetails.from_address || booking.service_address || ''
+                          const notes = booking.customer_notes || booking.business_notes || ''
+                          
+                          // Get business name from booking relations
+                          const businessName = booking.business?.name || 'Service Provider'
+                          
+                          // Map booking_status to display
+                          const bookingStatus = booking.booking_status || 'pending'
+                          
+                          return (
+                            <Card key={booking.id}>
+                              <CardContent className="p-6">
+                                <div className="flex items-start justify-between">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-3 mb-2">
+                                      <Badge className={
+                                        bookingStatus === 'pending' || bookingStatus === 'requested'
+                                          ? 'bg-yellow-100 text-yellow-800'
+                                          : bookingStatus === 'confirmed'
+                                          ? 'bg-green-100 text-green-800'
+                                          : bookingStatus === 'in_progress'
+                                          ? 'bg-blue-100 text-blue-800'
+                                          : bookingStatus === 'completed'
+                                          ? 'bg-gray-100 text-gray-800'
+                                          : bookingStatus === 'cancelled' || bookingStatus === 'canceled'
+                                          ? 'bg-red-100 text-red-800'
+                                          : 'bg-gray-100 text-gray-800'
+                                      }>
+                                        {bookingStatus.toUpperCase()}
+                                      </Badge>
+                                    </div>
+                                    <div className="space-y-1 text-sm mb-3">
+                                      <div><strong>Service Provider:</strong> {businessName}</div>
+                                      {booking.business?.city && booking.business?.state && (
+                                        <div><strong>Location:</strong> {booking.business.city}, {booking.business.state}</div>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
+                                      <div className="flex items-center gap-1">
+                                        <Calendar className="w-4 h-4" />
+                                        {booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}
+                                      </div>
+                                      {booking.requested_time && (
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="w-4 h-4" />
+                                          {booking.requested_time}
+                                        </div>
+                                      )}
+                                      {booking.created_at && (
+                                        <div className="flex items-center gap-1">
+                                          <Clock className="w-4 h-4" />
+                                          Ordered: {new Date(booking.created_at).toLocaleDateString()}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="space-y-1 text-sm mt-3">
+                                      {fromAddress && (
+                                        <div className="flex items-start gap-1">
+                                          <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-600" />
+                                          <span><strong>Service Address:</strong> {fromAddress}</span>
+                                        </div>
+                                      )}
+                                      {booking.service_city && (
+                                        <div><strong>City:</strong> {booking.service_city}, {booking.service_state}</div>
+                                      )}
+                                      {booking.service_type && (
+                                        <div><strong>Service Type:</strong> {booking.service_type}</div>
+                                      )}
+                                      {booking.total_price_cents && booking.total_price_cents > 0 && (
+                                        <div><strong>Price:</strong> ${(booking.total_price_cents / 100).toFixed(2)}</div>
+                                      )}
+                                      {notes && (
+                                        <div className="mt-2 p-2 bg-gray-50 rounded">
+                                          <strong>Notes:</strong> {notes}
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
-                                {booking.created_at && (
-                                  <div className="flex items-center gap-1">
-                                    <Clock className="w-4 h-4" />
-                                    Created: {new Date(booking.created_at).toLocaleDateString()}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="space-y-1 text-sm mt-3">
-                                {fromAddress && (
-                                  <div className="flex items-start gap-1">
-                                    <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-600" />
-                                    <span><strong>Address:</strong> {fromAddress}</span>
-                                  </div>
-                                )}
-                                {booking.service_city && (
-                                  <div><strong>City:</strong> {booking.service_city}, {booking.service_state}</div>
-                                )}
-                                {booking.service_type && (
-                                  <div><strong>Service Type:</strong> {booking.service_type}</div>
-                                )}
-                                {booking.total_price_cents && booking.total_price_cents > 0 && (
-                                  <div><strong>Price:</strong> ${(booking.total_price_cents / 100).toFixed(2)}</div>
-                                )}
-                                {notes && (
-                                  <div className="mt-2 p-2 bg-gray-50 rounded">
-                                    <strong>Notes:</strong> {notes}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
 
             {/* Empty State */}
             {scheduledJobs.length === 0 && providerBookings.length === 0 && (
@@ -1263,25 +1508,36 @@ export default function BookingsPage() {
           <p className="text-gray-600">Track your service requests and bookings</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex gap-2 rounded-lg border border-gray-300 p-1 bg-white">
+          <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
             <Button
               size="sm"
-              variant={viewMode === 'calendar' ? 'default' : 'ghost'}
               onClick={() => setViewMode('calendar')}
+              className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                viewMode === 'calendar'
+                  ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                  : 'bg-transparent hover:bg-gray-100 text-gray-700'
+              }`}
             >
               <Calendar className="w-4 h-4 mr-2" />
               Calendar
             </Button>
             <Button
               size="sm"
-              variant={viewMode === 'list' ? 'default' : 'ghost'}
               onClick={() => setViewMode('list')}
+              className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                viewMode === 'list'
+                  ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                  : 'bg-transparent hover:bg-gray-100 text-gray-700'
+              }`}
             >
               <Filter className="w-4 h-4 mr-2" />
               List
             </Button>
           </div>
-          <Button asChild>
+          <Button 
+            asChild
+            className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white font-medium shadow-sm hover:shadow-md transition-all duration-200"
+          >
             <Link href="/find">
               <Plus className="w-4 h-4 mr-2" />
               Find Services
@@ -1293,17 +1549,41 @@ export default function BookingsPage() {
       {/* Calendar View */}
       {viewMode === 'calendar' && (
         <div className="space-y-6">
-          <ModernCalendar
-            events={calendarEvents}
-            onDateClick={(date) => {
-              const dateStr = date.toISOString().split('T')[0]
-              const dayEvents = calendarEvents.filter(e => e.date === dateStr)
-              if (dayEvents.length > 0) {
-                setSelectedEvent(dayEvents[0])
-              }
-            }}
-            onEventClick={(event) => setSelectedEvent(event)}
-          />
+          {/* Modern Calendar with Events - Same Design as Providers */}
+          <Card className="border border-gray-200 shadow-sm overflow-hidden">
+            <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
+              <CardTitle className="text-2xl font-semibold text-gray-900">My Bookings Calendar</CardTitle>
+              <CardDescription>Click on any date or event to view full details</CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <ModernCalendar
+                events={calendarEvents}
+                onDateClick={(date) => {
+                  const dateStr = date.toISOString().split('T')[0]
+                  const dayEvents = calendarEvents.filter(e => e.date === dateStr)
+                  console.log('Date clicked:', dateStr, 'Events for date:', dayEvents.length, dayEvents.map(e => e.title))
+                  if (dayEvents.length > 0) {
+                    // Show first event (user can click on individual events for others)
+                    setSelectedEvent(dayEvents[0])
+                  } else {
+                    // Show empty state modal so user can see the date was clicked
+                    setSelectedEvent({
+                      id: `date-${dateStr}`,
+                      date: dateStr,
+                      title: `No events scheduled for ${new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+                      type: 'custom',
+                      metadata: {}
+                    })
+                  }
+                }}
+                onEventClick={(event) => {
+                  console.log('onEventClick called with event:', event.id, event.title)
+                  setSelectedEvent(event)
+                }}
+              />
+            </CardContent>
+          </Card>
+
           {selectedEvent && (
             <EventModal
               event={selectedEvent}
@@ -1316,59 +1596,63 @@ export default function BookingsPage() {
       {/* List View */}
       {viewMode === 'list' && (
         <>
-          {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{bookings.length}</div>
-          </CardContent>
-        </Card>
+          {/* Elegant Stats Cards - Better Spacing */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
+            <Card className="border border-gray-200 shadow-sm hover:shadow transition-shadow duration-200 bg-white">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <CardTitle className="text-xs font-medium text-gray-500">Total Bookings</CardTitle>
+                  <Calendar className="w-4 h-4 text-gray-400" />
+                </div>
+                <div className="text-2xl font-semibold text-gray-900">{bookings.length}</div>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Active</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {bookings.filter(b => {
-                const status = b.booking_status || (b as any).status
-                return ['pending', 'requested', 'confirmed', 'in_progress'].includes(status)
-              }).length}
-            </div>
-          </CardContent>
-        </Card>
+            <Card className="border border-gray-200 shadow-sm hover:shadow transition-shadow duration-200 bg-white">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <CardTitle className="text-xs font-medium text-gray-500">Active</CardTitle>
+                  <Clock className="w-4 h-4 text-gray-400" />
+                </div>
+                <div className="text-2xl font-semibold text-gray-900">
+                  {bookings.filter(b => {
+                    const status = b.booking_status || (b as any).status
+                    return ['pending', 'requested', 'confirmed', 'in_progress'].includes(status)
+                  }).length}
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Completed</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              {bookings.filter(b => {
-                const status = b.booking_status || (b as any).status
-                return status === 'completed'
-              }).length}
-            </div>
-          </CardContent>
-        </Card>
+            <Card className="border border-gray-200 shadow-sm hover:shadow transition-shadow duration-200 bg-white">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <CardTitle className="text-xs font-medium text-gray-500">Completed</CardTitle>
+                  <Star className="w-4 h-4 text-gray-400" />
+                </div>
+                <div className="text-2xl font-semibold text-gray-900">
+                  {bookings.filter(b => {
+                    const status = b.booking_status || (b as any).status
+                    return status === 'completed'
+                  }).length}
+                </div>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Spent</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatPrice(bookings.filter(b => {
-                const status = b.booking_status || (b as any).status
-                return status === 'completed'
-              }).reduce((sum, b) => sum + (b.total_price_cents || b.base_price_cents || 0), 0))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            <Card className="border border-gray-200 shadow-sm hover:shadow transition-shadow duration-200 bg-white">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <CardTitle className="text-xs font-medium text-gray-500">Total Spent</CardTitle>
+                  <DollarSign className="w-4 h-4 text-gray-400" />
+                </div>
+                <div className="text-2xl font-semibold text-gray-900">
+                  {formatPrice(bookings.filter(b => {
+                    const status = b.booking_status || (b as any).status
+                    return status === 'completed'
+                  }).reduce((sum, b) => sum + (b.total_price_cents || b.base_price_cents || 0), 0))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
 
       {/* Bookings List */}
       {bookings.length === 0 ? (
@@ -1388,109 +1672,277 @@ export default function BookingsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-4 sm:space-y-6">
           {bookings.map((booking) => {
             // Extract quote_id from service_details if it's a movers reservation
             const serviceDetails = booking.service_details || {}
             const quoteId = serviceDetails.quote_id || serviceDetails.quoteId || null
             const isMoversReservation = serviceDetails.source === 'movers_reservation'
+            const bookingStatus = booking.booking_status || (booking as any).status || 'pending'
             
             return (
-            <Card key={booking.id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    {/* Quote ID Badge */}
-                    {quoteId && (
-                      <div className="mb-3 flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          <FileText className="w-3 h-3 mr-1" />
-                          Quote: {quoteId.slice(0, 8)}...
+            <Card key={booking.id} className="border border-gray-300/50 shadow-lg hover:shadow-xl transition-all duration-300 overflow-hidden bg-white">
+              <CardContent className="p-8 sm:p-10">
+                {/* Elegant Header - Invoice Style */}
+                <div className="border-b-2 border-gray-900 pb-6 mb-8">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-4 mb-4 flex-wrap">
+                        <h3 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900">{booking.business?.name || 'Booking'}</h3>
+                        <Badge className={`px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                          bookingStatus === 'confirmed' 
+                            ? 'bg-emerald-600 text-white border-0' 
+                            : bookingStatus === 'in_progress'
+                            ? 'bg-blue-600 text-white border-0'
+                            : bookingStatus === 'completed'
+                            ? 'bg-gray-700 text-white border-0'
+                            : bookingStatus === 'cancelled' || bookingStatus === 'canceled'
+                            ? 'bg-red-600 text-white border-0'
+                            : 'bg-gray-600 text-white border-0'
+                        }`}>
+                          {bookingStatus.charAt(0).toUpperCase() + bookingStatus.slice(1)}
                         </Badge>
-                        <Link 
-                          href={`/quotes/${quoteId}`}
-                          className="text-xs text-blue-600 hover:text-blue-800 underline"
-                        >
-                          View Quote & Receipt
-                        </Link>
                       </div>
-                    )}
-                    <div className="flex items-center gap-3 mb-2">
-                      <h3 className="text-lg font-semibold">{booking.business?.name || 'Booking'}</h3>
-                      <Badge className={getStatusColor(booking.booking_status || (booking as any).status || 'pending')}>
-                        {(booking.booking_status || (booking as any).status || 'pending').charAt(0).toUpperCase() + (booking.booking_status || (booking as any).status || 'pending').slice(1)}
-                      </Badge>
+                      
+                      {/* Invoice-style metadata */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-gray-500" />
+                          <span className="text-gray-600">Date:</span>
+                          <span className="font-semibold text-gray-900">{booking.requested_date ? new Date(booking.requested_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : 'Date TBD'}</span>
+                        </div>
+                        {booking.requested_time && (
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4 text-gray-500" />
+                            <span className="text-gray-600">Time:</span>
+                            <span className="font-semibold text-gray-900">{booking.requested_time}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <MapPin className="w-4 h-4 text-gray-500" />
+                          <span className="text-gray-600">Location:</span>
+                          <span className="font-semibold text-gray-900">{booking.service_city || booking.business?.city || ''}, {booking.service_state || booking.business?.state || ''}</span>
+                        </div>
+                        {(booking.total_price_cents || booking.base_price_cents) && (
+                          <div className="flex items-center gap-2">
+                            <DollarSign className="w-4 h-4 text-gray-500" />
+                            <span className="text-gray-600">Total:</span>
+                            <span className="font-bold text-lg text-gray-900">{formatPrice(booking.total_price_cents || booking.base_price_cents || 0)}</span>
+                          </div>
+                        )}
+                        {booking.business && (
+                          <div className="flex items-center gap-2">
+                            <Star className="w-4 h-4 fill-gray-400 text-gray-400" />
+                            <span className="text-gray-600">Rating:</span>
+                            <span className="font-semibold text-gray-900">{booking.business.rating_avg?.toFixed(1) || 0} ({booking.business.rating_count || 0})</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <Calendar className="w-4 h-4" />
-                        <span>{booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}</span>
-                      </div>
-                      {booking.requested_time && (
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Clock className="w-4 h-4" />
-                          <span>{booking.requested_time}</span>
-                        </div>
-                      )}
-                      <div className="flex items-center gap-2 text-sm text-gray-600">
-                        <MapPin className="w-4 h-4" />
-                        <span>{booking.service_city || booking.business?.city || ''}, {booking.service_state || booking.business?.state || ''}</span>
-                      </div>
-                      {booking.business && (
-                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                          <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                          <span>{booking.business.rating_avg || 0} ({booking.business.rating_count || 0})</span>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {booking.service_address && (
-                      <div className="text-sm text-gray-600 mb-4">
-                        <MapPin className="w-4 h-4 inline mr-1" />
-                        <span className="font-medium">Address:</span> {booking.service_address}
-                      </div>
-                    )}
-
-                    {(booking.total_price_cents || booking.base_price_cents) && (
-                      <div className="flex items-center gap-2 text-sm text-gray-600 mb-4">
-                        <DollarSign className="w-4 h-4" />
-                        <span className="font-medium">Price: {formatPrice(booking.total_price_cents || booking.base_price_cents || 0)}</span>
-                      </div>
-                    )}
-
-                    {booking.service_details && typeof booking.service_details === 'object' && Object.keys(booking.service_details).length > 0 && (
-                      <div className="text-sm text-gray-600 mb-4">
-                        <p className="font-medium">Service Details:</p>
-                        <pre className="text-xs bg-gray-50 p-2 rounded">{JSON.stringify(booking.service_details, null, 2)}</pre>
-                      </div>
-                    )}
-                    
-                    {booking.customer_notes && (
-                      <div className="text-sm text-gray-600 mb-4">
-                        <p className="font-medium">Notes:</p>
-                        <p>{booking.customer_notes}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="outline" asChild>
-                      <Link href={`/dashboard/bookings/${booking.id}`}>
-                        <MessageSquare className="w-4 h-4 mr-1" />
-                        Message
-                      </Link>
-                    </Button>
-                    {((booking.booking_status || (booking as any).status) === 'completed') && (
-                      <Button size="sm" variant="outline" asChild>
-                        <Link href={`/dashboard/reviews/${booking.id}`}>
-                          <Star className="w-4 h-4 mr-1" />
-                          Review
-                        </Link>
+                    {/* Action Buttons */}
+                    <div className="flex flex-row sm:flex-col gap-3 flex-shrink-0">
+                      <Button 
+                        size="sm" 
+                        variant="outline" 
+                        className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white hover:border-gray-900 font-semibold text-xs sm:text-sm px-6 py-2.5 transition-colors"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          window.location.href = `/dashboard/bookings/${booking.id}`
+                        }}
+                      >
+                        <PackageSearch className="w-4 h-4 mr-2" />
+                        <span className="hidden sm:inline">Track Order</span>
+                        <span className="sm:hidden inline">Track</span>
                       </Button>
-                    )}
+                      {bookingStatus === 'completed' && (
+                        <Button size="sm" variant="outline" className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white hover:border-gray-900 font-semibold text-xs sm:text-sm px-6 py-2.5 transition-colors" asChild>
+                          <Link href={`/dashboard/reviews/${booking.id}`}>
+                            <Star className="w-4 h-4 mr-2" />
+                            <span className="hidden sm:inline">Review</span>
+                          </Link>
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 </div>
+                
+                {/* Service Address - Clean Invoice Style */}
+                {booking.service_address && (
+                  <div className="mb-8 pb-8 border-b border-gray-200">
+                    <div className="mb-3">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Service Address</h4>
+                      <p className="text-base text-gray-900 leading-relaxed break-words">{booking.service_address}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Order Details - Elegant Invoice Table Style */}
+                {serviceDetails && typeof serviceDetails === 'object' && Object.keys(serviceDetails).length > 0 && (
+                  <div className="mb-8 pb-8 border-b border-gray-200">
+                    <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-6">Order Details</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                      {/* Pickup Addresses */}
+                      {(serviceDetails.pickup_addresses || serviceDetails.pickup_address || serviceDetails.from_address) && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Truck className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pickup Address{Array.isArray(serviceDetails.pickup_addresses) && serviceDetails.pickup_addresses.length > 1 ? 'es' : ''}</h5>
+                          </div>
+                          {Array.isArray(serviceDetails.pickup_addresses) ? (
+                            <div className="space-y-2 pl-6">
+                              {serviceDetails.pickup_addresses.slice(0, 2).map((addr: string, idx: number) => (
+                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {addr}</p>
+                              ))}
+                              {serviceDetails.pickup_addresses.length > 2 && (
+                                <p className="text-sm text-gray-500 italic">+{serviceDetails.pickup_addresses.length - 2} more</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-base text-gray-900 leading-relaxed break-words pl-6">
+                              {serviceDetails.pickup_addresses || serviceDetails.pickup_address || serviceDetails.from_address}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Delivery Addresses */}
+                      {(serviceDetails.delivery_addresses || serviceDetails.dropoff_address || serviceDetails.to_address) && (
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Home className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Delivery Address{Array.isArray(serviceDetails.delivery_addresses) && serviceDetails.delivery_addresses.length > 1 ? 'es' : ''}</h5>
+                          </div>
+                          {Array.isArray(serviceDetails.delivery_addresses) ? (
+                            <div className="space-y-2 pl-6">
+                              {serviceDetails.delivery_addresses.slice(0, 2).map((addr: string, idx: number) => (
+                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {addr}</p>
+                              ))}
+                              {serviceDetails.delivery_addresses.length > 2 && (
+                                <p className="text-sm text-gray-500 italic">+{serviceDetails.delivery_addresses.length - 2} more</p>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-base text-gray-900 leading-relaxed break-words pl-6">
+                              {serviceDetails.delivery_addresses || serviceDetails.dropoff_address || serviceDetails.to_address}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Service Details Grid */}
+                      <div className="grid grid-cols-2 gap-x-8 gap-y-4 col-span-1 md:col-span-2">
+                        {/* Team Size */}
+                        {(serviceDetails.mover_team || serviceDetails.crew_size) && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Users className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Team Size</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">{serviceDetails.mover_team || serviceDetails.crew_size} {(serviceDetails.mover_team || serviceDetails.crew_size) === 1 ? 'mover' : 'movers'}</p>
+                          </div>
+                        )}
+
+                        {/* Move Size */}
+                        {serviceDetails.move_size && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Home className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Move Size</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5 capitalize">{String(serviceDetails.move_size).replace('_', ' ')}</p>
+                          </div>
+                        )}
+
+                        {/* Time Slot */}
+                        {serviceDetails.time_slot && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Clock className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Time Slot</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5 capitalize">{String(serviceDetails.time_slot).replace('_', ' ')}</p>
+                          </div>
+                        )}
+
+                        {/* Stairs */}
+                        {serviceDetails.stairs_flights > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Stairs className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stairs</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">
+                              {serviceDetails.stairs_flights} flight{serviceDetails.stairs_flights !== 1 ? 's' : ''}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Packing Help */}
+                      {(serviceDetails.packing_help && serviceDetails.packing_help !== 'none') && (
+                        <div className="col-span-1 md:col-span-2 space-y-3 pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Package className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Packing Help</h5>
+                          </div>
+                          <div className="pl-6 space-y-2">
+                            <p className="text-base font-medium text-gray-900 capitalize">{String(serviceDetails.packing_help).replace('_', ' ')}</p>
+                            {serviceDetails.packing_rooms > 0 && (
+                              <p className="text-sm text-gray-600">{serviceDetails.packing_rooms} room{serviceDetails.packing_rooms !== 1 ? 's' : ''} to pack</p>
+                            )}
+                            {serviceDetails.packing_materials && Array.isArray(serviceDetails.packing_materials) && serviceDetails.packing_materials.length > 0 && (
+                              <div className="mt-3 pt-3 border-t border-gray-100">
+                                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Materials</p>
+                                <ul className="space-y-1">
+                                  {serviceDetails.packing_materials.slice(0, 3).map((item: any, idx: number) => (
+                                    <li key={idx} className="text-sm text-gray-700">
+                                      • {item.name} {item.quantity > 1 ? `(x${item.quantity})` : ''}
+                                    </li>
+                                  ))}
+                                  {serviceDetails.packing_materials.length > 3 && (
+                                    <li className="text-sm text-gray-500 italic">+{serviceDetails.packing_materials.length - 3} more</li>
+                                  )}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Heavy Items */}
+                      {serviceDetails.heavy_items && Array.isArray(serviceDetails.heavy_items) && serviceDetails.heavy_items.length > 0 && (
+                        <div className="col-span-1 md:col-span-2 space-y-3 pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <ShoppingBag className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Heavy Items</h5>
+                          </div>
+                          <ul className="pl-6 space-y-1.5">
+                            {serviceDetails.heavy_items.slice(0, 3).map((item: any, idx: number) => (
+                              <li key={idx} className="text-base text-gray-900">
+                                • Weight range: {item.band} lbs ({item.count} {item.count === 1 ? 'item' : 'items'})
+                              </li>
+                            ))}
+                            {serviceDetails.heavy_items.length > 3 && (
+                              <li className="text-sm text-gray-500 italic">+{serviceDetails.heavy_items.length - 3} more</li>
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Customer Notes - Elegant Footer */}
+                {booking.customer_notes && (
+                  <div>
+                    <h5 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Customer Notes</h5>
+                    <div className="pl-6 border-l-2 border-gray-300">
+                      <p className="text-base text-gray-900 leading-relaxed break-words italic">{booking.customer_notes}</p>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
             )

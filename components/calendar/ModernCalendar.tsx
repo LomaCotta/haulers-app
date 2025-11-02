@@ -20,6 +20,7 @@ export interface CalendarEvent {
     city?: string
     state?: string
     serviceType?: string
+    isCustomerBooking?: boolean
   }
 }
 
@@ -105,24 +106,41 @@ export function ModernCalendar({
     const day = String(date.getDate()).padStart(2, '0')
     const dateStr = `${year}-${month}-${day}`
     
+    if (!events || events.length === 0) {
+      return []
+    }
+    
     // Also normalize event dates to handle timezone issues
     const matchingEvents = events.filter(e => {
+      if (!e || !e.date) {
+        return false
+      }
+      
       let eventDateStr = e.date
       // If event date is a Date object or needs parsing
       if (eventDateStr) {
         // Try to parse if it's not already YYYY-MM-DD
         try {
-          const eventDate = new Date(eventDateStr)
-          if (!isNaN(eventDate.getTime())) {
-            const eventYear = eventDate.getFullYear()
-            const eventMonth = String(eventDate.getMonth() + 1).padStart(2, '0')
-            const eventDay = String(eventDate.getDate()).padStart(2, '0')
-            eventDateStr = `${eventYear}-${eventMonth}-${eventDay}`
+          // Handle different date formats
+          if (typeof eventDateStr === 'string' && eventDateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+            // Already in YYYY-MM-DD format - use it directly
+          } else {
+            // Parse as date
+            const eventDate = new Date(eventDateStr + (eventDateStr.includes('T') ? '' : 'T00:00:00'))
+            if (!isNaN(eventDate.getTime())) {
+              const eventYear = eventDate.getFullYear()
+              const eventMonth = String(eventDate.getMonth() + 1).padStart(2, '0')
+              const eventDay = String(eventDate.getDate()).padStart(2, '0')
+              eventDateStr = `${eventYear}-${eventMonth}-${eventDay}`
+            } else {
+              return false
+            }
           }
         } catch (err) {
-          // If it's already YYYY-MM-DD, keep it
+          return false
         }
       }
+      
       return eventDateStr === dateStr
     })
     
@@ -133,90 +151,99 @@ export function ModernCalendar({
     switch (status) {
       case 'scheduled':
       case 'confirmed':
-        return 'bg-blue-100 border-blue-300 text-blue-700'
+        return 'bg-indigo-600 border border-indigo-700 text-white shadow-sm'
       case 'in_progress':
-        return 'bg-orange-100 border-orange-300 text-orange-700'
+        return 'bg-blue-500 border border-blue-600 text-white shadow-sm'
       case 'completed':
-        return 'bg-green-100 border-green-300 text-green-700'
+        return 'bg-emerald-600 border border-emerald-700 text-white shadow-sm'
       case 'cancelled':
-        return 'bg-gray-100 border-gray-300 text-gray-500'
+        return 'bg-gray-400 border border-gray-500 text-white'
       default:
-        return 'bg-purple-100 border-purple-300 text-purple-700'
+        return 'bg-indigo-500 border border-indigo-600 text-white shadow-sm'
     }
   }
 
   return (
-    <div className={`bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden ${className}`}>
-      {/* Calendar Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-gray-50 to-white">
+    <div className={`bg-white rounded-xl border-2 border-gray-200 shadow-lg hover:shadow-xl transition-shadow duration-300 overflow-hidden ${className}`}>
+      {/* Elegant Calendar Header */}
+      <div className="flex items-center justify-between px-4 sm:px-6 md:px-8 py-4 sm:py-5 md:py-6 border-b-2 border-gray-200 bg-gradient-to-r from-white to-orange-50/30">
         <button
           type="button"
           onClick={() => navigateMonth(-1)}
-          className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-200 transition-colors"
+          className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 flex items-center justify-center rounded-lg bg-white border-2 border-gray-200 hover:border-orange-500 hover:bg-orange-50 text-gray-600 hover:text-orange-700 transition-all duration-200 shadow-sm hover:shadow-md"
           aria-label="Previous month"
         >
-          <ChevronLeft className="w-5 h-5 text-gray-700" />
+          <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
         </button>
-        <div className="text-xl font-bold text-gray-900">
+        <div className="text-lg sm:text-xl md:text-2xl font-bold text-gray-900 tracking-tight">
           {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
         </div>
         <button
           type="button"
           onClick={() => navigateMonth(1)}
-          className="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-gray-200 transition-colors"
+          className="w-10 h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 flex items-center justify-center rounded-lg bg-white border-2 border-gray-200 hover:border-orange-500 hover:bg-orange-50 text-gray-600 hover:text-orange-700 transition-all duration-200 shadow-sm hover:shadow-md"
           aria-label="Next month"
         >
-          <ChevronRight className="w-5 h-5 text-gray-700" />
+          <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
         </button>
       </div>
 
       {/* Calendar Grid */}
-      <div className="p-4">
+      <div className="p-2 sm:p-4 md:p-6 bg-white">
         {/* Day names header */}
-        <div className="grid grid-cols-7 gap-2 mb-3">
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1 md:gap-2 mb-2 sm:mb-3 md:mb-4">
           {dayNames.map((day) => (
-            <div key={day} className="text-center text-xs font-bold text-gray-600 py-2">
+            <div key={day} className="text-center text-[11px] sm:text-sm md:text-base font-bold text-gray-700 py-2 sm:py-2.5 md:py-3 uppercase tracking-wide">
               {day}
             </div>
           ))}
         </div>
 
         {/* Calendar days */}
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid grid-cols-7 gap-0.5 sm:gap-1 md:gap-2">
           {days.map((date, idx) => {
             if (!date) {
-              return <div key={`empty-${idx}`} className="h-24" />
+              return <div key={`empty-${idx}`} className="min-h-[80px] sm:min-h-20 md:min-h-24 lg:min-h-28" />
             }
 
             const disabled = isDateDisabled(date)
             const todayDate = isToday(date)
             const dayEvents = getEventsForDate(date)
 
+            // Debug: Log if events exist but aren't showing
+            if (dayEvents.length > 0 && process.env.NODE_ENV === 'development') {
+              console.log(`Date ${date.toISOString().split('T')[0]} has ${dayEvents.length} events:`, dayEvents.map(e => e.title))
+            }
+
             return (
               <div
                 key={date.toISOString()}
+                onClick={() => !disabled && onDateClick?.(date)}
                 className={`
-                  min-h-24 p-1.5 rounded-lg border transition-all duration-150
+                  min-h-[80px] sm:min-h-20 md:min-h-24 lg:min-h-28 p-2 sm:p-2 md:p-2.5 rounded-lg border transition-all duration-200
                   ${disabled 
-                    ? 'bg-gray-50 border-gray-100' 
+                    ? 'bg-gray-50/50 border-gray-100 cursor-not-allowed' 
                     : todayDate
-                      ? 'bg-orange-50 border-2 border-orange-400 shadow-sm'
-                      : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                      ? 'bg-gradient-to-br from-orange-50 to-orange-100/50 border-2 border-orange-600 hover:border-orange-500 hover:shadow-md cursor-pointer'
+                      : 'bg-white border-gray-200 hover:border-orange-300 hover:bg-orange-50/30 hover:shadow-sm cursor-pointer'
                   }
                 `}
               >
-                <div className="flex items-start justify-between mb-1">
+                <div className="flex items-start justify-between mb-1 sm:mb-1.5">
                   <button
                     type="button"
-                    onClick={() => !disabled && onDateClick?.(date)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (!disabled) onDateClick?.(date)
+                    }}
                     disabled={disabled}
                     className={`
-                      text-sm font-semibold transition-colors
+                      text-sm sm:text-base md:text-lg font-bold transition-colors bg-transparent border-0 p-0 cursor-pointer min-w-[24px] min-h-[24px]
                       ${disabled
                         ? 'text-gray-300 cursor-not-allowed'
                         : todayDate
-                          ? 'text-orange-700'
-                          : 'text-gray-900 hover:text-orange-600'
+                          ? 'text-orange-900'
+                          : 'text-gray-800 hover:text-orange-700'
                       }
                     `}
                   >
@@ -225,54 +252,75 @@ export function ModernCalendar({
                 </div>
                 
                 {/* Events */}
-                <div className="space-y-1">
-                  {dayEvents.slice(0, 2).map((event) => (
-                    <button
-                      key={event.id}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onEventClick?.(event)
-                      }}
-                      className={`
-                        w-full text-left px-1.5 py-0.5 rounded text-xs font-medium
-                        border truncate transition-all hover:scale-105 hover:shadow-sm
-                        ${getStatusColor(event.status)}
-                      `}
-                      title={event.title}
-                    >
-                      <div className="truncate">{event.title}</div>
-                      {event.time && (
-                        <div className="text-[10px] opacity-75 truncate">{event.time}</div>
-                      )}
-                    </button>
-                  ))}
-                  {dayEvents.length > 2 && (
-                    <div className="text-[10px] text-gray-500 font-medium px-1.5">
-                      +{dayEvents.length - 2} more
-                    </div>
-                  )}
-                </div>
+                {dayEvents.length > 0 && (
+                  <div className="space-y-1.5 sm:space-y-2 mt-1.5 sm:mt-2">
+                    {dayEvents.slice(0, 2).map((event) => (
+                      <button
+                        key={event.id}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (onEventClick) {
+                            onEventClick(event)
+                          }
+                        }}
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                        }}
+                        className={`
+                          w-full text-left px-2 py-1.5 sm:px-2.5 sm:py-2 md:px-3 md:py-2.5 rounded-lg
+                          text-xs sm:text-sm md:text-base font-semibold
+                          transition-all duration-200 hover:scale-[1.02] hover:shadow-lg active:scale-[0.98]
+                          cursor-pointer relative z-10 min-h-[36px] sm:min-h-[40px] md:min-h-[44px]
+                          flex flex-col justify-center
+                          ${getStatusColor(event.status)}
+                        `}
+                        title={event.title}
+                        style={{
+                          display: 'flex',
+                          opacity: 1,
+                          visibility: 'visible',
+                          pointerEvents: 'auto',
+                        }}
+                      >
+                        <div className="truncate font-semibold text-white text-xs sm:text-sm md:text-base leading-tight mb-0.5">
+                          {event.title}
+                        </div>
+                        {event.time && (
+                          <div className="text-[11px] sm:text-xs md:text-sm text-white/90 truncate font-medium">
+                            {event.time}
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                    {dayEvents.length > 2 && (
+                      <div className="text-[11px] sm:text-xs md:text-sm text-indigo-700 font-semibold px-2 py-1 sm:px-2.5 sm:py-1.5 bg-indigo-100 rounded-lg border border-indigo-200 min-h-[28px] flex items-center justify-center">
+                        +{dayEvents.length - 2} more
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
-        <div className="flex flex-wrap gap-4 text-xs">
+      {/* Elegant Legend */}
+      <div className="px-3 sm:px-6 md:px-8 py-3 sm:py-4 md:py-5 border-t-2 border-gray-200 bg-gradient-to-br from-gray-50 to-orange-50/20">
+        <div className="flex flex-wrap gap-3 sm:gap-5 md:gap-7 text-xs sm:text-sm md:text-base justify-center sm:justify-start">
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded border-2 bg-blue-100 border-blue-300"></div>
-            <span className="text-gray-700">Scheduled</span>
+            <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-lg border-2 border-indigo-600 bg-indigo-600 shadow-sm"></div>
+            <span className="text-gray-700 font-semibold">Scheduled</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded border-2 bg-orange-100 border-orange-300"></div>
-            <span className="text-gray-700">In Progress</span>
+            <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-lg border-2 border-blue-500 bg-blue-500 shadow-sm"></div>
+            <span className="text-gray-700 font-semibold">In Progress</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded border-2 bg-green-100 border-green-300"></div>
-            <span className="text-gray-700">Completed</span>
+            <div className="w-4 h-4 sm:w-5 sm:h-5 rounded-lg border-2 border-emerald-600 bg-emerald-600 shadow-sm"></div>
+            <span className="text-gray-700 font-semibold">Completed</span>
           </div>
         </div>
       </div>

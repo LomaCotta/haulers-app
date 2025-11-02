@@ -24,6 +24,7 @@ import {
   AlertCircle,
   CheckCircle
 } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { AvatarUpload } from '@/components/ui/avatar-upload-resizable'
 import { Avatar } from '@/components/ui/avatar'
 
@@ -221,135 +222,184 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-          <p className="text-gray-600">Manage your profile and preferences</p>
+    <div className="space-y-4 sm:space-y-6 lg:space-y-8">
+      {/* Header - Premium Design */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2 break-words">Settings</h1>
+          <p className="text-gray-600 text-sm sm:text-base lg:text-lg break-words">Manage your profile and preferences</p>
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg">
-        <Button
-          variant={activeTab === 'profile' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('profile')}
-          className="flex-1"
-        >
-          <User className="w-4 h-4 mr-2" />
-          Profile
-        </Button>
-        <Button
-          variant={activeTab === 'preferences' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('preferences')}
-          className="flex-1"
-        >
-          <Bell className="w-4 h-4 mr-2" />
-          Preferences
-        </Button>
-        <Button
-          variant={activeTab === 'security' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('security')}
-          className="flex-1"
-        >
-          <Key className="w-4 h-4 mr-2" />
-          Security
-        </Button>
-        <Button
-          variant={activeTab === 'privacy' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('privacy')}
-          className="flex-1"
-        >
-          <Shield className="w-4 h-4 mr-2" />
-          Privacy
-        </Button>
+      {/* Tab Navigation - Enhanced Design with Mobile Scroll */}
+      <div className="overflow-x-auto -mx-4 sm:mx-0">
+        <div className="flex gap-2 sm:gap-3 border-b-2 border-gray-200 pb-1 bg-white rounded-t-lg p-2 min-w-fit">
+          <button
+            onClick={() => setActiveTab('profile')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'profile'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <User className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'profile' ? 'text-orange-600' : 'text-gray-500'}`} />
+            Profile
+            {activeTab === 'profile' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('preferences')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'preferences'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Bell className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'preferences' ? 'text-orange-600' : 'text-gray-500'}`} />
+            Preferences
+            {activeTab === 'preferences' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('security')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'security'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Key className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'security' ? 'text-orange-600' : 'text-gray-500'}`} />
+            Security
+            {activeTab === 'security' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('privacy')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'privacy'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Shield className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'privacy' ? 'text-orange-600' : 'text-gray-500'}`} />
+            Privacy
+            {activeTab === 'privacy' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Message Display */}
+      {/* Message Display - Enhanced Design */}
       {message && (
-        <Card className={message.includes('successfully') ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
-          <CardContent className="pt-6">
-            <div className={`flex items-center gap-2 ${
-              message.includes('successfully') ? 'text-green-600' : 'text-red-600'
+        <Card className={`shadow-lg border-2 ${
+          message.includes('successfully') 
+            ? 'border-green-300 bg-gradient-to-r from-green-50 to-green-100/50' 
+            : 'border-red-300 bg-gradient-to-r from-red-50 to-red-100/50'
+        }`}>
+          <CardContent className="p-6">
+            <div className={`flex items-center gap-3 ${
+              message.includes('successfully') ? 'text-green-700' : 'text-red-700'
             }`}>
               {message.includes('successfully') ? (
-                <CheckCircle className="w-5 h-5" />
+                <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
               ) : (
-                <AlertCircle className="w-5 h-5" />
+                <AlertCircle className="w-6 h-6 text-red-600 flex-shrink-0" />
               )}
-              <span>{message}</span>
+              <span className="font-semibold text-base">{message}</span>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Profile Tab */}
+      {/* Profile Tab - Premium Design */}
       {activeTab === 'profile' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
           <div className="lg:col-span-2">
-            <Card>
-              <CardHeader>
-                <CardTitle>Profile Information</CardTitle>
-                <CardDescription>Update your personal information</CardDescription>
+            <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+              <CardHeader className="pb-4 sm:pb-6 border-b border-gray-200 px-4 sm:px-6 pt-4 sm:pt-6">
+                <CardTitle className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2 break-words">
+                  <User className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600 flex-shrink-0" />
+                  Profile Information
+                </CardTitle>
+                <CardDescription className="text-sm sm:text-base text-gray-600 mt-2 break-words">Update your personal information</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-6 sm:space-y-8 pt-6 sm:pt-8 px-4 sm:px-6 pb-4 sm:pb-6">
                 {/* Avatar Upload Section */}
-                <div className="border-b pb-6">
-                  <Label className="text-sm font-medium mb-4 block">Profile Picture</Label>
-                  <AvatarUpload
-                    currentAvatarUrl={profile?.avatar_url}
-                    onAvatarChange={(newUrl) => {
-                      if (profile) {
-                        setProfile({ ...profile, avatar_url: newUrl || undefined })
-                      }
-                    }}
-                    userId={profile?.id || ''}
-                    size="xl"
-                  />
+                <div className="border-b border-gray-200 pb-6 sm:pb-8">
+                  <Label className="text-sm sm:text-base font-semibold text-gray-900 mb-4 sm:mb-6 block">Profile Picture</Label>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 sm:gap-6">
+                    <div className="flex-shrink-0">
+                      <AvatarUpload
+                        currentAvatarUrl={profile?.avatar_url}
+                        onAvatarChange={(newUrl) => {
+                          if (profile) {
+                            setProfile({ ...profile, avatar_url: newUrl || undefined })
+                          }
+                        }}
+                        userId={profile?.id || ''}
+                        size="xl"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed break-words">
+                        Upload a profile picture. Max size: 5MB. Supported formats: JPG, PNG, GIF, WebP
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="full_name">Full Name</Label>
+
+                <div className="space-y-2 sm:space-y-3">
+                  <Label htmlFor="full_name" className="text-sm sm:text-base font-semibold text-gray-900">Full Name</Label>
                   <Input
                     id="full_name"
                     value={formData.full_name}
                     onChange={(e) => setFormData({ ...formData, full_name: e.target.value })}
                     placeholder="Enter your full name"
+                    className="h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
+                <div className="space-y-2 sm:space-y-3">
+                  <Label htmlFor="email" className="text-sm sm:text-base font-semibold text-gray-900">Email</Label>
                   <Input
                     id="email"
                     value={profile?.email || ''}
                     disabled
-                    className="bg-gray-100"
+                    className="bg-gray-100 h-11 sm:h-12 text-sm sm:text-base cursor-not-allowed"
                   />
-                  <p className="text-xs text-gray-500">Email cannot be changed</p>
+                  <p className="text-xs sm:text-sm text-gray-500 font-medium break-words">Email cannot be changed</p>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="phone">Phone Number</Label>
+                <div className="space-y-2 sm:space-y-3">
+                  <Label htmlFor="phone" className="text-sm sm:text-base font-semibold text-gray-900">Phone Number</Label>
                   <Input
                     id="phone"
                     type="tel"
                     value={formData.phone}
                     onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                     placeholder="(555) 123-4567"
+                    className="h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                   />
                 </div>
 
-
-                <Button onClick={saveProfile} disabled={saving}>
+                <Button 
+                  onClick={saveProfile} 
+                  disabled={saving}
+                  className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-6 sm:px-8 py-4 sm:py-6 text-sm sm:text-base shadow-md hover:shadow-lg transition-all duration-200 w-full sm:w-auto min-h-[44px]"
+                >
                   {saving ? (
                     <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                      Saving...
+                      <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                      <span className="text-sm sm:text-base">Saving...</span>
                     </>
                   ) : (
                     <>
-                      <Save className="w-4 h-4 mr-2" />
-                      Save Profile
+                      <Save className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                      <span className="text-sm sm:text-base">Save Profile</span>
                     </>
                   )}
                 </Button>
@@ -357,23 +407,31 @@ export default function SettingsPage() {
             </Card>
           </div>
 
-          <div>
-            <Card>
-              <CardHeader>
-                <CardTitle>Profile Preview</CardTitle>
+          <div className="lg:block hidden">
+            <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50 sticky top-8">
+              <CardHeader className="pb-4 sm:pb-6 border-b border-gray-200 px-4 sm:px-6 pt-4 sm:pt-6">
+                <CardTitle className="text-lg sm:text-xl font-bold text-gray-900 break-words">Profile Preview</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-center space-y-4">
-                  <Avatar 
-                    src={profile?.avatar_url} 
-                    alt="Profile Preview"
-                    size="xl"
-                    className="mx-auto"
-                  />
-                  <div>
-                    <p className="font-medium">{formData.full_name || 'Your Name'}</p>
-                    <p className="text-sm text-gray-500">{profile?.email}</p>
-                    <p className="text-sm text-gray-500">{formData.phone || 'No phone'}</p>
+              <CardContent className="pt-6 sm:pt-8 px-4 sm:px-6 pb-4 sm:pb-6">
+                <div className="text-center space-y-6">
+                  <div className="relative inline-block">
+                    <Avatar 
+                      src={profile?.avatar_url} 
+                      alt="Profile Preview"
+                      size="xl"
+                      className="mx-auto ring-4 ring-orange-100"
+                    />
+                    <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 rounded-full border-4 border-white"></div>
+                  </div>
+                  <div className="space-y-2">
+                    <p className="font-bold text-lg text-gray-900">{formData.full_name || 'Your Name'}</p>
+                    <p className="text-sm text-gray-600 font-medium">{profile?.email}</p>
+                    <p className="text-sm text-gray-600 font-medium">{formData.phone || 'No phone'}</p>
+                    {profile?.role && (
+                      <Badge className="mt-2 bg-orange-100 text-orange-700 border-orange-200 capitalize">
+                        {profile.role}
+                      </Badge>
+                    )}
                   </div>
                 </div>
               </CardContent>
@@ -382,52 +440,60 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Preferences Tab */}
+      {/* Preferences Tab - Premium Design */}
       {activeTab === 'preferences' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Notification Preferences</CardTitle>
-            <CardDescription>Control how you receive notifications</CardDescription>
+        <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+          <CardHeader className="pb-6 border-b border-gray-200">
+            <CardTitle className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Bell className="w-6 h-6 text-orange-600" />
+              Notification Preferences
+            </CardTitle>
+            <CardDescription className="text-base text-gray-600 mt-2">Control how you receive notifications</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Enable Notifications</Label>
-                <p className="text-sm text-gray-500">Receive notifications from the platform</p>
+          <CardContent className="space-y-8 pt-8">
+              <div className="space-y-4 sm:space-y-6">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 p-4 sm:p-6 bg-white rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                <div className="flex-1 min-w-0">
+                  <Label className="text-sm sm:text-base font-semibold text-gray-900 mb-1 block break-words">Enable Notifications</Label>
+                  <p className="text-xs sm:text-sm text-gray-600 break-words">Receive notifications from the platform</p>
+                </div>
+                <Switch
+                  checked={preferences.notifications_enabled}
+                  onCheckedChange={(checked) => setPreferences({ ...preferences, notifications_enabled: checked })}
+                  className="flex-shrink-0"
+                />
               </div>
-              <Switch
-                checked={preferences.notifications_enabled}
-                onCheckedChange={(checked) => setPreferences({ ...preferences, notifications_enabled: checked })}
-              />
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 p-4 sm:p-6 bg-white rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                <div className="flex-1 min-w-0">
+                  <Label className="text-sm sm:text-base font-semibold text-gray-900 mb-1 block break-words">Email Notifications</Label>
+                  <p className="text-xs sm:text-sm text-gray-600 break-words">Receive notifications via email</p>
+                </div>
+                <Switch
+                  checked={preferences.email_notifications}
+                  onCheckedChange={(checked) => setPreferences({ ...preferences, email_notifications: checked })}
+                  className="flex-shrink-0"
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-4 p-4 sm:p-6 bg-white rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                <div className="flex-1 min-w-0">
+                  <Label className="text-sm sm:text-base font-semibold text-gray-900 mb-1 block break-words">SMS Notifications</Label>
+                  <p className="text-xs sm:text-sm text-gray-600 break-words">Receive notifications via SMS</p>
+                </div>
+                <Switch
+                  checked={preferences.sms_notifications}
+                  onCheckedChange={(checked) => setPreferences({ ...preferences, sms_notifications: checked })}
+                  className="flex-shrink-0"
+                />
+              </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Email Notifications</Label>
-                <p className="text-sm text-gray-500">Receive notifications via email</p>
-              </div>
-              <Switch
-                checked={preferences.email_notifications}
-                onCheckedChange={(checked) => setPreferences({ ...preferences, email_notifications: checked })}
-              />
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>SMS Notifications</Label>
-                <p className="text-sm text-gray-500">Receive notifications via SMS</p>
-              </div>
-              <Switch
-                checked={preferences.sms_notifications}
-                onCheckedChange={(checked) => setPreferences({ ...preferences, sms_notifications: checked })}
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Language</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 pt-4 sm:pt-6 border-t border-gray-200">
+              <div className="space-y-2 sm:space-y-3">
+                <Label className="text-sm sm:text-base font-semibold text-gray-900">Language</Label>
                 <Select value={preferences.language} onValueChange={(value) => setPreferences({ ...preferences, language: value })}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -439,10 +505,10 @@ export default function SettingsPage() {
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label>Timezone</Label>
+              <div className="space-y-2 sm:space-y-3">
+                <Label className="text-sm sm:text-base font-semibold text-gray-900">Timezone</Label>
                 <Select value={preferences.timezone} onValueChange={(value) => setPreferences({ ...preferences, timezone: value })}>
-                  <SelectTrigger>
+                  <SelectTrigger className="h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -456,15 +522,19 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <Button onClick={savePreferences} disabled={saving}>
+            <Button 
+              onClick={savePreferences} 
+              disabled={saving}
+              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-8 py-6 text-base shadow-md hover:shadow-lg transition-all duration-200 w-full sm:w-auto"
+            >
               {saving ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
                   Saving...
                 </>
               ) : (
                 <>
-                  <Save className="w-4 h-4 mr-2" />
+                  <Save className="w-5 h-5 mr-2" />
                   Save Preferences
                 </>
               )}
@@ -473,34 +543,71 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {/* Security Tab */}
+      {/* Security Tab - Premium Design */}
       {activeTab === 'security' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Security Settings</CardTitle>
-            <CardDescription>Manage your account security</CardDescription>
+        <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+          <CardHeader className="pb-6 border-b border-gray-200">
+            <CardTitle className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Key className="w-6 h-6 text-orange-600" />
+              Security Settings
+            </CardTitle>
+            <CardDescription className="text-base text-gray-600 mt-2">Manage your account security</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <h3 className="font-medium mb-2">Change Password</h3>
-                <div className="space-y-2">
-                  <Input type="password" placeholder="Current password" />
-                  <Input type="password" placeholder="New password" />
-                  <Input type="password" placeholder="Confirm new password" />
-                </div>
-                <Button className="mt-2" size="sm">
-                  <Key className="w-4 h-4 mr-2" />
+          <CardContent className="space-y-8 pt-8">
+            <div className="space-y-6">
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="font-bold text-lg text-gray-900 mb-4 flex items-center gap-2">
+                  <Key className="w-5 h-5 text-orange-600" />
                   Change Password
-                </Button>
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">Current Password</Label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter current password" 
+                      className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">New Password</Label>
+                    <Input 
+                      type="password" 
+                      placeholder="Enter new password" 
+                      className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-semibold text-gray-700">Confirm New Password</Label>
+                    <Input 
+                      type="password" 
+                      placeholder="Confirm new password" 
+                      className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+                    />
+                  </div>
+                  <Button 
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-6 py-3 shadow-md hover:shadow-lg transition-all duration-200"
+                  >
+                    <Key className="w-4 h-4 mr-2" />
+                    Change Password
+                  </Button>
+                </div>
               </div>
 
-              <div className="border-t pt-4">
-                <h3 className="font-medium mb-2 text-red-600">Danger Zone</h3>
-                <div className="space-y-2">
-                  <p className="text-sm text-gray-600">Once you delete your account, there is no going back. Please be certain.</p>
-                  <Button variant="destructive" size="sm" onClick={deleteAccount}>
-                    <Trash2 className="w-4 h-4 mr-2" />
+              <div className="bg-red-50 rounded-lg border-2 border-red-200 p-6">
+                <h3 className="font-bold text-lg text-red-700 mb-3 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                  Danger Zone
+                </h3>
+                <div className="space-y-3">
+                  <p className="text-sm text-red-700 font-medium">Once you delete your account, there is no going back. Please be certain.</p>
+                  <Button 
+                    variant="destructive" 
+                    size="lg"
+                    onClick={deleteAccount}
+                    className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6 py-3 shadow-md hover:shadow-lg transition-all duration-200"
+                  >
+                    <Trash2 className="w-5 h-5 mr-2" />
                     Delete Account
                   </Button>
                 </div>
@@ -510,18 +617,21 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {/* Privacy Tab */}
+      {/* Privacy Tab - Premium Design */}
       {activeTab === 'privacy' && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Privacy Settings</CardTitle>
-            <CardDescription>Control your privacy and data sharing</CardDescription>
+        <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+          <CardHeader className="pb-6 border-b border-gray-200">
+            <CardTitle className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Shield className="w-6 h-6 text-orange-600" />
+              Privacy Settings
+            </CardTitle>
+            <CardDescription className="text-base text-gray-600 mt-2">Control your privacy and data sharing</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label>Privacy Level</Label>
+          <CardContent className="space-y-8 pt-8">
+            <div className="space-y-3 bg-white rounded-lg border border-gray-200 p-6">
+              <Label className="text-base font-semibold text-gray-900">Privacy Level</Label>
               <Select value={preferences.privacy_level} onValueChange={(value) => setPreferences({ ...preferences, privacy_level: value })}>
-                <SelectTrigger>
+                <SelectTrigger className="h-12 text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -532,33 +642,49 @@ export default function SettingsPage() {
               </Select>
             </div>
 
-            <div className="space-y-4">
-              <h3 className="font-medium">Data Sharing</h3>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Share profile with businesses</span>
+            <div className="space-y-6 bg-white rounded-lg border border-gray-200 p-6">
+              <h3 className="font-bold text-lg text-gray-900 flex items-center gap-2">
+                <Globe className="w-5 h-5 text-orange-600" />
+                Data Sharing
+              </h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                  <div className="flex-1">
+                    <span className="text-sm font-semibold text-gray-900 block mb-1">Share profile with businesses</span>
+                    <span className="text-xs text-gray-600">Allow businesses to see your basic profile information</span>
+                  </div>
                   <Switch defaultChecked />
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Allow search engines to index profile</span>
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                  <div className="flex-1">
+                    <span className="text-sm font-semibold text-gray-900 block mb-1">Allow search engines to index profile</span>
+                    <span className="text-xs text-gray-600">Make your profile discoverable through search engines</span>
+                  </div>
                   <Switch />
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Show online status</span>
+                <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:border-orange-300 transition-all duration-200">
+                  <div className="flex-1">
+                    <span className="text-sm font-semibold text-gray-900 block mb-1">Show online status</span>
+                    <span className="text-xs text-gray-600">Display when you're actively using the platform</span>
+                  </div>
                   <Switch defaultChecked />
                 </div>
               </div>
             </div>
 
-            <Button onClick={savePreferences} disabled={saving}>
+            <Button 
+              onClick={savePreferences} 
+              disabled={saving}
+              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-8 py-6 text-base shadow-md hover:shadow-lg transition-all duration-200 w-full sm:w-auto"
+            >
               {saving ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
                   Saving...
                 </>
               ) : (
                 <>
-                  <Save className="w-4 h-4 mr-2" />
+                  <Save className="w-5 h-5 mr-2" />
                   Save Privacy Settings
                 </>
               )}

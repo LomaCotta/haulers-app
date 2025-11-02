@@ -121,6 +121,58 @@ export function EventModal({ event, onClose }: EventModalProps) {
               </div>
             </div>
           )}
+
+          {event.metadata?.serviceType && (
+            <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl">
+              <Calendar className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-semibold text-gray-900">Service Type</div>
+                <div className="text-gray-700 capitalize">{event.metadata.serviceType.replace('_', ' ')}</div>
+              </div>
+            </div>
+          )}
+
+          {(event.metadata?.city || event.metadata?.state) && (
+            <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl">
+              <MapPin className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-semibold text-gray-900">Location</div>
+                <div className="text-gray-700">
+                  {event.metadata.city && event.metadata.state 
+                    ? `${event.metadata.city}, ${event.metadata.state}`
+                    : event.metadata.city || event.metadata.state || 'N/A'}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {event.metadata?.business && (
+            <div className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl">
+              <Users className="w-5 h-5 text-orange-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <div className="font-semibold text-gray-900">{event.metadata.isCustomerBooking ? 'Service Provider' : 'Business'}</div>
+                <div className="text-gray-700">{event.metadata.business}</div>
+              </div>
+            </div>
+          )}
+
+          {event.metadata?.isCustomerBooking !== undefined && (
+            <div className="flex items-start gap-3 p-4 bg-blue-50 rounded-xl border border-blue-200">
+              <div className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0 flex items-center justify-center">
+                {event.metadata.isCustomerBooking ? '📥' : '📤'}
+              </div>
+              <div>
+                <div className="font-semibold text-gray-900">
+                  {event.metadata.isCustomerBooking ? 'Service You Ordered' : 'Service Requested From You'}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {event.metadata.isCustomerBooking 
+                    ? 'This is a service you ordered from another provider.'
+                    : 'This is a service request from a customer.'}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

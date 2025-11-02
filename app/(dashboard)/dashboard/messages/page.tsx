@@ -356,23 +356,37 @@ export default function MessagesPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
+      // Extract recipient_id from selectedConversation
+      const recipientId = selectedConversation.id || selectedConversation.other_user?.id
+      
+      if (!recipientId) {
+        console.error('Error: No recipient ID found')
+        showToast('Error: No recipient selected', 'error')
+        return
+      }
+
       const { error } = await supabase
         .from('messages')
         .insert({
           sender_id: user.id,
+          recipient_id: recipientId,
           body: newMessage,
-          message_type: 'general'
+          message_type: 'general',
+          is_read: false
         })
 
       if (error) {
         console.error('Error sending message:', error)
+        showToast('Error sending message: ' + error.message, 'error')
         return
       }
 
       setNewMessage('')
+      showToast('Message sent successfully!', 'success')
       fetchData() // Refresh messages
     } catch (error) {
       console.error('Error:', error)
+      showToast('Error sending message', 'error')
     }
   }
 
@@ -687,18 +701,23 @@ export default function MessagesPage() {
         .from('messages')
         .insert({
           sender_id: user.id,
+          recipient_id: userId,
           body: message,
-          message_type: 'general'
+          message_type: 'general',
+          is_read: false
         })
 
       if (error) {
         console.error('Error sending message:', error)
+        showToast('Error sending message: ' + error.message, 'error')
         return
       }
 
+      showToast('Message sent successfully!', 'success')
       fetchData() // Refresh messages
     } catch (error) {
       console.error('Error:', error)
+      showToast('Error sending message', 'error')
     }
   }
 
@@ -714,168 +733,194 @@ export default function MessagesPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Messages</h1>
-          <p className="text-gray-600">Connect with friends and manage conversations</p>
+    <div className="space-y-4 sm:space-y-6 lg:space-y-8">
+      {/* Header - Premium Design */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2 break-words">Messages</h1>
+          <p className="text-gray-600 text-sm sm:text-base lg:text-lg break-words">Connect with friends and manage conversations</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" asChild>
+        <div className="flex gap-2 sm:gap-3 w-full sm:w-auto">
+          <Button 
+            variant="outline" 
+            asChild
+            className="border-gray-300 hover:border-orange-400 hover:text-orange-600 font-medium flex-1 sm:flex-initial min-h-[44px]"
+          >
             <Link href="/dashboard/settings">
-              <Settings className="w-4 h-4 mr-2" />
-              Settings
+              <Settings className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+              <span className="text-sm sm:text-base">Settings</span>
             </Link>
           </Button>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <Card className="shadow-sm border-0 bg-white/80 backdrop-blur-sm">
-        <CardContent className="p-4">
-          <div className="flex space-x-2">
-            <Input
-              placeholder="Search users by name..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value)
-              }}
-              className="flex-1"
-            />
-            <Button 
-              variant="outline" 
-              onClick={() => setActiveTab('search')}
-              disabled={!searchQuery.trim()}
-            >
-              <Search className="w-4 h-4 mr-2" />
-              Search
-            </Button>
-            {process.env.NODE_ENV === 'development' && (
+      {/* Search Bar - Enhanced Design */}
+      <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+        <CardContent className="p-4 sm:p-6">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1 relative">
+              <Search className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4 sm:w-5 sm:h-5" />
+              <Input
+                placeholder="Search users by name..."
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                }}
+                className="pl-10 sm:pl-12 h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
+              />
+            </div>
+            <div className="flex gap-2 sm:gap-3">
               <Button 
                 variant="outline" 
-                onClick={debugFriendsData}
-                className="text-orange-600 border-orange-300 hover:bg-orange-50"
+                onClick={() => setActiveTab('search')}
+                disabled={!searchQuery.trim()}
+                className="h-11 sm:h-12 px-4 sm:px-6 border-gray-300 hover:border-orange-400 hover:text-orange-600 font-medium text-sm sm:text-base flex-1 sm:flex-initial min-w-[80px]"
               >
-                Debug
+                <Search className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                <span className="hidden sm:inline">Search</span>
               </Button>
-            )}
+              {process.env.NODE_ENV === 'development' && (
+                <Button 
+                  variant="outline" 
+                  onClick={debugFriendsData}
+                  className="h-11 sm:h-12 text-orange-600 border-orange-300 hover:bg-orange-50 font-medium text-sm sm:text-base min-w-[60px]"
+                >
+                  <span className="hidden sm:inline">Debug</span>
+                  <span className="sm:hidden">🐛</span>
+                </Button>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-white/60 backdrop-blur-sm p-1 rounded-xl shadow-sm border border-gray-200/50">
-        <Button
-          variant={activeTab === 'messages' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('messages')}
-          className={`flex-1 transition-all duration-200 ${
-            activeTab === 'messages' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4 mr-2" />
-          Messages ({messages.length})
-        </Button>
-        <Button
-          variant={activeTab === 'friends' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('friends')}
-          className={`flex-1 transition-all duration-200 ${
-            activeTab === 'friends' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
-          }`}
-        >
-          <Users className="w-4 h-4 mr-2" />
-          Friends ({friends.length})
-        </Button>
-        <Button
-          variant={activeTab === 'groups' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('groups')}
-          className={`flex-1 transition-all duration-200 ${
-            activeTab === 'groups' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
-          }`}
-        >
-          <Users className="w-4 h-4 mr-2" />
-          Groups ({groups.length})
-        </Button>
-        <Button
-          variant={activeTab === 'search' ? 'default' : 'ghost'}
-          onClick={() => setActiveTab('search')}
-          className={`flex-1 transition-all duration-200 ${
-            activeTab === 'search' 
-              ? 'bg-blue-600 text-white shadow-md' 
-              : 'text-gray-600 hover:text-gray-900 hover:bg-white/50'
-          }`}
-        >
-          <Search className="w-4 h-4 mr-2" />
-          Search Users
-        </Button>
+      {/* Tab Navigation - Enhanced Design with Mobile Scroll */}
+      <div className="overflow-x-auto -mx-4 sm:mx-0">
+        <div className="flex gap-2 sm:gap-3 border-b-2 border-gray-200 pb-1 bg-white rounded-t-lg p-2 min-w-fit">
+          <button
+            onClick={() => setActiveTab('messages')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'messages'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <MessageSquare className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'messages' ? 'text-orange-600' : 'text-gray-500'}`} />
+            <span className="truncate">Messages <span className="hidden sm:inline">({messages.length})</span></span>
+            {activeTab === 'messages' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('friends')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'friends'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Users className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'friends' ? 'text-orange-600' : 'text-gray-500'}`} />
+            <span className="truncate">Friends <span className="hidden sm:inline">({friends.length})</span></span>
+            {activeTab === 'friends' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('groups')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'groups'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Users className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'groups' ? 'text-orange-600' : 'text-gray-500'}`} />
+            <span className="truncate">Groups <span className="hidden sm:inline">({groups.length})</span></span>
+            {activeTab === 'groups' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('search')}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 lg:px-6 py-2.5 sm:py-3 font-semibold text-xs sm:text-sm transition-all duration-200 relative whitespace-nowrap min-h-[44px] ${
+              activeTab === 'search'
+                ? 'text-orange-600'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <Search className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${activeTab === 'search' ? 'text-orange-600' : 'text-gray-500'}`} />
+            <span className="truncate">Search</span>
+            {activeTab === 'search' && (
+              <div className="absolute bottom-[-2px] left-0 right-0 h-0.5 bg-orange-600 rounded-full"></div>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Messages Tab */}
+      {/* Messages Tab - Premium Design with Mobile Support */}
       {activeTab === 'messages' && (
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 lg:gap-8">
           {/* Conversations List */}
-          <div className="lg:col-span-1">
+          <div className={`lg:col-span-1 ${selectedConversation ? 'hidden lg:block' : 'block'}`}>
             <ConversationList 
               onSelectConversation={handleSelectConversation}
               selectedConversationId={selectedConversation?.id}
             />
           </div>
 
-          {/* Message Detail Placeholder */}
-          <div className="lg:col-span-3">
-            <Card className="h-full">
-              <CardContent className="flex items-center justify-center h-full">
-                <div className="text-center">
-                  <MessageSquare className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">Select a conversation</h3>
-                  <p className="text-gray-500">Choose a conversation from the list to start messaging</p>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Message Detail Placeholder - Hidden on mobile when conversation is selected */}
+          {!selectedConversation && (
+            <div className="lg:col-span-3 hidden lg:block">
+              <Card className="h-full border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50 min-h-[400px]">
+                <CardContent className="flex items-center justify-center h-full p-8 sm:p-12 lg:p-16">
+                  <div className="text-center">
+                    <div className="w-16 h-16 sm:w-20 sm:h-20 lg:w-24 lg:h-24 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6">
+                      <MessageSquare className="w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 text-orange-600" />
+                    </div>
+                    <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 break-words">Select a conversation</h3>
+                    <p className="text-gray-600 text-sm sm:text-base lg:text-lg break-words">Choose a conversation from the list to start messaging</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Friends Tab */}
+      {/* Friends Tab - Premium Design */}
       {activeTab === 'friends' && (
-        <div className="space-y-6">
+        <div className="space-y-4 sm:space-y-6 lg:space-y-8">
           {/* Pending Friend Requests */}
           {pendingRequests.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <UserPlus className="w-5 h-5" />
-                  <span>Friend Requests ({pendingRequests.length})</span>
+            <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+              <CardHeader className="pb-4 sm:pb-6 border-b border-gray-200 px-4 sm:px-6 pt-4 sm:pt-6">
+                <CardTitle className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2 break-words">
+                  <UserPlus className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600 flex-shrink-0" />
+                  Friend Requests <span className="hidden sm:inline">({pendingRequests.length})</span>
                 </CardTitle>
-                <CardDescription>People who want to be your friend</CardDescription>
+                <CardDescription className="text-sm sm:text-base text-gray-600 mt-2 break-words">People who want to be your friend</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <CardContent className="pt-4 sm:pt-6 lg:pt-8 px-4 sm:px-6 pb-4 sm:pb-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                   {pendingRequests.map((request) => (
-                    <div key={request.id} className="flex items-center space-x-3 p-3 border rounded-lg">
-                      <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
+                    <div key={request.id} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 p-4 sm:p-5 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:shadow-md transition-all duration-200">
+                      <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center text-white font-bold text-base sm:text-lg shadow-md flex-shrink-0">
                         {request.user?.avatar_url ? (
-                          <img src={request.user.avatar_url} alt={request.user.full_name} className="w-10 h-10 rounded-full" />
+                          <img src={request.user.avatar_url} alt={request.user.full_name} className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover" />
                         ) : (
-                          <span className="text-sm font-medium">
-                            {request.user?.full_name.charAt(0)}
+                          <span className="text-base sm:text-lg font-bold">
+                            {request.user?.full_name?.charAt(0) || '?'}
                           </span>
                         )}
                       </div>
-                      <div className="flex-1">
-                        <p className="font-medium">{request.user?.full_name}</p>
-                        <p className="text-sm text-gray-500">Wants to be friends</p>
+                      <div className="flex-1 min-w-0 w-full sm:w-auto">
+                        <p className="font-bold text-base sm:text-lg text-gray-900 truncate">{request.user?.full_name || 'Unknown'}</p>
+                        <p className="text-xs sm:text-sm text-gray-600 font-medium truncate">Wants to be friends</p>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 w-full sm:w-auto">
                         <Button
                           size="sm"
                           onClick={() => showConfirmationModal('accept', request.id, request.user?.full_name || '')}
-                          className="bg-green-600 hover:bg-green-700 text-white"
+                          className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 sm:px-4 py-2.5 sm:py-2 shadow-md hover:shadow-lg transition-all duration-200 flex-1 sm:flex-initial min-h-[44px] text-sm sm:text-base"
                         >
                           Accept
                         </Button>
@@ -883,7 +928,7 @@ export default function MessagesPage() {
                           size="sm"
                           variant="outline"
                           onClick={() => showConfirmationModal('decline', request.id, request.user?.full_name || '')}
-                          className="border-red-300 text-red-600 hover:bg-red-50"
+                          className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 font-semibold px-4 sm:px-4 py-2.5 sm:py-2 flex-1 sm:flex-initial min-h-[44px] text-sm sm:text-base"
                         >
                           Decline
                         </Button>
@@ -895,38 +940,38 @@ export default function MessagesPage() {
             </Card>
           )}
 
-          {/* Sent Friend Requests */}
+          {/* Sent Friend Requests - Premium Design */}
           {sentRequests.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Send className="w-5 h-5" />
-                  <span>Sent Requests ({sentRequests.length})</span>
+            <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+              <CardHeader className="pb-6 border-b border-gray-200">
+                <CardTitle className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  <Send className="w-6 h-6 text-orange-600" />
+                  Sent Requests ({sentRequests.length})
                 </CardTitle>
-                <CardDescription>Friend requests you've sent</CardDescription>
+                <CardDescription className="text-base text-gray-600 mt-2">Friend requests you've sent</CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <CardContent className="pt-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {sentRequests.map((request) => (
-                    <div key={request.id} className="flex items-center space-x-3 p-3 border rounded-lg">
-                      <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
+                    <div key={request.id} className="flex items-center gap-4 p-5 bg-white border border-gray-200 rounded-lg hover:border-orange-300 hover:shadow-md transition-all duration-200">
+                      <div className="w-14 h-14 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-md">
                         {request.friend?.avatar_url ? (
-                          <img src={request.friend.avatar_url} alt={request.friend.full_name} className="w-10 h-10 rounded-full" />
+                          <img src={request.friend.avatar_url} alt={request.friend.full_name} className="w-14 h-14 rounded-full object-cover" />
                         ) : (
-                          <span className="text-sm font-medium">
-                            {request.friend?.full_name.charAt(0)}
+                          <span className="text-lg font-bold">
+                            {request.friend?.full_name?.charAt(0) || '?'}
                           </span>
                         )}
                       </div>
                       <div className="flex-1">
-                        <p className="font-medium">{request.friend?.full_name}</p>
-                        <p className="text-sm text-gray-500">Request pending</p>
+                        <p className="font-bold text-lg text-gray-900">{request.friend?.full_name || 'Unknown'}</p>
+                        <p className="text-sm text-gray-600 font-medium">Request pending</p>
                       </div>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => showConfirmationModal('cancel', request.id, request.friend?.full_name || '')}
-                        className="border-red-300 text-red-600 hover:bg-red-50"
+                        className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400 font-semibold px-4 py-2"
                       >
                         Cancel
                       </Button>
@@ -937,84 +982,97 @@ export default function MessagesPage() {
             </Card>
           )}
 
-          {/* Accepted Friends */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Users className="w-5 h-5" />
-                <span>Friends ({friends.length})</span>
+          {/* Accepted Friends - Premium Design */}
+          <Card className="border border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+            <CardHeader className="pb-4 sm:pb-6 border-b border-gray-200 px-4 sm:px-6 pt-4 sm:pt-6">
+              <CardTitle className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2 break-words">
+                <Users className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600 flex-shrink-0" />
+                Friends <span className="hidden sm:inline">({friends.length})</span>
               </CardTitle>
-              <CardDescription>Your accepted friends</CardDescription>
+              <CardDescription className="text-sm sm:text-base text-gray-600 mt-2 break-words">Your accepted friends</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-4 sm:pt-6 lg:pt-8 px-4 sm:px-6 pb-4 sm:pb-6">
               {friends.length === 0 ? (
-                <div className="text-center py-8">
-                  <Users className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500 mb-4">You don't have any friends yet</p>
+                <div className="text-center py-8 sm:py-12 lg:py-16">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-gray-100 to-gray-200 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6">
+                    <Users className="w-8 h-8 sm:w-10 sm:h-10 text-gray-400" />
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 break-words">You don't have any friends yet</h3>
+                  <p className="text-gray-600 text-base sm:text-lg mb-4 sm:mb-6 break-words">Start connecting with others on the platform</p>
                   <Button 
                     variant="outline"
                     onClick={() => setShowAddFriendModal(true)}
+                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-6 sm:px-8 py-3 shadow-md hover:shadow-lg transition-all duration-200 min-h-[44px] w-full sm:w-auto"
                   >
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Add Your First Friend
+                    <UserPlus className="w-4 h-4 sm:w-5 sm:h-5 mr-2" />
+                    <span className="text-sm sm:text-base">Add Your First Friend</span>
                   </Button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                   {friends.map((friend) => {
                     // Determine which user is the "other" user (not the current user)
                     const otherUser = friend.user_id === currentUser?.id ? friend.friend : friend.user
                     const otherUserId = friend.user_id === currentUser?.id ? friend.friend_id : friend.user_id
                     
                     return (
-                      <div key={friend.id} className="flex items-center space-x-3 p-3 border rounded-lg hover:bg-gray-50">
-                        <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                          {otherUser?.avatar_url ? (
-                            <img src={otherUser.avatar_url} alt={otherUser.full_name} className="w-10 h-10 rounded-full" />
-                          ) : (
-                            <span className="text-sm font-medium">
-                              {otherUser?.full_name?.charAt(0) || '?'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex-1">
-                          <p className="font-medium">{otherUser?.full_name || 'Unknown User'}</p>
-                          <p className="text-sm text-gray-500 capitalize">{otherUser?.role || 'user'}</p>
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setSelectedConversation({
-                              id: otherUserId,
-                              other_user: {
-                                id: otherUserId,
-                                full_name: otherUser?.full_name || 'Unknown User',
-                                avatar_url: otherUser?.avatar_url,
-                                role: otherUser?.role || 'user'
-                              }
-                            })
-                            setShowMessageModal(true)
-                          }}
-                        >
-                          <MessageSquare className="w-4 h-4 mr-1" />
-                          Message
-                        </Button>
-                      </div>
+                      <Card key={friend.id} className="border border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 bg-white">
+                        <CardContent className="p-4 sm:p-6">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
+                            <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center text-white font-bold text-base sm:text-lg shadow-md flex-shrink-0">
+                              {otherUser?.avatar_url ? (
+                                <img src={otherUser.avatar_url} alt={otherUser.full_name} className="w-12 h-12 sm:w-14 sm:h-14 rounded-full object-cover" />
+                              ) : (
+                                <span className="text-base sm:text-lg font-bold">
+                                  {otherUser?.full_name?.charAt(0) || '?'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0 w-full sm:w-auto">
+                              <p className="font-bold text-base sm:text-lg text-gray-900 truncate">{otherUser?.full_name || 'Unknown User'}</p>
+                              <p className="text-xs sm:text-sm text-gray-600 font-medium capitalize truncate">{otherUser?.role || 'user'}</p>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setSelectedConversation({
+                                  id: otherUserId,
+                                  other_user: {
+                                    id: otherUserId,
+                                    full_name: otherUser?.full_name || 'Unknown User',
+                                    avatar_url: otherUser?.avatar_url,
+                                    role: otherUser?.role || 'user'
+                                  }
+                                })
+                                setShowMessageModal(true)
+                              }}
+                              className="border-gray-300 hover:border-orange-400 hover:text-orange-600 font-semibold px-4 py-2 min-h-[44px] w-full sm:w-auto text-sm sm:text-base"
+                            >
+                              <MessageSquare className="w-4 h-4 mr-1" />
+                              Message
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
                     )
                   })}
                   
-                  {/* Add Friend Card */}
-                  <div className="flex items-center justify-center p-6 border-2 border-dashed border-gray-300 rounded-lg hover:border-gray-400">
-                    <Button 
-                      variant="ghost"
-                      onClick={() => setShowAddFriendModal(true)}
-                      className="flex flex-col items-center space-y-2"
-                    >
-                      <UserPlus className="w-8 h-8 text-gray-400" />
-                      <span className="text-sm text-gray-500">Add Friend</span>
-                    </Button>
-                  </div>
+                  {/* Add Friend Card - Premium Design */}
+                  <Card className="border-2 border-dashed border-gray-300 hover:border-orange-400 transition-all duration-200 bg-gradient-to-br from-gray-50 to-white">
+                    <CardContent className="p-4 sm:p-6 text-center">
+                      <Button 
+                        variant="ghost"
+                        onClick={() => setShowAddFriendModal(true)}
+                        className="flex flex-col items-center space-y-2 sm:space-y-3 w-full h-full py-6 sm:py-8 min-h-[44px]"
+                      >
+                        <div className="w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center">
+                          <UserPlus className="w-6 h-6 sm:w-7 sm:h-7 text-orange-600" />
+                        </div>
+                        <span className="text-sm sm:text-base font-semibold text-gray-700">Add Friend</span>
+                      </Button>
+                    </CardContent>
+                  </Card>
                 </div>
               )}
             </CardContent>
@@ -1022,36 +1080,38 @@ export default function MessagesPage() {
         </div>
       )}
 
-      {/* Groups Tab */}
+      {/* Groups Tab - Premium Design */}
       {activeTab === 'groups' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {groups.map((group) => (
-            <Card key={group.id}>
+            <Card key={group.id} className="border border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 bg-gradient-to-br from-white to-gray-50">
               <CardContent className="p-6">
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-medium">{group.name}</h3>
-                    <Button size="sm" variant="outline">
+                    <h3 className="font-bold text-lg text-gray-900">{group.name}</h3>
+                    <Button size="sm" variant="outline" className="border-gray-300 hover:border-orange-400 hover:text-orange-600">
                       <MessageSquare className="w-4 h-4" />
                     </Button>
                   </div>
                   {group.description && (
-                    <p className="text-sm text-gray-600">{group.description}</p>
+                    <p className="text-sm text-gray-600 leading-relaxed">{group.description}</p>
                   )}
-                  <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span>{group.member_count} members</span>
-                    <Badge variant="outline">Member</Badge>
+                  <div className="flex items-center justify-between pt-3 border-t border-gray-200">
+                    <span className="text-sm font-medium text-gray-700">{group.member_count} members</span>
+                    <Badge className="bg-orange-100 text-orange-700 border-orange-200 font-medium">Member</Badge>
                   </div>
                 </div>
               </CardContent>
             </Card>
           ))}
           
-          {/* Create Group Card */}
-          <Card className="border-dashed">
+          {/* Create Group Card - Premium Design */}
+          <Card className="border-2 border-dashed border-gray-300 hover:border-orange-400 transition-all duration-200 bg-gradient-to-br from-gray-50 to-white">
             <CardContent className="p-6 text-center">
-              <Plus className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-              <p className="text-sm text-gray-500 mb-2">Create a group</p>
+              <div className="w-16 h-16 bg-gradient-to-br from-orange-100 to-orange-200 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Plus className="w-8 h-8 text-orange-600" />
+              </div>
+              <p className="text-base font-semibold text-gray-900 mb-3">Create a group</p>
               <Button 
                 size="sm" 
                 variant="outline"
@@ -1062,8 +1122,9 @@ export default function MessagesPage() {
                     createGroup(name, description)
                   }
                 }}
+                className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-semibold px-6 py-2 shadow-md hover:shadow-lg transition-all duration-200"
               >
-                <Plus className="w-4 h-4 mr-1" />
+                <Plus className="w-4 h-4 mr-2" />
                 Create Group
               </Button>
             </CardContent>
