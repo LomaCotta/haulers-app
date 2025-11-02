@@ -35,7 +35,6 @@ import {
   Shield,
   Users,
   Calendar,
-  MessageCircle,
   Bookmark,
   BookmarkCheck
 } from "lucide-react"
@@ -65,7 +64,6 @@ interface Business {
     id: string
     full_name: string
   }
-  // Legacy fields for compatibility
   base_rate_cents?: number
   hourly_rate_cents?: number
   service_types?: string[]
@@ -157,7 +155,7 @@ export default function FindPage() {
     service_types: [],
     min_rating: 0,
     max_price: 1000,
-    verified_only: true, // Default to showing only verified businesses
+    verified_only: true,
     max_distance: 50,
     availability: [],
     price_range: [0, 1000],
@@ -187,32 +185,27 @@ export default function FindPage() {
     try {
       setLoading(true)
       
-      // Build the query
       let query = supabase
         .from('businesses')
         .select(`
           *,
           owner:profiles!businesses_owner_id_fkey(id, full_name)
         `)
-        .eq('verified', true) // Only show verified businesses
+        .eq('verified', true)
         .order('created_at', { ascending: false })
 
-      // Apply search filter
       if (filters.search) {
         query = query.or(`name.ilike.%${filters.search}%,description.ilike.%${filters.search}%`)
       }
 
-      // Apply location filter
       if (filters.location) {
         query = query.or(`city.ilike.%${filters.location}%,state.ilike.%${filters.location}%,address.ilike.%${filters.location}%`)
       }
 
-      // Apply service type filter
       if (filters.service_types.length > 0) {
         query = query.in('service_type', filters.service_types)
       }
 
-      // Apply rating filter
       if (filters.min_rating > 0) {
         query = query.gte('rating_avg', filters.min_rating)
       }
@@ -225,25 +218,12 @@ export default function FindPage() {
         return
       }
 
-      // Debug: Log business data to see what's available
-      console.log('Business data from find page:', data?.map(b => ({
-        id: b.id,
-        name: b.name,
-        logo_url: b.logo_url,
-        cover_photo_url: b.cover_photo_url,
-        image_url: b.image_url
-      })))
-
-      // Transform the data to match the expected format - NO FAKE DATA
       const transformedBusinesses = (data || []).map(business => ({
         ...business,
-        // Only use real data from database
         service_types: business.service_type ? [business.service_type] : [],
         base_rate_cents: business.base_rate_cents || 0,
         hourly_rate_cents: business.hourly_rate_cents || 0,
-        // Map logo_url to image_url for display
         image_url: business.logo_url || business.cover_photo_url || undefined,
-        // Remove all fake/mock data - only show what's actually in the database
         is_favorite: false,
         is_bookmarked: false
       }))
@@ -257,7 +237,6 @@ export default function FindPage() {
     }
   }, [filters, supabase])
 
-  // Auto-search when URL search parameter is set
   useEffect(() => {
     if (urlSearch) {
       handleSearch()
@@ -308,94 +287,121 @@ export default function FindPage() {
     return `${km.toFixed(1)}km`
   }
 
+  const getBookingUrl = (business: Business) => {
+    return `/movers/book?businessId=${business.id}`
+  }
+
+  const handlePhoneCall = (phone: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    window.location.href = `tel:${phone}`
+  }
+
   useEffect(() => {
     handleSearch()
   }, [])
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b sticky top-0 z-40">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex flex-col lg:flex-row gap-4">
-            {/* Search Bar */}
-            <div className="flex-1 flex gap-4">
-              <div className="flex-1">
-                <Label htmlFor="search" className="sr-only">Search</Label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                  <Input
-                    id="search"
-                    placeholder={serviceCategory ? `Find ${serviceCategory.name.toLowerCase()} services...` : "What service do you need?"}
-                    value={filters.search}
-                    onChange={(e) => handleFilterChange('search', e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
-              <div className="flex-1">
-                <Label htmlFor="location" className="sr-only">Location</Label>
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                  <Input
-                    id="location"
-                    placeholder="Where are you located?"
-                    value={filters.location}
-                    onChange={(e) => handleFilterChange('location', e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-              </div>
-              <Button onClick={handleSearch} className="px-6">
-                <Search className="h-4 w-4 mr-2" />
-                Search
-              </Button>
+    <div className="min-h-screen bg-white">
+      {/* Premium Search Header */}
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-50 shadow-sm">
+        <div className="container mx-auto px-4 sm:px-6 py-4 sm:py-5">
+          {/* Search Bar */}
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-4">
+            <div className="flex-1 relative">
+              <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 sm:h-5 sm:w-5" />
+              <Input
+                id="search"
+                placeholder={serviceCategory ? `Find ${serviceCategory.name.toLowerCase()} services...` : "What service do you need?"}
+                value={filters.search}
+                onChange={(e) => handleFilterChange('search', e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                className="pl-11 sm:pl-12 h-12 sm:h-14 text-base sm:text-lg border-gray-200 rounded-xl focus:border-orange-500 focus:ring-orange-500 bg-gray-50 focus:bg-white transition-all"
+              />
             </div>
+            <div className="flex-1 relative">
+              <MapPin className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4 sm:h-5 sm:w-5" />
+              <Input
+                id="location"
+                placeholder="Where are you located?"
+                value={filters.location}
+                onChange={(e) => handleFilterChange('location', e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                className="pl-11 sm:pl-12 h-12 sm:h-14 text-base sm:text-lg border-gray-200 rounded-xl focus:border-orange-500 focus:ring-orange-500 bg-gray-50 focus:bg-white transition-all"
+              />
+            </div>
+            <Button 
+              onClick={handleSearch} 
+              className="h-12 sm:h-14 px-6 sm:px-8 bg-orange-500 hover:bg-orange-600 text-white font-medium rounded-xl shadow-sm hover:shadow-md transition-all duration-200 text-base sm:text-lg"
+            >
+              <Search className="h-4 w-4 sm:h-5 sm:w-5 mr-2" />
+              <span className="hidden sm:inline">Search</span>
+            </Button>
+          </div>
 
-            {/* View Controls */}
-            <div className="flex items-center gap-2">
+          {/* View Controls & Filters */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 sm:gap-3">
               <Button
                 variant={viewMode === 'list' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setViewMode('list')}
+                className={`h-9 sm:h-10 px-3 sm:px-4 rounded-lg transition-all ${
+                  viewMode === 'list' 
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white border-orange-500' 
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
               >
                 <List className="h-4 w-4" />
+                <span className="hidden sm:inline ml-2">List</span>
               </Button>
               <Button
                 variant={viewMode === 'grid' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setViewMode('grid')}
+                className={`h-9 sm:h-10 px-3 sm:px-4 rounded-lg transition-all ${
+                  viewMode === 'grid' 
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white border-orange-500' 
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
               >
                 <Grid3X3 className="h-4 w-4" />
+                <span className="hidden sm:inline ml-2">Grid</span>
               </Button>
               <Button
                 variant={viewMode === 'map' ? 'default' : 'outline'}
                 size="sm"
                 onClick={() => setViewMode('map')}
+                className={`h-9 sm:h-10 px-3 sm:px-4 rounded-lg transition-all ${
+                  viewMode === 'map' 
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white border-orange-500' 
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
               >
                 <Map className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowFilters(!showFilters)}
-              >
-                <Filter className="h-4 w-4 mr-2" />
-                Filters
-                {showFilters ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />}
+                <span className="hidden sm:inline ml-2">Map</span>
               </Button>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowFilters(!showFilters)}
+              className="h-9 sm:h-10 px-3 sm:px-4 rounded-lg border-gray-200 hover:border-gray-300 transition-all"
+            >
+              <Filter className="h-4 w-4 mr-2" />
+              <span className="hidden sm:inline">Filters</span>
+              {showFilters ? <ChevronUp className="h-4 w-4 ml-2" /> : <ChevronDown className="h-4 w-4 ml-2" />}
+            </Button>
           </div>
 
           {/* Filters Panel */}
           {showFilters && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* Category Filter */}
+            <div className="mt-4 p-4 sm:p-6 bg-gray-50 rounded-xl border border-gray-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
-                  <Label className="text-sm font-medium">Category</Label>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">Category</Label>
                   <Select value={filters.category} onValueChange={(value) => handleFilterChange('category', value)}>
-                    <SelectTrigger>
+                    <SelectTrigger className="bg-white border-gray-200 rounded-lg">
                       <SelectValue placeholder="All Categories" />
                     </SelectTrigger>
                     <SelectContent>
@@ -409,11 +415,10 @@ export default function FindPage() {
                   </Select>
                 </div>
 
-                {/* Rating Filter */}
                 <div>
-                  <Label className="text-sm font-medium">Minimum Rating</Label>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">Minimum Rating</Label>
                   <Select value={filters.min_rating.toString()} onValueChange={(value) => handleFilterChange('min_rating', parseFloat(value))}>
-                    <SelectTrigger>
+                    <SelectTrigger className="bg-white border-gray-200 rounded-lg">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -425,9 +430,8 @@ export default function FindPage() {
                   </Select>
                 </div>
 
-                {/* Price Range */}
                 <div>
-                  <Label className="text-sm font-medium">Price Range</Label>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">Price Range</Label>
                   <div className="space-y-2">
                     <Slider
                       value={filters.price_range}
@@ -437,18 +441,17 @@ export default function FindPage() {
                       step={50}
                       className="w-full"
                     />
-                    <div className="flex justify-between text-sm text-gray-500">
+                    <div className="flex justify-between text-sm text-gray-600">
                       <span>${filters.price_range[0]}</span>
                       <span>${filters.price_range[1]}</span>
                     </div>
                   </div>
                 </div>
 
-                {/* Sort */}
                 <div>
-                  <Label className="text-sm font-medium">Sort By</Label>
+                  <Label className="text-sm font-medium text-gray-700 mb-2 block">Sort By</Label>
                   <Select value={filters.sort_by} onValueChange={(value) => handleFilterChange('sort_by', value)}>
-                    <SelectTrigger>
+                    <SelectTrigger className="bg-white border-gray-200 rounded-lg">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -462,9 +465,8 @@ export default function FindPage() {
                 </div>
               </div>
 
-              {/* Service Types */}
-              <div className="mt-4">
-                <Label className="text-sm font-medium mb-2 block">Service Types</Label>
+              <div className="mt-6">
+                <Label className="text-sm font-medium text-gray-700 mb-3 block">Service Types</Label>
                 <div className="flex flex-wrap gap-2">
                   {serviceTypes.map(type => (
                     <Button
@@ -472,6 +474,11 @@ export default function FindPage() {
                       variant={filters.service_types.includes(type.id) ? 'default' : 'outline'}
                       size="sm"
                       onClick={() => toggleServiceType(type.id)}
+                      className={`h-8 rounded-lg transition-all ${
+                        filters.service_types.includes(type.id)
+                          ? 'bg-orange-500 hover:bg-orange-600 text-white border-orange-500'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
                     >
                       {type.label}
                     </Button>
@@ -479,19 +486,19 @@ export default function FindPage() {
                 </div>
               </div>
 
-              {/* Feature Filters */}
-              <div className="mt-4">
-                <Label className="text-sm font-medium mb-2 block">Features</Label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div className="mt-6">
+                <Label className="text-sm font-medium text-gray-700 mb-3 block">Features</Label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {FEATURE_FILTERS.map(feature => (
                     <div key={feature.id} className="flex items-center space-x-2">
                       <Checkbox
                         id={feature.id}
                         checked={filters.features.includes(feature.id)}
                         onCheckedChange={() => toggleFeature(feature.id)}
+                        className="border-gray-300 data-[state=checked]:bg-orange-500 data-[state=checked]:border-orange-500"
                       />
-                      <Label htmlFor={feature.id} className="text-sm flex items-center">
-                        <feature.icon className="h-3 w-3 mr-1" />
+                      <Label htmlFor={feature.id} className="text-sm flex items-center cursor-pointer text-gray-700">
+                        <feature.icon className="h-3 w-3 mr-1.5" />
                         {feature.label}
                       </Label>
                     </div>
@@ -499,25 +506,33 @@ export default function FindPage() {
                 </div>
               </div>
 
-              {/* Clear Filters */}
-              <div className="mt-4 flex justify-between">
-                <Button variant="outline" size="sm" onClick={() => setFilters({
-                  search: '',
-                  location: '',
-                  category: '',
-                  service_types: [],
-                  min_rating: 0,
-                  max_price: 1000,
-                  verified_only: false,
-                  max_distance: 50,
-                  availability: [],
-                  price_range: [0, 1000],
-                  sort_by: 'relevance',
-                  features: []
-                })}>
+              <div className="mt-6 flex flex-col sm:flex-row justify-between gap-3">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setFilters({
+                    search: '',
+                    location: '',
+                    category: '',
+                    service_types: [],
+                    min_rating: 0,
+                    max_price: 1000,
+                    verified_only: false,
+                    max_distance: 50,
+                    availability: [],
+                    price_range: [0, 1000],
+                    sort_by: 'relevance',
+                    features: []
+                  })}
+                  className="border-gray-200 hover:border-gray-300 rounded-lg"
+                >
                   Clear All Filters
                 </Button>
-                <Button size="sm" onClick={handleSearch}>
+                <Button 
+                  size="sm" 
+                  onClick={handleSearch}
+                  className="bg-orange-500 hover:bg-orange-600 text-white rounded-lg"
+                >
                   Apply Filters
                 </Button>
               </div>
@@ -527,345 +542,279 @@ export default function FindPage() {
       </div>
 
       {/* Results */}
-      <div className="container mx-auto px-4 py-6">
-        <div className="flex justify-between items-center mb-6">
+      <div className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {businesses.length} {serviceCategory ? serviceCategory.name : 'Service'} Providers
+            <h1 className="text-2xl sm:text-3xl font-semibold text-gray-900 mb-1 tracking-tight">
+              {businesses.length} {serviceCategory ? serviceCategory.name : 'Service'} {businesses.length === 1 ? 'Provider' : 'Providers'}
             </h1>
-            <p className="text-gray-600">
-              {filters.location && `near ${filters.location}`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500">View:</span>
-            <Button
-              variant={viewMode === 'list' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setViewMode('list')}
-            >
-              <List className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={viewMode === 'grid' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setViewMode('grid')}
-            >
-              <Grid3X3 className="h-4 w-4" />
-            </Button>
+            {filters.location && (
+              <p className="text-gray-600 text-sm sm:text-base">
+                near {filters.location}
+              </p>
+            )}
           </div>
         </div>
 
         {loading ? (
           <div className="flex justify-center items-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-orange-500"></div>
           </div>
         ) : viewMode === 'map' ? (
-          <div className="h-96 bg-gray-200 rounded-lg flex items-center justify-center">
+          <div className="h-96 bg-gray-50 rounded-xl border border-gray-100 flex items-center justify-center">
             <div className="text-center">
               <Map className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-500">Interactive map coming soon</p>
-              <p className="text-sm text-gray-400">Use list or grid view to browse providers</p>
+              <p className="text-gray-600 font-medium mb-1">Interactive map coming soon</p>
+              <p className="text-sm text-gray-500">Use list or grid view to browse providers</p>
             </div>
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
             {businesses.map((business) => (
-              <Card key={business.id} className="hover:shadow-lg transition-shadow">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold text-lg">{business.name}</h3>
-                        {business.verified && (
-                          <Badge variant="secondary" className="text-xs">
-                            <Verified className="h-3 w-3 mr-1" />
-                            Verified
-                          </Badge>
-                        )}
-                        {business.donation_badge && (
-                          <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                            💚 Donation Partner
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 mb-2">
-                        {business.rating_count > 0 ? (
-                          <>
-                            <div className="flex items-center">
-                              <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                              <span className="ml-1 font-medium">{business.rating_avg.toFixed(1)}</span>
-                            </div>
-                            <span className="text-gray-500 text-sm">({business.rating_count} reviews)</span>
-                          </>
-                        ) : (
-                          <div className="flex items-center text-blue-600 text-sm">
-                            <Star className="h-4 w-4 text-blue-400" />
-                            <span className="ml-1">New to Haulers</span>
-                          </div>
-                        )}
-                        {business.distance_km && (
-                          <span className="text-gray-500 text-sm">• {formatDistance(business.distance_km)}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => toggleFavorite(business.id)}
-                      >
-                        {business.is_favorite ? (
-                          <Heart className="h-4 w-4 text-red-500 fill-current" />
-                        ) : (
-                          <Heart className="h-4 w-4" />
-                        )}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => toggleBookmark(business.id)}
-                      >
-                        {business.is_bookmarked ? (
-                          <BookmarkCheck className="h-4 w-4 text-blue-500 fill-current" />
-                        ) : (
-                          <Bookmark className="h-4 w-4" />
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="pt-0">
-                  <p className="text-gray-600 text-sm mb-3 line-clamp-2">{business.description}</p>
-                  
-                   {business.base_rate_cents && business.base_rate_cents > 0 && (
-                    <div className="space-y-2 mb-4">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-gray-500">Base Rate:</span>
-                        <span className="font-medium">{formatPrice(business.base_rate_cents)}</span>
-                      </div>
-                      {business.hourly_rate_cents && business.hourly_rate_cents > 0 && (
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-500">Hourly Rate:</span>
-                          <span className="font-medium">{formatPrice(business.hourly_rate_cents)}/hr</span>
+              <Link 
+                key={business.id} 
+                href={`/b/${business.id}`}
+                className="block group"
+              >
+                <Card className="h-full border border-gray-200 bg-white shadow-sm hover:shadow-lg transition-all duration-200 rounded-xl overflow-hidden cursor-pointer">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          <h3 className="font-semibold text-lg text-gray-900 truncate group-hover:text-orange-600 transition-colors">{business.name}</h3>
+                          {business.donation_badge && (
+                            <Badge className="bg-green-50 text-green-700 border-green-200 text-xs px-2 py-0.5 rounded-md">
+                              💚 Donation Partner
+                            </Badge>
+                          )}
                         </div>
-                      )}
+                        <div className="flex items-center gap-3 mb-3">
+                          {business.rating_count > 0 ? (
+                            <>
+                              <div className="flex items-center">
+                                <Star className="h-4 w-4 text-orange-400 fill-current" />
+                                <span className="ml-1 font-semibold text-gray-900">{business.rating_avg.toFixed(1)}</span>
+                              </div>
+                              <span className="text-gray-500 text-sm">({business.rating_count})</span>
+                            </>
+                          ) : (
+                            <div className="flex items-center text-orange-600 text-sm">
+                              <Star className="h-4 w-4 text-orange-400" />
+                              <span className="ml-1">New to Haulers</span>
+                            </div>
+                          )}
+                          {business.distance_km && (
+                            <span className="text-gray-500 text-sm">• {formatDistance(business.distance_km)}</span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  )}
-
-                  <div className="flex flex-wrap gap-1 mb-4">
-                     {business.service_types?.slice(0, 3).map((type) => (
-                      <Badge key={type} variant="outline" className="text-xs">
-                        {type.replace('_', ' ')}
-                      </Badge>
-                    ))}
-                    {business.service_types && business.service_types.length > 3 && (
-                      <Badge variant="outline" className="text-xs">
-                        +{business.service_types.length - 3} more
-                      </Badge>
-                    )}
-                  </div>
-
-                  <div className="flex gap-2">
-                    <Button asChild className="flex-1">
-                      <Link href={`/b/${business.id}`}>
-                        View Details
-                      </Link>
-                    </Button>
-                    <Button variant="outline" size="sm">
-                      <Phone className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {businesses.map((business) => (
-              <Card key={business.id} className="hover:shadow-lg transition-shadow">
-                <CardContent className="p-6">
-                  <div className="flex gap-4">
-                    {/* Business Image */}
-                    <div className="w-20 h-20 bg-gray-200 rounded-lg flex-shrink-0">
-                      {business.image_url ? (
+                    {business.image_url && (
+                      <div className="w-full h-40 bg-gray-100 rounded-lg overflow-hidden mb-4">
                         <img 
                           src={business.image_url} 
                           alt={business.name}
-                          className="w-full h-full object-cover rounded-lg"
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-gray-400">
-                          <Users className="h-8 w-8" />
-                        </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
+                  </CardHeader>
+                  <CardContent className="pt-0 pb-4">
+                    <p className="text-gray-600 text-sm mb-4 line-clamp-2 leading-relaxed min-h-[2.5rem]">{business.description}</p>
 
-                    {/* Business Info */}
-                    <div className="flex-1">
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h3 className="font-semibold text-lg">{business.name}</h3>
-                            {business.verified && (
-                              <Badge variant="secondary" className="text-xs">
-                                <Verified className="h-3 w-3 mr-1" />
-                                Verified
-                              </Badge>
-                            )}
-                            {business.donation_badge && (
-                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                                💚 Donation Partner
-                              </Badge>
-                            )}
+                    {business.phone && (
+                      <div 
+                        className="space-y-3"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          onClick={(e) => handlePhoneCall(business.phone!, e)}
+                          className="w-full flex items-center gap-2 px-4 py-3 bg-gray-50 hover:bg-orange-50 rounded-lg border-2 border-gray-200 hover:border-orange-400 transition-all duration-200 cursor-pointer group"
+                        >
+                          <Phone className="h-5 w-5 text-orange-500 flex-shrink-0 group-hover:scale-110 transition-transform" />
+                          <span className="text-sm font-semibold text-gray-700 group-hover:text-orange-700">{business.phone}</span>
+                          {business.service_radius_km && (
+                            <>
+                              <span className="text-gray-300">•</span>
+                              <Navigation className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                              <span className="text-sm font-medium text-gray-600">{business.service_radius_km}km</span>
+                            </>
+                          )}
+                        </button>
+                        {business.service_types && business.service_types.length > 0 && (
+                          <div className="flex justify-end">
+                            <span className="text-xs text-gray-400 opacity-60">
+                              {business.service_types[0]?.replace('_', ' ')}
+                            </span>
                           </div>
-                          
-                          <div className="flex items-center gap-4 mb-2">
-                            {business.rating_count > 0 ? (
-                              <div className="flex items-center">
-                                <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                                <span className="ml-1 font-medium">{business.rating_avg.toFixed(1)}</span>
-                                <span className="ml-1 text-gray-500 text-sm">({business.rating_count} reviews)</span>
-                              </div>
-                            ) : (
-                              <div className="flex items-center text-blue-600 text-sm">
-                                <Star className="h-4 w-4 text-blue-400" />
-                                <span className="ml-1">New to Haulers</span>
-                              </div>
-                            )}
-                            {business.distance_km && (
-                              <div className="flex items-center text-gray-500 text-sm">
-                                <Navigation className="h-4 w-4 mr-1" />
-                                {formatDistance(business.distance_km)}
-                              </div>
-                            )}
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-4 sm:space-y-6">
+            {businesses.map((business) => (
+              <Link 
+                key={business.id} 
+                href={`/b/${business.id}`}
+                className="block group"
+              >
+                <Card className="border border-gray-200 bg-white shadow-sm hover:shadow-lg transition-all duration-200 rounded-xl overflow-hidden cursor-pointer">
+                  <CardContent className="p-4 sm:p-6">
+                    <div className="flex flex-col sm:flex-row gap-4 sm:gap-6">
+                      {/* Business Image */}
+                      <div className="w-full sm:w-28 sm:h-28 bg-gray-100 rounded-lg flex-shrink-0 overflow-hidden">
+                        {business.image_url ? (
+                          <img 
+                            src={business.image_url} 
+                            alt={business.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                          />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-400">
+                            <Users className="h-8 w-8 sm:h-10 sm:w-10" />
                           </div>
+                        )}
+                      </div>
 
-                          <p className="text-gray-600 text-sm mb-3 line-clamp-2">{business.description}</p>
+                      {/* Business Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <h3 className="font-semibold text-lg sm:text-xl text-gray-900 group-hover:text-orange-600 transition-colors">{business.name}</h3>
+                              {business.donation_badge && (
+                                <Badge className="bg-green-50 text-green-700 border-green-200 text-xs px-2 py-0.5 rounded-md">
+                                  💚 Donation Partner
+                                </Badge>
+                              )}
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-3">
+                              {business.rating_count > 0 ? (
+                                <div className="flex items-center">
+                                  <Star className="h-4 w-4 text-orange-400 fill-current" />
+                                  <span className="ml-1.5 font-semibold text-gray-900">{business.rating_avg.toFixed(1)}</span>
+                                  <span className="ml-1 text-gray-500 text-sm">({business.rating_count} reviews)</span>
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-orange-600 text-sm">
+                                  <Star className="h-4 w-4 text-orange-400" />
+                                  <span className="ml-1.5">New to Haulers</span>
+                                </div>
+                              )}
+                              {business.distance_km && (
+                                <div className="flex items-center text-gray-500 text-sm">
+                                  <Navigation className="h-4 w-4 mr-1" />
+                                  {formatDistance(business.distance_km)}
+                                </div>
+                              )}
+                            </div>
 
-                          <div className="flex flex-wrap gap-2 mb-3">
-                             {business.service_types?.slice(0, 4).map((type) => (
-                              <Badge key={type} variant="outline" className="text-xs">
-                                {type.replace('_', ' ')}
-                              </Badge>
-                            ))}
-                            {business.service_types && business.service_types.length > 4 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{business.service_types.length - 4} more
-                              </Badge>
-                            )}
-                          </div>
+                            <p className="text-gray-600 text-sm sm:text-base mb-3 line-clamp-2 leading-relaxed">{business.description}</p>
 
-                          {/* Only show real data from database */}
-                          <div className="flex items-center gap-4 text-sm text-gray-500">
                             {business.phone && (
-                              <div className="flex items-center">
-                                <Phone className="h-4 w-4 mr-1" />
-                                {business.phone}
-                              </div>
+                              <button
+                                type="button"
+                                onClick={(e) => handlePhoneCall(business.phone!, e)}
+                                className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 hover:bg-orange-50 rounded-lg border-2 border-gray-200 hover:border-orange-400 transition-all duration-200 cursor-pointer group mb-4 inline-flex"
+                              >
+                                <Phone className="h-5 w-5 text-orange-500 flex-shrink-0 group-hover:scale-110 transition-transform" />
+                                <span className="text-sm font-semibold text-gray-700 group-hover:text-orange-700">{business.phone}</span>
+                                {business.service_radius_km && (
+                                  <>
+                                    <span className="text-gray-300">•</span>
+                                    <Navigation className="h-4 w-4 text-orange-500 flex-shrink-0" />
+                                    <span className="text-sm font-medium text-gray-600">{business.service_radius_km}km radius</span>
+                                  </>
+                                )}
+                              </button>
                             )}
-                            {business.service_radius_km && (
-                              <div className="flex items-center">
-                                <Navigation className="h-4 w-4 mr-1" />
-                                {business.service_radius_km}km radius
+                            {!business.phone && business.service_radius_km && (
+                              <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 rounded-lg border border-gray-100 mb-4 inline-flex">
+                                <Navigation className="h-4 w-4 text-orange-500" />
+                                <span className="text-sm font-medium text-gray-700">{business.service_radius_km}km radius</span>
                               </div>
                             )}
                           </div>
-                        </div>
 
-                        {/* Actions */}
-                        <div className="flex flex-col items-end gap-2">
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => toggleFavorite(business.id)}
-                            >
-                              {business.is_favorite ? (
-                                <Heart className="h-4 w-4 text-red-500 fill-current" />
-                              ) : (
-                                <Heart className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => toggleBookmark(business.id)}
-                            >
-                              {business.is_bookmarked ? (
-                                <BookmarkCheck className="h-4 w-4 text-blue-500 fill-current" />
-                              ) : (
-                                <Bookmark className="h-4 w-4" />
-                              )}
-                            </Button>
-                            <Button variant="ghost" size="sm">
-                              <Share2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-
-                          <div className="text-right">
-                             {business.base_rate_cents && business.base_rate_cents > 0 ? (
-                              <>
-                                <div className="text-lg font-semibold">{formatPrice(business.base_rate_cents)}</div>
+                          {/* Pricing/Book Now */}
+                          <div className="flex sm:flex-col items-start sm:items-end gap-2">
+                            {business.base_rate_cents && business.base_rate_cents > 0 ? (
+                              <div className="text-right">
+                                <div className="text-lg sm:text-xl font-semibold text-gray-900">{formatPrice(business.base_rate_cents)}</div>
                                 <div className="text-sm text-gray-500">base rate</div>
                                 {business.hourly_rate_cents && business.hourly_rate_cents > 0 && (
                                   <div className="text-sm text-gray-500">{formatPrice(business.hourly_rate_cents)}/hr</div>
                                 )}
-                              </>
+                                {business.service_types && business.service_types.length > 0 && (
+                                  <div className="mt-1">
+                                    <span className="text-xs text-gray-400 opacity-50">
+                                      {business.service_types[0]?.replace('_', ' ')}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             ) : (
-                              <div className="text-sm text-gray-500">Contact for pricing</div>
+                              <div className="flex flex-col items-end gap-1">
+                                <Button 
+                                  asChild 
+                                  className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-11 px-6 rounded-lg font-semibold text-sm sm:text-base transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 whitespace-nowrap"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <Link href={getBookingUrl(business)} onClick={(e) => e.stopPropagation()}>
+                                    Book Now
+                                  </Link>
+                                </Button>
+                                {business.service_types && business.service_types.length > 0 && (
+                                  <span className="text-xs text-gray-400 opacity-50">
+                                    {business.service_types[0]?.replace('_', ' ')}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </div>
                         </div>
                       </div>
-
-                      <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                        <div className="flex gap-2">
-                          <Button asChild>
-                            <Link href={`/b/${business.id}`}>
-                              View Details
-                            </Link>
-                          </Button>
-                          <Button variant="outline">
-                            <MessageCircle className="h-4 w-4 mr-2" />
-                            Message
-                          </Button>
-                          <Button variant="outline">
-                            <Phone className="h-4 w-4 mr-2" />
-                            Call
-                          </Button>
-                        </div>
-                        {/* Remove fake last active info */}
-                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </Link>
             ))}
           </div>
         )}
 
         {businesses.length === 0 && !loading && (
-          <div className="text-center py-12">
-            <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No results found</h3>
-            <p className="text-gray-500 mb-4">
-              Try adjusting your search criteria or location
+          <div className="text-center py-16 sm:py-20">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Search className="h-8 w-8 text-gray-400" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">No results found</h3>
+            <p className="text-gray-600 mb-6 max-w-md mx-auto">
+              Try adjusting your search criteria or location to find more providers
             </p>
-            <Button onClick={() => setFilters({
-              search: '',
-              location: '',
-              category: '',
-              service_types: [],
-              min_rating: 0,
-              max_price: 1000,
-              verified_only: false,
-              max_distance: 50,
-              availability: [],
-              price_range: [0, 1000],
-              sort_by: 'relevance',
-              features: []
-            })}>
+            <Button 
+              onClick={() => setFilters({
+                search: '',
+                location: '',
+                category: '',
+                service_types: [],
+                min_rating: 0,
+                max_price: 1000,
+                verified_only: false,
+                max_distance: 50,
+                availability: [],
+                price_range: [0, 1000],
+                sort_by: 'relevance',
+                features: []
+              })}
+              className="bg-orange-500 hover:bg-orange-600 text-white rounded-lg"
+            >
               Clear Filters
             </Button>
           </div>
