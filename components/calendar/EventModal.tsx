@@ -139,7 +139,7 @@ export function EventModal({ event, onClose }: EventModalProps) {
                         </div>
                       </td>
                       <td className="py-3 text-base text-gray-900">
-                        {event.metadata.address || serviceDetails.from_address || 
+                        {event.metadata?.address || serviceDetails.from_address || 
                          (Array.isArray(serviceDetails.pickup_addresses) ? serviceDetails.pickup_addresses[0] : '')}
                       </td>
                     </tr>
@@ -218,14 +218,60 @@ export function EventModal({ event, onClose }: EventModalProps) {
                       <Package className="w-4 h-4 text-gray-400" />
                       <div>
                         <div className="text-xs text-gray-500 uppercase tracking-wide">Heavy Items</div>
-                        <div className="text-sm font-semibold text-gray-900">{serviceDetails.heavy_items === true ? 'Yes' : serviceDetails.heavy_items}</div>
+                        <div className="text-sm font-semibold text-gray-900">
+                          {(() => {
+                            // CRITICAL: Handle heavy_items as array, object, number, or boolean
+                            const heavyItems = serviceDetails.heavy_items
+                            
+                            // If it's an array of objects, display count and total
+                            if (Array.isArray(heavyItems) && heavyItems.length > 0) {
+                              const validItems = heavyItems.filter((item: any) => item && typeof item === 'object')
+                              if (validItems.length > 0) {
+                                const totalCount = validItems.reduce((sum: number, item: any) => sum + (item.count || 0), 0)
+                                const totalCost = validItems.reduce((sum: number, item: any) => {
+                                  const priceCents = item.price_cents || 0
+                                  const count = item.count || 1
+                                  return sum + ((priceCents * count) / 100)
+                                }, 0)
+                                return `${validItems.length} item${validItems.length !== 1 ? 's' : ''} (${totalCount} total) - $${totalCost.toFixed(2)}`
+                              }
+                            }
+                            
+                            // If it's a number, treat it as cost
+                            if (typeof heavyItems === 'number' && heavyItems > 0) {
+                              return `$${heavyItems.toFixed(2)}`
+                            }
+                            
+                            // If it's a boolean, show Yes/No
+                            if (typeof heavyItems === 'boolean') {
+                              return heavyItems ? 'Yes' : 'No'
+                            }
+                            
+                            // If it's a string, show as is
+                            if (typeof heavyItems === 'string') {
+                              return heavyItems
+                            }
+                            
+                            // If it's an object (not an array), try to extract meaningful info
+                            if (typeof heavyItems === 'object' && heavyItems !== null) {
+                              const count = (heavyItems as any).count || 0
+                              const band = (heavyItems as any).band || ''
+                              if (count > 0 || band) {
+                                return `${count || ''} ${band || 'items'}`.trim()
+                              }
+                            }
+                            
+                            // Fallback
+                            return String(heavyItems)
+                          })()}
+                        </div>
                       </div>
                     </div>
                   )}
 
                   {serviceDetails.stairs && (
                     <div className="flex items-center gap-3">
-                      <Stairs className="w-4 h-4 text-gray-400" />
+                      <TrendingUp className="w-4 h-4 text-gray-400" />
                       <div>
                         <div className="text-xs text-gray-500 uppercase tracking-wide">Stairs</div>
                         <div className="text-sm font-semibold text-gray-900">{serviceDetails.stairs === true ? 'Yes' : serviceDetails.stairs}</div>

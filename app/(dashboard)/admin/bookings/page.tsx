@@ -119,12 +119,13 @@ export default function AdminBookingsPage() {
       console.log('[Admin] Starting bookings query with full access...')
       
       // CRITICAL: Admin needs ALL booking data including service_details
+      // Note: customer_email and customer_phone are in bookings table, not profiles
       let query = supabase
         .from('bookings')
         .select(`
           *,
           business:businesses(id, name, owner_id, phone, email, description),
-          customer:profiles!bookings_customer_id_fkey(id, full_name, email, phone)
+          customer:profiles!bookings_customer_id_fkey(id, full_name, phone)
         `)
         .order('created_at', { ascending: false })
         .limit(100) // Admin should see more
@@ -192,29 +193,49 @@ export default function AdminBookingsPage() {
         console.log('Loaded bookings with simple query:', simpleData?.length || 0)
         
         // Fetch related data separately
+        // Note: customer_email and customer_phone are already in booking object
         const bookingsWithRelations = await Promise.all((simpleData || []).map(async (booking: any) => {
           try {
             const [businessResult, customerResult] = await Promise.all([
               supabase
                 .from('businesses')
-                .select('id, name, owner_id')
+                .select('id, name, owner_id, phone, email, description')
                 .eq('id', booking.business_id)
                 .maybeSingle(),
-              supabase
+              booking.customer_id ? supabase
                 .from('profiles')
-                .select('id, full_name')
+                .select('id, full_name, phone')
                 .eq('id', booking.customer_id)
                 .maybeSingle()
+              : Promise.resolve({ data: null })
             ])
             
             return {
               ...booking,
               business: businessResult.data || null,
-              customer: customerResult.data || null
+              customer: customerResult.data ? {
+                ...customerResult.data,
+                // Use booking's customer_email and customer_phone (they're more reliable)
+                email: booking.customer_email,
+                phone: booking.customer_phone || customerResult.data.phone
+              } : {
+                id: booking.customer_id,
+                full_name: 'Unknown',
+                email: booking.customer_email,
+                phone: booking.customer_phone
+              }
             }
           } catch (err) {
             console.error('Error fetching related data for booking:', booking.id, err)
-            return booking
+            return {
+              ...booking,
+              customer: {
+                id: booking.customer_id,
+                full_name: 'Unknown',
+                email: booking.customer_email,
+                phone: booking.customer_phone
+              }
+            }
           }
         }))
         
@@ -245,14 +266,14 @@ export default function AdminBookingsPage() {
 
       if (error) {
         console.error('Error loading stats:', error)
-        // Create default stats
-        const getStatus = (b: any) => b.booking_status || b.status || 'pending'
+        // Create default stats from current bookings
+        const getStatus = (b: any) => b.booking_status || b.status || 'requested'
         const getPrice = (b: any) => b.total_price_cents || b.quote_cents || 0
         const completedBookings = bookings.filter(b => getStatus(b) === 'completed')
         setStats({
           total_bookings: bookings.length,
-          pending_bookings: bookings.filter(b => ['pending', 'requested'].includes(getStatus(b))).length,
-          confirmed_bookings: bookings.filter(b => getStatus(b) === 'confirmed').length,
+          pending_bookings: bookings.filter(b => ['requested', 'quoted', 'confirmed', 'scheduled'].includes(getStatus(b))).length,
+          confirmed_bookings: bookings.filter(b => ['confirmed', 'scheduled'].includes(getStatus(b))).length,
           completed_bookings: completedBookings.length,
           total_revenue: completedBookings.reduce((sum, b) => sum + getPrice(b), 0),
           average_booking_value: completedBookings.length > 0 
@@ -264,14 +285,14 @@ export default function AdminBookingsPage() {
 
       if (bookingsData && bookingsData.length > 0) {
         const total = bookingsData.length
-        // Actual schema: status enum('requested','quoted','accepted','scheduled','completed','canceled')
-        const getStatus = (b: any) => b.status || 'requested'
-        const pending = bookingsData.filter(b => ['requested', 'quoted', 'accepted', 'scheduled'].includes(getStatus(b))).length
-        const confirmed = bookingsData.filter(b => ['accepted', 'scheduled'].includes(getStatus(b))).length
+        // Actual schema: booking_status enum('requested','quoted','confirmed','scheduled','completed','cancelled')
+        const getStatus = (b: any) => b.booking_status || b.status || 'requested'
+        const pending = bookingsData.filter(b => ['requested', 'quoted', 'confirmed', 'scheduled'].includes(getStatus(b))).length
+        const confirmed = bookingsData.filter(b => ['confirmed', 'scheduled'].includes(getStatus(b))).length
         const completed = bookingsData.filter(b => getStatus(b) === 'completed').length
         const completedBookings = bookingsData.filter(b => getStatus(b) === 'completed')
-        // Actual schema: quote_cents
-        const getPrice = (b: any) => b.quote_cents || 0
+        // Use total_price_cents first, fallback to quote_cents for legacy support
+        const getPrice = (b: any) => b.total_price_cents || b.quote_cents || 0
         const revenue = completedBookings.reduce((sum, b) => sum + getPrice(b), 0)
         const avgValue = completedBookings.length > 0 ? revenue / completedBookings.length : 0
 
@@ -318,8 +339,10 @@ export default function AdminBookingsPage() {
       const { error } = await supabase
         .from('bookings')
         .update({ 
-          status: newStatus,
-          updated_at: new Date().toISOString()
+          booking_status: newStatus,
+          status: newStatus, // Legacy support
+          updated_at: new Date().toISOString(),
+          ...(notes ? { business_notes: notes } : {})
         })
         .eq('id', bookingId)
 
@@ -558,33 +581,46 @@ export default function AdminBookingsPage() {
                       <h3 className="text-lg font-semibold text-gray-900">
                         {booking.business?.name || 'Booking'}
                       </h3>
-                      {getStatusBadge(booking.status || 'requested')}
+                      {getStatusBadge(booking.booking_status || booking.status || 'requested')}
                     </div>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-gray-600">
                       <div className="flex items-center gap-2">
                         <Building className="h-4 w-4" />
-                        <span>{booking.business?.name}</span>
+                        <span>{booking.business?.name || 'N/A'}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4" />
-                        <span>{booking.customer?.full_name || booking.consumer?.full_name || 'Unknown'}</span>
+                        <span>{booking.customer?.full_name || 'Unknown'}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4" />
-                        <span>{formatDate(booking.move_date)}</span>
+                        <span>{booking.requested_date || booking.move_date ? formatDate(booking.requested_date || booking.move_date || '') : 'N/A'}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <DollarSign className="h-4 w-4" />
-                        <span className="font-semibold">{formatPrice(booking.quote_cents || 0)}</span>
+                        <span className="font-semibold">{formatPrice(booking.total_price_cents || booking.quote_cents || 0)}</span>
                       </div>
                     </div>
                     
-                    {booking.details && typeof booking.details === 'object' && Object.keys(booking.details).length > 0 && (
+                    {/* Show service details summary if available */}
+                    {booking.service_details && typeof booking.service_details === 'object' && Object.keys(booking.service_details).length > 0 && (
                       <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-                        <p className="text-sm text-gray-700">
-                          <strong>Details:</strong> {JSON.stringify(booking.details, null, 2)}
-                        </p>
+                        <p className="text-xs font-semibold text-gray-600 mb-1">Service Details:</p>
+                        <div className="space-y-1 text-xs text-gray-600">
+                          {booking.service_details.move_date && (
+                            <p><strong>Move Date:</strong> {formatDate(booking.service_details.move_date)}</p>
+                          )}
+                          {booking.service_details.crew_size && (
+                            <p><strong>Team Size:</strong> {booking.service_details.crew_size} movers</p>
+                          )}
+                          {booking.service_details.from_address && (
+                            <p><strong>From:</strong> {booking.service_details.from_address}</p>
+                          )}
+                          {booking.service_details.to_address && (
+                            <p><strong>To:</strong> {booking.service_details.to_address}</p>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -621,7 +657,7 @@ export default function AdminBookingsPage() {
             <CardContent className="space-y-6">
               {/* Status */}
               <div className="flex items-center gap-4">
-                {getStatusBadge(selectedBooking.status || 'requested')}
+                {getStatusBadge(selectedBooking.booking_status || selectedBooking.status || 'requested')}
               </div>
               
               {/* Basic Info */}
@@ -629,47 +665,114 @@ export default function AdminBookingsPage() {
                 <div>
                   <h4 className="font-semibold text-gray-900 mb-2">Booking Information</h4>
                   <div className="space-y-1 text-sm">
-                    <p><strong>Date:</strong> {formatDate(selectedBooking.move_date)}</p>
-                    <p><strong>Status:</strong> {selectedBooking.status}</p>
-                    <p><strong>Quote:</strong> {formatPrice(selectedBooking.quote_cents || 0)}</p>
+                    <p><strong>Booking ID:</strong> {selectedBooking.id}</p>
+                    <p><strong>Status:</strong> {selectedBooking.booking_status || selectedBooking.status || 'Unknown'}</p>
+                    <p><strong>Date:</strong> {selectedBooking.requested_date || selectedBooking.move_date ? formatDate(selectedBooking.requested_date || selectedBooking.move_date || '') : 'N/A'}</p>
+                    <p><strong>Time:</strong> {selectedBooking.requested_time || 'N/A'}</p>
+                    <p><strong>Total Price:</strong> {formatPrice(selectedBooking.total_price_cents || selectedBooking.quote_cents || 0)}</p>
+                    {selectedBooking.base_price_cents && (
+                      <p><strong>Base Price:</strong> {formatPrice(selectedBooking.base_price_cents)}</p>
+                    )}
+                    {selectedBooking.additional_fees_cents && (
+                      <p><strong>Additional Fees:</strong> {formatPrice(selectedBooking.additional_fees_cents)}</p>
+                    )}
                     {selectedBooking.deposit_cents && (
                       <p><strong>Deposit:</strong> {formatPrice(selectedBooking.deposit_cents)}</p>
                     )}
+                    <p><strong>Payment Status:</strong> {selectedBooking.payment_status || 'N/A'}</p>
                   </div>
                 </div>
                 
                 <div>
                   <h4 className="font-semibold text-gray-900 mb-2">Contact Information</h4>
                   <div className="space-y-1 text-sm">
-                    <p><strong>Customer:</strong> {selectedBooking.customer?.full_name || selectedBooking.consumer?.full_name || 'Unknown'}</p>
-                    <p><strong>Business:</strong> {selectedBooking.business?.name}</p>
+                    <p><strong>Customer Name:</strong> {selectedBooking.customer?.full_name || 'Unknown'}</p>
+                    <p><strong>Customer Email:</strong> {selectedBooking.customer_email || selectedBooking.customer?.email || 'N/A'}</p>
+                    <p><strong>Customer Phone:</strong> {selectedBooking.customer_phone || selectedBooking.customer?.phone || 'N/A'}</p>
+                    <p className="pt-2"><strong>Business:</strong> {selectedBooking.business?.name || 'N/A'}</p>
+                    {selectedBooking.business?.email && (
+                      <p><strong>Business Email:</strong> {selectedBooking.business.email}</p>
+                    )}
+                    {selectedBooking.business?.phone && (
+                      <p><strong>Business Phone:</strong> {selectedBooking.business.phone}</p>
+                    )}
                   </div>
                 </div>
               </div>
               
-              {/* Details */}
+              {/* Service Address */}
+              {(selectedBooking.service_address || selectedBooking.service_details?.pickup_address || selectedBooking.service_details?.from_address) && (
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Service Address</h4>
+                  <div className="space-y-1 text-sm text-gray-700 bg-gray-50 p-3 rounded-lg">
+                    <p>
+                      {selectedBooking.service_address || selectedBooking.service_details?.pickup_address || selectedBooking.service_details?.from_address}
+                    </p>
+                    {(selectedBooking.service_city || selectedBooking.service_details?.pickup_city) && (
+                      <p>
+                        {[
+                          selectedBooking.service_city || selectedBooking.service_details?.pickup_city,
+                          selectedBooking.service_state || selectedBooking.service_details?.pickup_state,
+                          selectedBooking.service_postal_code || selectedBooking.service_details?.pickup_zip
+                        ].filter(Boolean).join(', ')}
+                      </p>
+                    )}
+                    {selectedBooking.service_details?.delivery_address && (
+                      <p className="pt-2"><strong>Delivery:</strong> {selectedBooking.service_details.delivery_address}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
+              {/* Service Details JSONB */}
+              {selectedBooking.service_details && typeof selectedBooking.service_details === 'object' && Object.keys(selectedBooking.service_details).length > 0 && (
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Service Details (Full JSON)</h4>
+                  <pre className="text-xs text-gray-600 bg-gray-50 p-4 rounded-lg overflow-auto max-h-96">
+                    {JSON.stringify(selectedBooking.service_details, null, 2)}
+                  </pre>
+                </div>
+              )}
+              
+              {/* Legacy Details */}
               {selectedBooking.details && typeof selectedBooking.details === 'object' && Object.keys(selectedBooking.details).length > 0 && (
                 <div>
-                  <h4 className="font-semibold text-gray-900 mb-2">Booking Details</h4>
-                  <pre className="text-sm text-gray-600 bg-gray-50 p-3 rounded-lg overflow-auto">
+                  <h4 className="font-semibold text-gray-900 mb-2">Legacy Booking Details</h4>
+                  <pre className="text-xs text-gray-600 bg-gray-50 p-4 rounded-lg overflow-auto max-h-96">
                     {JSON.stringify(selectedBooking.details, null, 2)}
                   </pre>
+                </div>
+              )}
+              
+              {/* Customer Notes */}
+              {selectedBooking.customer_notes && (
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Customer Notes</h4>
+                  <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg">{selectedBooking.customer_notes}</p>
+                </div>
+              )}
+              
+              {/* Business Notes */}
+              {selectedBooking.business_notes && (
+                <div>
+                  <h4 className="font-semibold text-gray-900 mb-2">Business Notes</h4>
+                  <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg">{selectedBooking.business_notes}</p>
                 </div>
               )}
               
               {/* Actions */}
               <div className="flex items-center gap-2 pt-4 border-t">
                 <Button
-                  onClick={() => updateBookingStatus(selectedBooking.id, 'accepted')}
-                  disabled={!['requested', 'quoted'].includes(selectedBooking.status || '')}
+                  onClick={() => updateBookingStatus(selectedBooking.id, 'confirmed')}
+                  disabled={!['requested', 'quoted'].includes(selectedBooking.booking_status || selectedBooking.status || '')}
                 >
                   <CheckCircle className="h-4 w-4 mr-1" />
-                  Accept
+                  Confirm
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => updateBookingStatus(selectedBooking.id, 'canceled')}
-                  disabled={(selectedBooking.status || '') === 'completed'}
+                  onClick={() => updateBookingStatus(selectedBooking.id, 'cancelled')}
+                  disabled={(selectedBooking.booking_status || selectedBooking.status || '') === 'completed'}
                 >
                   <XCircle className="h-4 w-4 mr-1" />
                   Cancel
@@ -677,11 +780,17 @@ export default function AdminBookingsPage() {
                 <Button
                   variant="outline"
                   onClick={() => updateBookingStatus(selectedBooking.id, 'completed')}
-                  disabled={!['accepted', 'scheduled'].includes(selectedBooking.status || '')}
+                  disabled={!['confirmed', 'scheduled'].includes(selectedBooking.booking_status || selectedBooking.status || '')}
                 >
                   <CheckCircle className="h-4 w-4 mr-1" />
                   Mark Complete
                 </Button>
+                <Link href={`/dashboard/bookings/${selectedBooking.id}`}>
+                  <Button variant="outline">
+                    <Eye className="h-4 w-4 mr-1" />
+                    View Full Details
+                  </Button>
+                </Link>
               </div>
             </CardContent>
           </Card>

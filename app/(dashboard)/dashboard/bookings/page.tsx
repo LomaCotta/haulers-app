@@ -2094,6 +2094,49 @@ export default function BookingsPage() {
                           </div>
                         )}
 
+                        {/* Trip Distance / Mileage */}
+                        {(serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance) && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <MapPin className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Distance</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">
+                              {typeof (serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance) === 'number' 
+                                ? `${(serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance).toFixed(1)} miles`
+                                : `${serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance} miles`}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Destination Fee */}
+                        {(serviceDetails.destination_fee || serviceDetails.destination_fee_cents) && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <DollarSign className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Destination Fee</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">
+                              {serviceDetails.destination_fee_cents 
+                                ? formatPrice(serviceDetails.destination_fee_cents)
+                                : serviceDetails.destination_fee 
+                                  ? `$${parseFloat(serviceDetails.destination_fee).toFixed(2)}`
+                                  : 'N/A'}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Double Drive Time */}
+                        {serviceDetails.double_drive_time && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <TrendingUp className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Double Drive Time</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">Yes</p>
+                          </div>
+                        )}
+
                         {/* Stairs */}
                         {serviceDetails.stairs_flights > 0 && (
                           <div>
@@ -2147,11 +2190,18 @@ export default function BookingsPage() {
                             <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Heavy Items</h5>
                           </div>
                           <ul className="pl-6 space-y-1.5">
-                            {serviceDetails.heavy_items.slice(0, 3).map((item: any, idx: number) => (
-                              <li key={idx} className="text-base text-gray-900">
-                                • Weight range: {item.band} lbs ({item.count} {item.count === 1 ? 'item' : 'items'})
-                              </li>
-                            ))}
+                            {serviceDetails.heavy_items
+                              .slice(0, 3)
+                              .filter((item: any) => item && typeof item === 'object') // CRITICAL: Only render valid objects
+                              .map((item: any, idx: number) => {
+                                const band = item?.band || item?.weight_band || 'N/A'
+                                const count = item?.count || 0
+                                return (
+                                  <li key={idx} className="text-base text-gray-900">
+                                    • Weight range: {String(band)} lbs ({count} {count === 1 ? 'item' : 'items'})
+                                  </li>
+                                )
+                              })}
                             {serviceDetails.heavy_items.length > 3 && (
                               <li className="text-sm text-gray-500 italic">+{serviceDetails.heavy_items.length - 3} more</li>
                             )}

@@ -25,7 +25,13 @@ export async function POST(request: NextRequest) {
       packing_help,
       packing_rooms,
       packing_materials,
-      quoteBreakdown
+      quoteBreakdown,
+      // CRITICAL: Get destination fee, double drive time, and trip distance info
+      destination_fee,
+      double_drive_time,
+      trip_distance_miles,
+      trip_distance_duration,
+      trip_distances
     } = body
 
     const supabase = await createClient()
@@ -271,6 +277,94 @@ export async function POST(request: NextRequest) {
     console.log('[Reservations API] Customer info:', { fullName, email, phone, userId })
     
     // Use RPC function to create/update quote (bypasses RLS)
+    // CRITICAL: Build quote breakdown from service details if available
+    let quoteBreakdownForRpc = quoteBreakdown || null
+    
+    // CRITICAL: Ensure heavy_items_cost is always saved as a NUMBER in breakdown
+    // Calculate heavy items total cost from array if needed
+    if (quoteBreakdownForRpc) {
+      // CRITICAL: If heavy_items is already a number in breakdown (from quoteCalculator), use it
+      if (typeof quoteBreakdownForRpc.heavy_items === 'number' && quoteBreakdownForRpc.heavy_items !== 0) {
+        // heavy_items is already the total cost in dollars - save as heavy_items_cost
+        quoteBreakdownForRpc = {
+          ...quoteBreakdownForRpc,
+          heavy_items_cost: quoteBreakdownForRpc.heavy_items
+        }
+      } else if (Array.isArray(quoteBreakdownForRpc.heavy_items) && quoteBreakdownForRpc.heavy_items.length > 0) {
+        // If heavy_items is an array, calculate total cost
+        const heavyItemsTotalCost = quoteBreakdownForRpc.heavy_items.reduce((sum: number, item: any) => {
+          if (item && typeof item === 'object') {
+            const priceCents = item.price_cents || 0
+            const count = item.count || 1
+            // price_cents is in cents, convert to dollars
+            return sum + ((priceCents * count) / 100)
+          }
+          return sum
+        }, 0)
+        
+        // CRITICAL: Save heavy_items_cost as a NUMBER (in dollars) for easy reading from database
+        quoteBreakdownForRpc = {
+          ...quoteBreakdownForRpc,
+          heavy_items_cost: heavyItemsTotalCost
+          // Keep heavy_items as array for detail
+        }
+      } else if (!quoteBreakdownForRpc.heavy_items_cost && quoteBreakdownForRpc.heavyItemsCost) {
+        // If heavyItemsCost exists (camelCase), use it
+        quoteBreakdownForRpc = {
+          ...quoteBreakdownForRpc,
+          heavy_items_cost: quoteBreakdownForRpc.heavyItemsCost
+        }
+      }
+    } else if (heavy_items || stairs_flights !== undefined || packing_help || packing_rooms) {
+      // Build breakdown from individual service details
+      let heavyItemsTotalCost = 0
+      
+      // Calculate heavy items total cost from array
+      if (Array.isArray(heavy_items) && heavy_items.length > 0) {
+        heavyItemsTotalCost = heavy_items.reduce((sum: number, item: any) => {
+          if (item && typeof item === 'object') {
+            const priceCents = item.price_cents || 0
+            const count = item.count || 1
+            return sum + ((priceCents * count) / 100)
+          }
+          return sum
+        }, 0)
+      }
+      
+      quoteBreakdownForRpc = {
+        heavy_items: heavy_items || [],
+        heavy_items_count: heavy_items_count || 0,
+        heavy_item_band: heavy_item_band || 'none',
+        // CRITICAL: Save heavy_items_cost as a NUMBER (in dollars) for database
+        heavy_items_cost: heavyItemsTotalCost,
+        stairs_flights: stairs_flights || 0,
+        stairs: (stairs_flights !== undefined && stairs_flights > 0) || false,
+        packing_help: packing_help || 'none',
+        packing_rooms: packing_rooms || 0,
+        packing_materials: packing_materials || []
+        // Removed 'packing' - it's not defined in the destructured variables
+      }
+    }
+    
+    console.log('[Reservations API] Passing breakdown to RPC:', JSON.stringify(quoteBreakdownForRpc, null, 2))
+    
+    // CRITICAL: Extract destination fee, double drive time, and trip distance from body
+    const destinationFee = body.destination_fee || null
+    const destinationFeeCents = body.destination_fee_cents || 
+      (body.destination_fee ? Math.round(parseFloat(body.destination_fee) * 100) : null)
+    const doubleDriveTime = body.double_drive_time !== undefined ? body.double_drive_time : null
+    const tripDistanceMiles = body.trip_distance_miles || body.trip_distances?.distance || null
+    const tripDistanceDuration = body.trip_distance_duration || body.trip_distances?.duration || null
+    const tripDistances = body.trip_distances || null
+    
+    console.log('[Reservations API] Trip and fee details:', {
+      destinationFee,
+      destinationFeeCents,
+      doubleDriveTime,
+      tripDistanceMiles,
+      tripDistanceDuration
+    })
+    
     const { data: quoteIdFromRpc, error: quoteRpcError } = await supabase.rpc('create_or_update_movers_quote', {
       p_provider_id: resolvedProviderId || null,
       p_customer_id: userId,
@@ -284,6 +378,14 @@ export async function POST(request: NextRequest) {
       p_price_total_cents: totalPriceCents || 0,
       p_status: 'confirmed',
       p_existing_quote_id: finalQuoteId || null, // If quoteId provided, update it, otherwise create new
+      p_breakdown: quoteBreakdownForRpc, // CRITICAL: Pass breakdown to RPC function
+      // CRITICAL: Pass destination fee, double drive time, and trip distance info
+      p_destination_fee: destinationFee,
+      p_destination_fee_cents: destinationFeeCents,
+      p_double_drive_time: doubleDriveTime,
+      p_trip_distance_miles: tripDistanceMiles,
+      p_trip_distance_duration: tripDistanceDuration,
+      p_trip_distances: tripDistances
     })
     
     if (quoteRpcError) {
@@ -501,7 +603,6 @@ export async function POST(request: NextRequest) {
           pickup_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
           dropoff_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
           crew_size: teamSize || quoteData?.crew_size || 2,
-          mover_team: teamSize || quoteData?.crew_size || 2,
           time_slot: timeSlot,
           move_date: moveDate,
           source: 'movers_reservation',
@@ -554,6 +655,26 @@ export async function POST(request: NextRequest) {
           hourly_rate_cents: quoteBreakdownData.hourly_rate_cents || (quoteBreakdownData.hourly_rate ? Math.round(quoteBreakdownData.hourly_rate * 100) : null),
           storage: quoteBreakdownData.storage || body.storage || 'none',
           ins_coverage: quoteBreakdownData.ins_coverage || body.ins_coverage || 'basic',
+          // CRITICAL: Include destination fee, double drive time, and mileage info
+          destination_fee: body.destination_fee || quoteBreakdownData.destination_fee || quoteData?.destination_fee || null,
+          destination_fee_cents: body.destination_fee ? Math.round(parseFloat(body.destination_fee) * 100) : (quoteBreakdownData.destination_fee_cents || null),
+          double_drive_time: body.double_drive_time !== undefined 
+            ? body.double_drive_time 
+            : (quoteBreakdownData.double_drive_time !== undefined 
+              ? quoteBreakdownData.double_drive_time 
+              : false),
+          trip_distance_miles: body.trip_distance_miles !== undefined 
+            ? body.trip_distance_miles 
+            : (body.trip_distances?.distance !== undefined 
+              ? body.trip_distances.distance 
+              : (quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null)),
+          trip_distance_duration: body.trip_distance_duration !== undefined 
+            ? body.trip_distance_duration 
+            : (body.trip_distances?.duration !== undefined 
+              ? body.trip_distances.duration 
+              : (quoteBreakdownData.trip_distance_duration || quoteData?.trip_distance_duration || null)),
+          trip_distances: body.trip_distances || quoteBreakdownData.trip_distances || null,
+          mileage: body.trip_distance_miles || body.trip_distances?.distance || quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null,
           // Include customer info
           full_name: fullName,
           email: email,

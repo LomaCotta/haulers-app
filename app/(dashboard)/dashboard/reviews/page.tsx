@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Star, MessageSquare, Calendar, Building, User, AlertCircle, Trash2, CheckCircle, X, Filter } from 'lucide-react'
+import { Star, MessageSquare, Calendar, Clock, Building, User, AlertCircle, Trash2, CheckCircle, X, Filter } from 'lucide-react'
 import { ReviewForm } from '@/components/review-form'
 
 interface Review {
@@ -467,10 +467,25 @@ export default function ReviewsPage() {
 
       const reviewedBookingIds = new Set((existingReviews || []).map(r => r.booking_id))
       
-      // Filter out bookings that already have reviews
+      // Filter out bookings that already have reviews and normalize business data
       const bookingsWithoutReview = (bookings || []).filter(
         booking => !reviewedBookingIds.has(booking.id)
-      )
+      ).map((booking: any) => {
+        // Normalize business - ensure it's a single object, not an array
+        let business: any = booking.business
+        if (Array.isArray(business)) {
+          business = business[0] || undefined
+        }
+        
+        return {
+          id: booking.id,
+          business_id: booking.business_id,
+          requested_date: booking.requested_date,
+          requested_time: booking.requested_time,
+          booking_status: booking.booking_status,
+          business: business || undefined
+        } as BookingWithoutReview
+      })
 
       setBookingsToReview(bookingsWithoutReview)
     } catch (error) {
@@ -859,7 +874,7 @@ export default function ReviewsPage() {
                       {/* Avatar */}
                       <div className="flex-shrink-0">
                         <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center text-white font-bold text-base sm:text-lg shadow-md">
-                          {(isOwnerReview ? customer?.full_name : review.business?.name || 'U').charAt(0).toUpperCase()}
+                          {((isOwnerReview ? customer?.full_name : review.business?.name) || 'U').charAt(0).toUpperCase()}
                         </div>
                       </div>
 

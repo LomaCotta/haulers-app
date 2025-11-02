@@ -29,11 +29,17 @@ interface Booking {
     full_name: string
     email: string
   }
-  invoice?: {
+  invoices?: Array<{
     id: string
     invoice_number: string
     status: string
-  }
+  }>
+  // Legacy support
+  invoice?: Array<{
+    id: string
+    invoice_number: string
+    status: string
+  }>
 }
 
 export default function BatchInvoicePage() {
@@ -308,10 +314,10 @@ export default function BatchInvoicePage() {
                                 </p>
                               </div>
                             </div>
-                            {booking.invoice && booking.invoice.length > 0 && (
+                            {((booking.invoices && booking.invoices.length > 0) || (booking.invoice && Array.isArray(booking.invoice) && booking.invoice.length > 0)) && (
                               <div className="pt-2 border-t border-gray-200">
                                 <p className="text-xs text-gray-500">
-                                  Existing invoices: {booking.invoice.map((inv: any) => inv.invoice_number).join(', ')}
+                                  Existing invoices: {(booking.invoices || booking.invoice || []).map((inv: any) => inv.invoice_number).join(', ')}
                                 </p>
                               </div>
                             )}

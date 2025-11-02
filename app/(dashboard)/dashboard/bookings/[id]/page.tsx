@@ -226,7 +226,7 @@ export default function BookingTrackingPage() {
           if (isMissingCriticalData || isMissingBreakdown || true) { // Always fetch for now
             const { data: quoteData, error: quoteError } = await supabase
               .from('movers_quotes')
-              .select('*')
+              .select('*, breakdown') // CRITICAL: Explicitly include breakdown JSONB field
               .eq('id', quoteId)
               .single()
 
@@ -655,28 +655,65 @@ export default function BookingTrackingPage() {
                   const breakdown = serviceDetails.breakdown || {}
                   let heavyItems: any[] = []
                   
+                  // Helper function to normalize heavy items to array format
+                  const normalizeHeavyItems = (items: any): any[] => {
+                    if (!items) return []
+                    
+                    // If it's already an array, filter valid items
+                    if (Array.isArray(items)) {
+                      return items
+                        .filter((item: any) => item && typeof item === 'object' && (item.count > 0 || item.band || item.weight_band))
+                        .map((item: any) => ({
+                          band: item.band || item.weight_band || 'N/A',
+                          count: item.count || 0,
+                          price_cents: item.price_cents || item.price || 0
+                        }))
+                    }
+                    
+                    // If it's a single object, wrap it in an array
+                    if (typeof items === 'object' && (items.count > 0 || items.band || items.weight_band)) {
+                      return [{
+                        band: items.band || items.weight_band || 'N/A',
+                        count: items.count || 0,
+                        price_cents: items.price_cents || items.price || 0
+                      }]
+                    }
+                    
+                    return []
+                  }
+                  
                   // Check service_details first
-                  if (serviceDetails.heavy_items && Array.isArray(serviceDetails.heavy_items)) {
-                    heavyItems = serviceDetails.heavy_items.filter((item: any) => item && (item.count > 0 || item.band || item.weight_band))
-                  } else if (serviceDetails.heavy_items_count > 0 && serviceDetails.heavy_item_band) {
-                    // Fallback: create heavy item from count and band
+                  if (serviceDetails.heavy_items) {
+                    heavyItems = normalizeHeavyItems(serviceDetails.heavy_items)
+                  }
+                  
+                  // Fallback: create from count and band if available
+                  if (heavyItems.length === 0 && serviceDetails.heavy_items_count > 0 && serviceDetails.heavy_item_band) {
                     heavyItems = [{
                       band: serviceDetails.heavy_item_band,
                       count: serviceDetails.heavy_items_count,
                       price_cents: serviceDetails.heavy_item_price_cents || 0
                     }]
-                  } 
+                  }
+                  
                   // Check breakdown if service_details doesn't have it
                   if (heavyItems.length === 0 && breakdown.heavy_items) {
-                    if (Array.isArray(breakdown.heavy_items)) {
-                      heavyItems = breakdown.heavy_items.filter((item: any) => item && (item.count > 0 || item.band || item.weight_band))
-                    } else if (breakdown.heavy_items_count > 0) {
-                      heavyItems = [{
-                        band: breakdown.heavy_item_band || breakdown.weight_band || 'N/A',
-                        count: breakdown.heavy_items_count,
-                        price_cents: breakdown.heavy_item_price_cents || 0
-                      }]
-                    }
+                    heavyItems = normalizeHeavyItems(breakdown.heavy_items)
+                  }
+                  
+                  // Final fallback: create from breakdown count and band
+                  if (heavyItems.length === 0 && breakdown.heavy_items_count > 0) {
+                    heavyItems = [{
+                      band: breakdown.heavy_item_band || breakdown.weight_band || 'N/A',
+                      count: breakdown.heavy_items_count,
+                      price_cents: breakdown.heavy_item_price_cents || 0
+                    }]
+                  }
+                  
+                  // CRITICAL: Ensure heavyItems is always an array
+                  if (!Array.isArray(heavyItems)) {
+                    console.warn('heavyItems is not an array, converting:', heavyItems)
+                    heavyItems = heavyItems ? [heavyItems] : []
                   }
                   
                   // Extract stairs - check both service_details and breakdown
@@ -809,6 +846,63 @@ export default function BookingTrackingPage() {
                         </div>
                       )}
 
+                      {/* Trip Distance / Mileage */}
+                      {(serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance) && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-start gap-3">
+                            <MapPin className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-900">Trip Distance</p>
+                              <p className="text-sm text-muted-foreground">
+                                {typeof (serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance) === 'number'
+                                  ? `${(serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance).toFixed(1)} miles`
+                                  : `${serviceDetails.trip_distance_miles || serviceDetails.mileage || serviceDetails.trip_distances?.distance} miles`}
+                                {serviceDetails.trip_distance_duration && serviceDetails.trip_distances?.duration && (
+                                  <span className="ml-2 text-gray-500">
+                                    ({Math.round(serviceDetails.trip_distance_duration || serviceDetails.trip_distances?.duration || 0)} min)
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Destination Fee */}
+                      {(serviceDetails.destination_fee || serviceDetails.destination_fee_cents) && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-start gap-3">
+                            <DollarSign className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-900">Destination Fee</p>
+                              <p className="text-sm text-muted-foreground">
+                                {serviceDetails.destination_fee_cents
+                                  ? formatPrice(serviceDetails.destination_fee_cents)
+                                  : serviceDetails.destination_fee
+                                    ? `$${parseFloat(serviceDetails.destination_fee).toFixed(2)}`
+                                    : 'N/A'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Double Drive Time */}
+                      {serviceDetails.double_drive_time && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-start gap-3">
+                            <TrendingUp className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                              <p className="font-semibold text-gray-900">Double Drive Time</p>
+                              <p className="text-sm text-muted-foreground">Yes</p>
+                              <p className="text-xs text-gray-500 mt-1 italic">
+                                The distance between pickup and drop-off locations exceeds 10 miles, so drive time is doubled per standard moving industry practice.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Service Options Grid */}
                       <div className="grid grid-cols-2 gap-x-8 gap-y-4 pt-4 border-t border-gray-200 mb-6">
                         {/* Move Size */}
@@ -915,14 +1009,22 @@ export default function BookingTrackingPage() {
                           <h5 className="text-sm font-bold uppercase tracking-wide text-gray-900">Heavy Items</h5>
                         </div>
                         <div className="pl-7">
-                          {heavyItems.length > 0 ? (
+                          {Array.isArray(heavyItems) && heavyItems.length > 0 ? (
                             <ul className="space-y-2">
-                              {heavyItems.map((item: any, idx: number) => (
-                                <li key={idx} className="text-base font-semibold text-gray-900">
-                                  • Weight range: <span className="font-bold">{item.band || item.weight_band || 'N/A'}</span> lbs 
-                                  ({item.count || 0} {item.count === 1 ? 'item' : 'items'})
-                                </li>
-                              ))}
+                              {heavyItems
+                                .filter((item: any) => item && typeof item === 'object') // CRITICAL: Only render valid objects
+                                .map((item: any, idx: number) => {
+                                  // Ensure we extract values safely
+                                  const band = item?.band || item?.weight_band || 'N/A'
+                                  const count = item?.count || 0
+                                  
+                                  return (
+                                    <li key={idx} className="text-base font-semibold text-gray-900">
+                                      • Weight range: <span className="font-bold">{String(band)}</span> lbs 
+                                      ({count} {count === 1 ? 'item' : 'items'})
+                                    </li>
+                                  )
+                                })}
                             </ul>
                           ) : serviceDetails.heavy_items_count > 0 ? (
                             <p className="text-base font-semibold text-gray-900">
@@ -1201,19 +1303,90 @@ export default function BookingTrackingPage() {
                   const quoteId = serviceDetails.quote_id || serviceDetails.quoteId
                   const quoteBreakdown = serviceDetails.breakdown || {}
                   
-                  // Calculate breakdown from quote if available
-                  const baseHourly = quoteBreakdown.base_hourly || quoteBreakdown.basePrice || booking.base_price_cents || 0
-                  const packingCost = quoteBreakdown.packing || quoteBreakdown.packingCost || 0
-                  const stairsCost = quoteBreakdown.stairs || quoteBreakdown.stairsCost || 0
-                  const heavyItemsCost = quoteBreakdown.heavy_items || quoteBreakdown.heavyItemsCost || 0
-                  const distanceCost = quoteBreakdown.distanceCost || 0
-                  const destinationFee = quoteBreakdown.destination_fee || (serviceDetails.destination_fee ? parseFloat(serviceDetails.destination_fee) * 100 : 0)
-                  const insuranceCost = quoteBreakdown.insurance || (quoteBreakdown.insuranceCost ? parseFloat(quoteBreakdown.insuranceCost) * 100 : 0)
-                  const storageCost = quoteBreakdown.storage || quoteBreakdown.storageCost || 0
+                  // CRITICAL: Extract breakdown costs - check multiple possible keys and formats
+                  // Handle both number and string formats (some might be stored as strings or numbers)
+                  const getBreakdownValue = (keys: string[], defaultValue = 0) => {
+                    for (const key of keys) {
+                      const value = quoteBreakdown[key]
+                      // CRITICAL: Skip arrays and objects - they need special handling
+                      if (value !== undefined && value !== null && value !== '' && value !== 0 && !Array.isArray(value) && typeof value !== 'object') {
+                        // If it's already in cents, return as is
+                        if (typeof value === 'number' && value > 100) {
+                          return value
+                        }
+                        // If it's a decimal (dollars), convert to cents
+                        if (typeof value === 'number' && value < 1000) {
+                          return Math.round(value * 100)
+                        }
+                        // If it's a string with $, parse it
+                        if (typeof value === 'string' && value.includes('$')) {
+                          return Math.round(parseFloat(value.replace(/[$,]/g, '')) * 100)
+                        }
+                        // Try parsing as float
+                        if (typeof value === 'string') {
+                          const parsed = parseFloat(value)
+                          if (!isNaN(parsed)) {
+                            return parsed < 1000 ? Math.round(parsed * 100) : parsed
+                          }
+                        }
+                      }
+                    }
+                    return defaultValue
+                  }
                   
-                  const hasBreakdown = baseHourly > 0 || packingCost > 0 || stairsCost > 0 || heavyItemsCost > 0 || distanceCost > 0 || destinationFee > 0 || insuranceCost > 0 || storageCost > 0
+                  // Calculate breakdown from quote if available - check multiple key formats
+                  const baseHourly = getBreakdownValue(['base_hourly', 'baseHourly', 'base_hourly_cents', 'basePrice', 'base_price_cents']) || booking.base_price_cents || 0
+                  const packingCost = getBreakdownValue(['packing', 'packingCost', 'packing_cost', 'packing_cost_cents'])
+                  const stairsCost = getBreakdownValue(['stairs', 'stairsCost', 'stairs_cost', 'stairs_cost_cents', 'stairsCostCents'])
+                  // CRITICAL: heavy_items is an array, not a number - calculate from array items
+                  const distanceCost = getBreakdownValue(['distanceCost', 'distance_cost', 'distance_cost_cents'])
+                  const destinationFee = getBreakdownValue(['destination_fee', 'destinationFee', 'destination_fee_cents']) || (serviceDetails.destination_fee ? Math.round(parseFloat(serviceDetails.destination_fee) * 100) : 0)
+                  const insuranceCost = getBreakdownValue(['insurance', 'insuranceCost', 'insurance_cost', 'insurance_cost_cents'])
+                  const storageCost = getBreakdownValue(['storage', 'storageCost', 'storage_cost', 'storage_cost_cents'])
                   
-                  return hasBreakdown ? (
+                  // CRITICAL: Extract heavy items cost from array - don't try to get it as a number
+                  let heavyItemsCostFromItems = 0
+                  if (quoteBreakdown.heavy_items) {
+                    // If it's an array, sum the prices
+                    if (Array.isArray(quoteBreakdown.heavy_items)) {
+                      heavyItemsCostFromItems = quoteBreakdown.heavy_items.reduce((sum: number, item: any) => {
+                        if (item && typeof item === 'object') {
+                          return sum + (item.price_cents || item.price || (typeof item.price === 'number' ? item.price * 100 : 0))
+                        }
+                        return sum
+                      }, 0)
+                    } else if (typeof quoteBreakdown.heavy_items === 'object' && quoteBreakdown.heavy_items.price_cents) {
+                      // If it's a single object
+                      heavyItemsCostFromItems = quoteBreakdown.heavy_items.price_cents || 0
+                    }
+                  }
+                  
+                  // Also check for heavy_items_cost or heavyItemsCost as a direct number
+                  const heavyItemsCost = getBreakdownValue(['heavyItemsCost', 'heavy_items_cost', 'heavy_items_cost_cents'])
+                  
+                  // Use the higher of the two heavy items costs
+                  // CRITICAL: Ensure it's always a number, never an object or array
+                  const finalHeavyItemsCost = (typeof heavyItemsCost === 'number' ? heavyItemsCost : 0) || (typeof heavyItemsCostFromItems === 'number' ? heavyItemsCostFromItems : 0)
+                  
+                  const hasBreakdown = baseHourly > 0 || packingCost > 0 || stairsCost > 0 || finalHeavyItemsCost > 0 || distanceCost > 0 || destinationFee > 0 || insuranceCost > 0 || storageCost > 0
+                  
+                  // Debug logging for providers to help troubleshoot
+                  if (isProvider && Object.keys(quoteBreakdown).length > 0) {
+                    console.log('[Booking Details] Breakdown detection:', {
+                      quoteBreakdown,
+                      baseHourly,
+                      packingCost,
+                      stairsCost,
+                      finalHeavyItemsCost,
+                      distanceCost,
+                      hasBreakdown
+                    })
+                  }
+                  
+                  // Show breakdown if we have any costs OR if we have breakdown data (for providers to see structure)
+                  const shouldShowBreakdown = hasBreakdown || (isProvider && Object.keys(quoteBreakdown).length > 0)
+                  
+                  return shouldShowBreakdown ? (
                     <div className="mb-4 pb-4 border-b border-gray-200">
                       <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Price Breakdown</p>
                       <div className="space-y-2">
@@ -1247,10 +1420,10 @@ export default function BookingTrackingPage() {
                             <span className="font-medium text-gray-900">{formatPrice(stairsCost)}</span>
                           </div>
                         )}
-                        {heavyItemsCost > 0 && (
+                        {typeof finalHeavyItemsCost === 'number' && finalHeavyItemsCost > 0 && (
                           <div className="flex justify-between text-sm py-1">
                             <span className="text-gray-600">Heavy Items</span>
-                            <span className="font-medium text-gray-900">{formatPrice(heavyItemsCost)}</span>
+                            <span className="font-medium text-gray-900">{formatPrice(finalHeavyItemsCost)}</span>
                           </div>
                         )}
                         {storageCost > 0 && (
@@ -1266,6 +1439,26 @@ export default function BookingTrackingPage() {
                           </div>
                         )}
                       </div>
+                      
+                      {/* Show message if breakdown exists but no costs detected */}
+                      {!hasBreakdown && isProvider && Object.keys(quoteBreakdown).length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-xs text-gray-500 italic">
+                            Breakdown data available but no costs detected. Check console for details.
+                          </p>
+                          <details className="mt-2">
+                            <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                              View raw breakdown data
+                            </summary>
+                            <pre className="mt-2 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-40">
+                              {/* CRITICAL: Use JSON.stringify to safely render object as string */}
+                              {typeof quoteBreakdown === 'object' && quoteBreakdown !== null 
+                                ? JSON.stringify(quoteBreakdown, null, 2)
+                                : String(quoteBreakdown)}
+                            </pre>
+                          </details>
+                        </div>
+                      )}
                     </div>
                   ) : null
                 })()}

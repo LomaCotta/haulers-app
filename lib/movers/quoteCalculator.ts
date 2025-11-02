@@ -177,7 +177,22 @@ export function calculateQuote(params: QuoteInput, overrides: CalcOverrides = {}
   }
 
   const trip_distances: TripDistances = { distance, pickup_zip: pickupZip, dropoff_zip: dropoffZip }
-  return { price, trip_distances, breakdown: { basePrice: baseHourlyCost, distanceCost, packingCost, storageCost, insuranceCost, stairsCost, peakSurcharge: 0, total } }
+  // CRITICAL: Include heavy_items in the breakdown - it was calculated above (heavyItemsCost)
+  return { 
+    price, 
+    trip_distances, 
+    breakdown: { 
+      basePrice: baseHourlyCost, 
+      distanceCost, 
+      packingCost, 
+      storageCost, 
+      insuranceCost, 
+      stairsCost, 
+      heavy_items: heavyItemsCost, // CRITICAL: Include heavy items cost
+      peakSurcharge: 0, 
+      total 
+    } 
+  }
 }
 
 export async function calculateQuoteAsync(params: QuoteInput, overrides: CalcOverrides = {}): Promise<{ price: QuotePrice; trip_distances: TripDistances; breakdown: any }>{

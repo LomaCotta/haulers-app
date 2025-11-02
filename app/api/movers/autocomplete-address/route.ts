@@ -29,8 +29,43 @@ export async function GET(request: NextRequest) {
       const context = feature.context || []
       
       // Extract address components
-      const address = feature.text || ''
-      const addressLine1 = feature.properties?.address || address
+      // Mapbox API structure:
+      // - feature.text = street name (may or may not include number, unreliable)
+      // - feature.properties.address = street number (may or may not exist)
+      // - feature.place_name = full formatted address (e.g., "123 Elm St, City, State") - MOST RELIABLE
+      
+      // CRITICAL: Extract street address from place_name (first part before comma)
+      // This always includes the full address with street number
+      let addressLine1 = ''
+      if (feature.place_name) {
+        const placeParts = feature.place_name.split(',')
+        // First part is the full street address with number (e.g., "123 Elm St")
+        addressLine1 = placeParts[0]?.trim() || ''
+      }
+      
+      // If place_name extraction didn't yield a result with a number, try properties
+      if (!addressLine1 || !/^\d+/.test(addressLine1.trim())) {
+        const streetNumber = feature.properties?.address || ''
+        const streetName = feature.text || ''
+        
+        // Combine street number and name if both exist
+        if (streetNumber && streetName) {
+          addressLine1 = `${streetNumber} ${streetName}`.trim()
+        } else if (streetName && !addressLine1) {
+          // Only street name available, use it
+          addressLine1 = streetName
+        } else if (streetNumber && !addressLine1) {
+          // Only street number available, use it
+          addressLine1 = streetNumber
+        }
+        
+        // If we still have place_name but no number, use place_name
+        if (!addressLine1 && feature.place_name) {
+          const placeParts = feature.place_name.split(',')
+          addressLine1 = placeParts[0]?.trim() || ''
+        }
+      }
+      
       const city = context.find((ctx: any) => ctx.id?.startsWith('place'))?.text || ''
       const state = context.find((ctx: any) => ctx.id?.startsWith('region'))?.text || ''
       const zip = context.find((ctx: any) => ctx.id?.startsWith('postcode'))?.text || ''
@@ -39,7 +74,7 @@ export async function GET(request: NextRequest) {
       return {
         id: feature.id,
         place_name: feature.place_name,
-        address: addressLine1,
+        address: addressLine1.trim(),
         city,
         state,
         zip,

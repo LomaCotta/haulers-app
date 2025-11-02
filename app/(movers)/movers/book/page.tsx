@@ -830,6 +830,12 @@ function ReservationSubmissionStep({
           // CRITICAL: Send all service details so they're saved to database
           ...quoteServiceDetails,
           quoteBreakdown: quoteBreakdown, // Send full breakdown
+          // CRITICAL: Send destination fee, double drive time, and trip distance info
+          destination_fee: quote.price.destination_fee || null,
+          double_drive_time: quote.price.double_drive_time || false,
+          trip_distance_miles: quote.trip_distances?.distance || null,
+          trip_distance_duration: quote.trip_distances?.duration || null,
+          trip_distances: quote.trip_distances || null,
         }),
       })
 
@@ -1419,17 +1425,60 @@ function WizardInner() {
 
   // Handle autocomplete selection and autofill fields
   const selectAutocomplete = (suggestion: any, type: 'pickup' | 'delivery', idx: number) => {
-    const addressParts = suggestion.place_name.split(',')
-    const streetAddress = suggestion.address || addressParts[0] || ''
+    // CRITICAL: Get the current user input to preserve street number
+    const currentAddress = type === 'pickup' 
+      ? details.pickupAddresses[idx]?.address || ''
+      : details.deliveryAddresses[idx]?.address || ''
     
-    // Extract apt/suite if in address
+    // Extract street number from user's typed input (e.g., "123" from "123 elm st")
+    const userStreetNumberMatch = currentAddress.match(/^(\d+[A-Za-z]?)\s+/i)
+    const userStreetNumber = userStreetNumberMatch ? userStreetNumberMatch[1] : ''
+    
+    // CRITICAL: Always extract from place_name first - it always has the full address with number
+    // place_name format: "123 Elm St, City, State, ZIP"
+    let streetAddress = ''
+    
+    if (suggestion.place_name) {
+      const addressParts = suggestion.place_name.split(',')
+      // First part before comma is the full street address (e.g., "123 Elm St")
+      streetAddress = addressParts[0]?.trim() || ''
+    }
+    
+    // Fallback: use suggestion.address if place_name extraction failed
+    if (!streetAddress) {
+      streetAddress = suggestion.address || ''
+    }
+    
+    // CRITICAL: If user typed a street number but autosuggestion doesn't have it, preserve user's number
+    if (userStreetNumber && streetAddress) {
+      // Check if streetAddress already starts with a number
+      const hasNumber = /^\d+/.test(streetAddress.trim())
+      if (!hasNumber) {
+        // Street number is missing from autosuggestion, add the user's number
+        streetAddress = `${userStreetNumber} ${streetAddress}`.trim()
+      }
+    }
+    
+    // Extract apt/suite if in address (but preserve street number + name)
     let address = streetAddress
     let aptSuite = ''
-    const aptMatch = streetAddress.match(/(?:apt|apartment|suite|unit|#)\s*([\w\d-]+)/i)
+    // Match apt/suite patterns at the end of the address string
+    // Pattern matches: "123 Elm St Apt 4B" -> address="123 Elm St", aptSuite="4B"
+    const aptMatch = streetAddress.match(/\s+(?:apt|apartment|suite|unit|#)\s*([\w\d-]+)$/i)
     if (aptMatch) {
-      address = streetAddress.replace(/\s*(?:apt|apartment|suite|unit|#)\s*[\w\d-]+/i, '').trim()
+      // Remove apt/suite from the end but keep the street number + name
+      address = streetAddress.replace(/\s+(?:apt|apartment|suite|unit|#)\s*[\w\d-]+$/i, '').trim()
       aptSuite = aptMatch[1]
     }
+
+    // Debug logging
+    console.log('[Address Autocomplete]', {
+      currentAddress,
+      userStreetNumber,
+      suggestionAddress: suggestion.address,
+      suggestionPlaceName: suggestion.place_name,
+      finalAddress: address
+    })
 
     const updatedAddress: AddressDetails = {
       address: address.trim(),

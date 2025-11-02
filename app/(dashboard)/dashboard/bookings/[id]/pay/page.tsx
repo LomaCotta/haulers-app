@@ -10,6 +10,7 @@ import Link from "next/link"
 
 interface Booking {
   id: string
+  customer_id?: string
   total_price_cents: number
   payment_status: string
   booking_status: string

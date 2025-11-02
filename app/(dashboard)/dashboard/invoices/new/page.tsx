@@ -24,6 +24,7 @@ interface Booking {
   booking_status: string
   total_price_cents: number
   customer_id: string
+  business_id?: string
   customer?: {
     full_name: string
     email: string

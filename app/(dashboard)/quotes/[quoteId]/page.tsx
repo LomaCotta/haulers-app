@@ -26,6 +26,8 @@ interface MoversQuote {
   crew_size: number | null
   price_total_cents: number | null
   status: string
+  breakdown?: any // JSONB breakdown with stairs, heavy_items, packing, destination_fee, double_drive_time, trip_distances, etc.
+  distance_miles?: number | null // Trip distance in miles
   created_at: string
 }
 
@@ -71,10 +73,10 @@ export default function QuoteReceiptPage() {
         return
       }
 
-      // Fetch movers quote
+      // Fetch movers quote - CRITICAL: Include breakdown JSONB field and distance_miles column
       const { data: quoteData, error: quoteError } = await supabase
         .from('movers_quotes')
-        .select('*')
+        .select('*, breakdown, distance_miles') // Explicitly include breakdown and distance_miles
         .eq('id', quoteId)
         .single()
 
@@ -360,6 +362,427 @@ export default function QuoteReceiptPage() {
                 </div>
               )}
             </div>
+
+            {/* Service Details Breakdown */}
+            {quote.breakdown && typeof quote.breakdown === 'object' && Object.keys(quote.breakdown).length > 0 && (
+              <div className="pt-4 border-t">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Service Details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Stairs */}
+                  {(quote.breakdown.stairs_flights !== undefined && quote.breakdown.stairs_flights > 0) || quote.breakdown.stairs === true ? (
+                    <div className="flex items-start space-x-2">
+                      <FileText className="h-5 w-5 text-orange-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Stairs</p>
+                        <p className="text-sm text-gray-600">
+                          {quote.breakdown.stairs_flights > 0 
+                            ? `${quote.breakdown.stairs_flights} flight${quote.breakdown.stairs_flights !== 1 ? 's' : ''}`
+                            : 'Yes - Details available'}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Heavy Items */}
+                  {quote.breakdown.heavy_items && (
+                    Array.isArray(quote.breakdown.heavy_items) && quote.breakdown.heavy_items.length > 0 ? (
+                      <div className="flex items-start space-x-2">
+                        <FileText className="h-5 w-5 text-orange-500 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Heavy Items</p>
+                          <p className="text-sm text-gray-600">
+                            {quote.breakdown.heavy_items_count || quote.breakdown.heavy_items.length} item{quote.breakdown.heavy_items_count !== 1 || quote.breakdown.heavy_items.length !== 1 ? 's' : ''}
+                          </p>
+                          {quote.breakdown.heavy_item_band && quote.breakdown.heavy_item_band !== 'none' && (
+                            <p className="text-xs text-gray-500">Weight band: {quote.breakdown.heavy_item_band}</p>
+                          )}
+                        </div>
+                      </div>
+                    ) : quote.breakdown.heavy_items_count > 0 ? (
+                      <div className="flex items-start space-x-2">
+                        <FileText className="h-5 w-5 text-orange-500 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-gray-700">Heavy Items</p>
+                          <p className="text-sm text-gray-600">
+                            {quote.breakdown.heavy_items_count} item{quote.breakdown.heavy_items_count !== 1 ? 's' : ''}
+                          </p>
+                        </div>
+                      </div>
+                    ) : null
+                  )}
+
+                  {/* Packing */}
+                  {quote.breakdown.packing_help && quote.breakdown.packing_help !== 'none' ? (
+                    <div className="flex items-start space-x-2">
+                      <FileText className="h-5 w-5 text-orange-500 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-medium text-gray-700">Packing Help</p>
+                        <p className="text-sm text-gray-600 capitalize">
+                          {quote.breakdown.packing_help}
+                          {quote.breakdown.packing_rooms > 0 && ` - ${quote.breakdown.packing_rooms} room${quote.breakdown.packing_rooms !== 1 ? 's' : ''}`}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* Trip Distance & Mileage */}
+                {(quote.distance_miles || quote.breakdown?.trip_distance_miles || quote.breakdown?.mileage || quote.breakdown?.trip_distances?.distance) && (
+                  <div className="mt-6 pt-4 border-t">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Trip Information</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Distance</span>
+                        <span className="font-medium text-gray-900">
+                          {typeof (quote.distance_miles || quote.breakdown?.trip_distance_miles || quote.breakdown?.mileage || quote.breakdown?.trip_distances?.distance) === 'number'
+                            ? `${(quote.distance_miles || quote.breakdown?.trip_distance_miles || quote.breakdown?.mileage || quote.breakdown?.trip_distances?.distance).toFixed(1)} miles`
+                            : `${quote.distance_miles || quote.breakdown?.trip_distance_miles || quote.breakdown?.mileage || quote.breakdown?.trip_distances?.distance} miles`}
+                          {quote.breakdown?.trip_distance_duration || quote.breakdown?.trip_distances?.duration ? (
+                            <span className="ml-2 text-gray-500">
+                              ({Math.round(quote.breakdown?.trip_distance_duration || quote.breakdown?.trip_distances?.duration || 0)} min)
+                            </span>
+                          ) : null}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Destination Fee & Double Drive Time */}
+                {(quote.breakdown?.destination_fee || quote.breakdown?.destination_fee_cents || quote.breakdown?.double_drive_time) && (
+                  <div className="mt-6 pt-4 border-t">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Additional Fees & Services</h4>
+                    <div className="space-y-2 text-sm">
+                      {(quote.breakdown?.destination_fee || quote.breakdown?.destination_fee_cents) && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Destination Fee</span>
+                          <span className="font-medium text-gray-900">
+                            {quote.breakdown?.destination_fee_cents
+                              ? `$${((quote.breakdown.destination_fee_cents || 0) / 100).toFixed(2)}`
+                              : quote.breakdown?.destination_fee
+                                ? `$${parseFloat(quote.breakdown.destination_fee).toFixed(2)}`
+                                : 'N/A'}
+                          </span>
+                        </div>
+                      )}
+                      {quote.breakdown?.double_drive_time && (
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Double Drive Time</span>
+                          <span className="font-medium text-gray-900">Yes</span>
+                        </div>
+                      )}
+                    </div>
+                    {quote.breakdown?.double_drive_time && (
+                      <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <p className="text-xs text-blue-800">
+                          <strong>What's Double Drive Time?</strong> If the distance between your pick up and drop-off locations is more than 10 miles, drive time is doubled per standard moving industry practice. For example, if it takes 30 minutes to drive from pick up to drop off, we record 1 hour of drive time.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Price Breakdown */}
+                {quote.breakdown && typeof quote.breakdown === 'object' && Object.keys(quote.breakdown).length > 0 ? (
+                  <div className="mt-6 pt-4 border-t">
+                    <h4 className="text-sm font-semibold text-gray-700 mb-3">Price Breakdown</h4>
+                    <div className="space-y-2 text-sm">
+                      {/* Helper function to normalize values (handle both cents and dollars) */}
+                      {(() => {
+                        // CRITICAL: All breakdown values from quoteCalculator are in DOLLARS (not cents)
+                        // Only price_total_cents in the database is in cents
+                        const normalizeValue = (value: any): number => {
+                          if (value === null || value === undefined) return 0
+                          const numValue = typeof value === 'string' ? parseFloat(value) : value
+                          if (isNaN(numValue)) return 0
+                          
+                          // CRITICAL: Breakdown values are stored in DOLLARS in the JSON
+                          // The only exception is if we explicitly have _cents suffix (like destination_fee_cents)
+                          // Values > 10000 are likely in cents, values < 10000 are likely in dollars
+                          // But since quoteCalculator stores everything in dollars, assume dollars unless > 10000
+                          if (numValue > 10000) {
+                            // Very large number, likely in cents (e.g., 83800 cents = $838)
+                            return numValue / 100
+                          }
+                          // Otherwise assume it's already in dollars
+                          return numValue
+                        }
+                        
+                        // Base Hourly - this is the main base price
+                        // CRITICAL: breakdown has base_hourly (from price.breakdown) or basePrice (from separate breakdown)
+                        // Check both camelCase and snake_case variants
+                        const baseHourly = quote.breakdown?.base_hourly || quote.breakdown?.baseHourly || quote.breakdown?.basePrice || 0
+                        const baseHourlyNormalized = normalizeValue(baseHourly)
+
+                        // Destination Fee - can be stored as string "$61" or number 61 (dollars) or 6100 (cents)
+                        const destinationFeeCents = quote.breakdown?.destination_fee_cents
+                        const destinationFee = quote.breakdown?.destination_fee
+                        let destinationFeeNormalized = 0
+                        
+                        if (destinationFeeCents !== undefined && destinationFeeCents !== null) {
+                          // Explicitly in cents, convert to dollars
+                          destinationFeeNormalized = typeof destinationFeeCents === 'number' && destinationFeeCents > 1000 
+                            ? destinationFeeCents / 100 
+                            : destinationFeeCents
+                        } else if (destinationFee !== undefined && destinationFee !== null) {
+                          // Could be string "$61" or number 61 (dollars)
+                          if (typeof destinationFee === 'string') {
+                            destinationFeeNormalized = parseFloat(destinationFee.replace(/[$,]/g, '')) || 0
+                          } else {
+                            // If > 1000, likely in cents, otherwise dollars
+                            destinationFeeNormalized = destinationFee > 1000 ? destinationFee / 100 : destinationFee
+                          }
+                        }
+
+                        // Packing - check both camelCase and snake_case variants
+                        const packing = quote.breakdown?.packing || quote.breakdown?.packingCost || quote.breakdown?.packing_cost || 0
+                        const packingNormalized = normalizeValue(packing)
+
+                        // Stairs - check both camelCase and snake_case variants
+                        const stairs = quote.breakdown?.stairs || quote.breakdown?.stairsCost || quote.breakdown?.stairs_cost || 0
+                        const stairsNormalized = normalizeValue(stairs)
+
+                        // Heavy Items - handle array or single value
+                        // CRITICAL: Check if heavy items exist even if cost is 0
+                        // Also check if heavy_items exists as a number (total cost)
+                        const hasHeavyItems = (
+                          (Array.isArray(quote.breakdown?.heavy_items) && quote.breakdown.heavy_items.length > 0) ||
+                          (quote.breakdown?.heavy_items_count && quote.breakdown.heavy_items_count > 0) ||
+                          (typeof quote.breakdown?.heavy_items === 'number' && quote.breakdown.heavy_items !== 0) ||
+                          (quote.breakdown?.heavyItemsCost !== undefined && quote.breakdown?.heavyItemsCost !== null && quote.breakdown?.heavyItemsCost !== 0) ||
+                          (quote.breakdown?.heavy_items_cost !== undefined && quote.breakdown?.heavy_items_cost !== null && quote.breakdown?.heavy_items_cost !== 0) ||
+                          (quote.breakdown?.heavy_items_cost_cents !== undefined && quote.breakdown?.heavy_items_cost_cents !== null && quote.breakdown?.heavy_items_cost_cents !== 0)
+                        )
+                        
+                        // CRITICAL: Read heavy_items from breakdown - quoteCalculator stores it as heavy_items: <number>
+                        // The breakdown from quoteCalculator has: { base_hourly: 690, packing: 297, stairs: 108, heavy_items: 450, ... }
+                        let heavyItemsNormalized = 0
+                        
+                        // Check ALL possible locations for heavy items cost
+                        // Priority order: heavy_items_cost > heavyItemsCost > heavy_items (number) > heavyItems > heavy_items (array)
+                        
+                        if (quote.breakdown) {
+                          // Method 1: heavy_items_cost (explicitly saved in SQL)
+                          if (quote.breakdown.heavy_items_cost != null) {
+                            heavyItemsNormalized = normalizeValue(quote.breakdown.heavy_items_cost)
+                            if (heavyItemsNormalized > 0) {
+                              console.log('[Quote Breakdown] Heavy Items from heavy_items_cost:', heavyItemsNormalized)
+                            }
+                          }
+                          // Method 2: heavyItemsCost (camelCase)
+                          if (heavyItemsNormalized === 0 && quote.breakdown.heavyItemsCost != null) {
+                            heavyItemsNormalized = normalizeValue(quote.breakdown.heavyItemsCost)
+                            if (heavyItemsNormalized > 0) {
+                              console.log('[Quote Breakdown] Heavy Items from heavyItemsCost:', heavyItemsNormalized)
+                            }
+                          }
+                          // Method 3: heavy_items as number (FROM QUOTECALCULATOR - THIS IS THE KEY!)
+                          // CRITICAL: quoteCalculator now returns breakdown with heavy_items: <number>
+                          if (heavyItemsNormalized === 0 && quote.breakdown.heavy_items != null) {
+                            const heavyItemsValue = quote.breakdown.heavy_items
+                            if (typeof heavyItemsValue === 'number' && heavyItemsValue > 0) {
+                              heavyItemsNormalized = normalizeValue(heavyItemsValue)
+                              console.log('[Quote Breakdown] ✅ Heavy Items from heavy_items (number):', heavyItemsValue, '→', heavyItemsNormalized)
+                            } else if (typeof heavyItemsValue === 'string') {
+                              const parsed = parseFloat(heavyItemsValue)
+                              if (!isNaN(parsed) && parsed > 0) {
+                                heavyItemsNormalized = normalizeValue(parsed)
+                                console.log('[Quote Breakdown] ✅ Heavy Items from heavy_items (string):', parsed, '→', heavyItemsNormalized)
+                              }
+                            } else if (Array.isArray(heavyItemsValue) && heavyItemsValue.length > 0) {
+                              heavyItemsNormalized = heavyItemsValue.reduce((sum: number, item: any) => {
+                                if (item && typeof item === 'object') {
+                                  const priceCents = item.price_cents || 0
+                                  const count = item.count || 1
+                                  return sum + ((priceCents * count) / 100)
+                                }
+                                return sum
+                              }, 0)
+                              console.log('[Quote Breakdown] ✅ Heavy Items from heavy_items (array):', heavyItemsNormalized)
+                            }
+                          }
+                          // Method 4: heavyItems (camelCase variant)
+                          if (heavyItemsNormalized === 0 && quote.breakdown.heavyItems != null) {
+                            const heavyItemsValue = quote.breakdown.heavyItems
+                            if (typeof heavyItemsValue === 'number' && heavyItemsValue > 0) {
+                              heavyItemsNormalized = normalizeValue(heavyItemsValue)
+                              console.log('[Quote Breakdown] ✅ Heavy Items from heavyItems (number):', heavyItemsNormalized)
+                            } else if (typeof heavyItemsValue === 'string') {
+                              const parsed = parseFloat(heavyItemsValue)
+                              if (!isNaN(parsed) && parsed > 0) {
+                                heavyItemsNormalized = normalizeValue(parsed)
+                                console.log('[Quote Breakdown] ✅ Heavy Items from heavyItems (string):', heavyItemsNormalized)
+                              }
+                            }
+                          }
+                        }
+                        
+                        // CRITICAL: Final check - if heavyItemsNormalized is still 0, search ALL fields in breakdown
+                        if (heavyItemsNormalized === 0 && quote.breakdown && typeof quote.breakdown === 'object') {
+                          console.log('[Quote Breakdown] FINAL CHECK: heavyItemsNormalized is 0, searching all fields...')
+                          console.log('[Quote Breakdown] Breakdown keys:', Object.keys(quote.breakdown))
+                          console.log('[Quote Breakdown] heavy_items value:', quote.breakdown.heavy_items, 'type:', typeof quote.breakdown.heavy_items)
+                          
+                          // Search all fields containing "heavy"
+                          for (const [key, value] of Object.entries(quote.breakdown)) {
+                            if (key.toLowerCase().includes('heavy')) {
+                              console.log('[Quote Breakdown] Found field with "heavy":', key, '=', value, 'type:', typeof value)
+                              const normalized = normalizeValue(value)
+                              if (normalized > 0) {
+                                heavyItemsNormalized = normalized
+                                console.log('[Quote Breakdown] ✅ FOUND HEAVY ITEMS in field:', key, 'value:', normalized)
+                                break
+                              }
+                            }
+                          }
+                        }
+                        
+                        // Debug log final result
+                        console.log('[Quote Breakdown] FINAL RESULT:', {
+                          heavyItemsNormalized,
+                          heavy_items_in_breakdown: quote.breakdown?.heavy_items,
+                          heavy_items_type: typeof quote.breakdown?.heavy_items,
+                          heavy_items_cost_in_breakdown: quote.breakdown?.heavy_items_cost,
+                          all_breakdown_keys: quote.breakdown ? Object.keys(quote.breakdown) : [],
+                          full_breakdown_json: JSON.stringify(quote.breakdown, null, 2)
+                        })
+
+                        // Storage
+                        const storage = quote.breakdown?.storage || quote.breakdown?.storageCost || 0
+                        const storageNormalized = normalizeValue(storage)
+
+                        // Insurance
+                        const insurance = quote.breakdown?.insurance || quote.breakdown?.insuranceCost || 0
+                        const insuranceNormalized = normalizeValue(insurance)
+
+                        return (
+                          <>
+                            {baseHourlyNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Base (Hourly Rate)</span>
+                                <span className="font-medium text-gray-900">
+                                  ${baseHourlyNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {destinationFeeNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Destination Fee</span>
+                                <span className="font-medium text-gray-900">
+                                  ${destinationFeeNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {packingNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Packing</span>
+                                <span className="font-medium text-gray-900">
+                                  ${packingNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {stairsNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Stairs</span>
+                                <span className="font-medium text-gray-900">
+                                  ${stairsNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {/* Heavy Items - ONLY show if found in breakdown JSON from database */}
+                            {heavyItemsNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">
+                                  Heavy Items
+                                  {quote.breakdown?.heavy_items_count > 0 && (
+                                    <span className="text-xs text-gray-500 ml-2">
+                                      ({quote.breakdown.heavy_items_count} item{quote.breakdown.heavy_items_count !== 1 ? 's' : ''})
+                                    </span>
+                                  )}
+                                  {quote.breakdown?.heavy_item_band && quote.breakdown.heavy_item_band !== 'none' && (
+                                    <span className="text-xs text-gray-500 ml-2">
+                                      - {quote.breakdown.heavy_item_band} lbs
+                                    </span>
+                                  )}
+                                </span>
+                                <span className="font-medium text-gray-900">
+                                  ${heavyItemsNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {storageNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Storage</span>
+                                <span className="font-medium text-gray-900">
+                                  ${storageNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {insuranceNormalized > 0 && (
+                              <div className="flex justify-between">
+                                <span className="text-gray-600">Insurance</span>
+                                <span className="font-medium text-gray-900">
+                                  ${insuranceNormalized.toFixed(2)}
+                                </span>
+                              </div>
+                            )}
+                            {/* Debug: Show subtotal calculation */}
+                            {(() => {
+                              // Calculate subtotal from all normalized values (ONLY items found in breakdown)
+                              let calculatedSubtotal = 0
+                              calculatedSubtotal += baseHourlyNormalized
+                              calculatedSubtotal += destinationFeeNormalized
+                              calculatedSubtotal += packingNormalized
+                              calculatedSubtotal += stairsNormalized
+                              calculatedSubtotal += heavyItemsNormalized // CRITICAL: Only use actual value from breakdown
+                              calculatedSubtotal += storageNormalized
+                              calculatedSubtotal += insuranceNormalized
+                              
+                              const actualTotal = (quote.price_total_cents || 0) / 100
+                              
+                              return (
+                                <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
+                                  <div className="flex justify-between text-xs text-gray-600">
+                                    <span>Subtotal (items shown):</span>
+                                    <span>${calculatedSubtotal.toFixed(2)}</span>
+                                  </div>
+                                  {Math.abs(calculatedSubtotal - actualTotal) > 1 && (
+                                    <div className="text-xs text-orange-600 bg-orange-50 p-2 rounded">
+                                      ⚠️ Subtotal doesn't match total. Missing items or calculation issue.
+                                      <br />
+                                      Calculated: ${calculatedSubtotal.toFixed(2)} | Actual: ${actualTotal.toFixed(2)}
+                                      <br />
+                                      Difference: ${Math.abs(calculatedSubtotal - actualTotal).toFixed(2)}
+                                    </div>
+                                  )}
+                                  {/* Debug: Show raw breakdown if it exists */}
+                                  <details>
+                                    <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                                      View Raw Breakdown JSON (for debugging)
+                                    </summary>
+                                    <pre className="mt-2 p-2 bg-gray-50 rounded text-xs overflow-auto max-h-40">
+                                      {JSON.stringify(quote.breakdown, null, 2)}
+                                    </pre>
+                                  </details>
+                                </div>
+                              )
+                            })()}
+                            <div className="pt-2 mt-2 border-t border-gray-200">
+                              <div className="flex justify-between font-bold text-base">
+                                <span className="text-gray-900">Total</span>
+                                <span className="text-gray-900">
+                                  ${((quote.price_total_cents || 0) / 100).toFixed(2)}
+                                </span>
+                              </div>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
 
             {/* Quote Metadata */}
             <div className="pt-4 border-t text-sm text-gray-500 space-y-1">
