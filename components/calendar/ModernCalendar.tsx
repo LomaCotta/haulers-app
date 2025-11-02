@@ -3,6 +3,11 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, MapPin, Clock, DollarSign, Users } from 'lucide-react'
 
+const formatPrice = (cents?: number) => {
+  if (!cents) return '$0.00'
+  return `$${(cents / 100).toFixed(2)}`
+}
+
 export interface CalendarEvent {
   id: string
   date: string // YYYY-MM-DD
@@ -21,6 +26,9 @@ export interface CalendarEvent {
     state?: string
     serviceType?: string
     isCustomerBooking?: boolean
+    bookingId?: string // Booking ID for navigation
+    serviceDetails?: any // Full service details
+    booking?: any // Full booking object
   }
 }
 
@@ -209,23 +217,40 @@ export function ModernCalendar({
             const disabled = isDateDisabled(date)
             const todayDate = isToday(date)
             const dayEvents = getEventsForDate(date)
+            const dateStr = date.toISOString().split('T')[0]
+
+            // Make date clickable to show events
+            const handleDateClick = (e: React.MouseEvent) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (!disabled) {
+                if (dayEvents.length > 0 && onEventClick) {
+                  // Show first event
+                  onEventClick(dayEvents[0])
+                } else if (onDateClick) {
+                  onDateClick(date)
+                }
+              }
+            }
 
             // Debug: Log if events exist but aren't showing
             if (dayEvents.length > 0 && process.env.NODE_ENV === 'development') {
-              console.log(`Date ${date.toISOString().split('T')[0]} has ${dayEvents.length} events:`, dayEvents.map(e => e.title))
+              console.log(`Date ${dateStr} has ${dayEvents.length} events:`, dayEvents.map(e => e.title))
             }
 
             return (
               <div
                 key={date.toISOString()}
-                onClick={() => !disabled && onDateClick?.(date)}
+                onClick={handleDateClick}
                 className={`
                   min-h-[80px] sm:min-h-20 md:min-h-24 lg:min-h-28 p-2 sm:p-2 md:p-2.5 rounded-lg border transition-all duration-200
-                  ${disabled 
-                    ? 'bg-gray-50/50 border-gray-100 cursor-not-allowed' 
+                  ${disabled
+                    ? 'bg-gray-50/50 border-gray-100 cursor-not-allowed'
                     : todayDate
                       ? 'bg-gradient-to-br from-orange-50 to-orange-100/50 border-2 border-orange-600 hover:border-orange-500 hover:shadow-md cursor-pointer'
-                      : 'bg-white border-gray-200 hover:border-orange-300 hover:bg-orange-50/30 hover:shadow-sm cursor-pointer'
+                      : dayEvents.length > 0
+                        ? 'bg-white border-indigo-200 hover:border-indigo-400 hover:bg-indigo-50/30 hover:shadow-md cursor-pointer'
+                        : 'bg-white border-gray-200 hover:border-orange-300 hover:bg-orange-50/30 hover:shadow-sm cursor-pointer'
                   }
                 `}
               >
@@ -269,14 +294,14 @@ export function ModernCalendar({
                           e.stopPropagation()
                         }}
                         className={`
-                          w-full text-left px-2 py-1.5 sm:px-2.5 sm:py-2 md:px-3 md:py-2.5 rounded-lg
-                          text-xs sm:text-sm md:text-base font-semibold
-                          transition-all duration-200 hover:scale-[1.02] hover:shadow-lg active:scale-[0.98]
+                          w-full text-left px-2 py-1.5 sm:px-2.5 sm:py-2 md:px-3 md:py-2.5 rounded-lg border-2
+                          text-xs sm:text-sm md:text-base font-bold
+                          transition-all duration-200 hover:scale-[1.03] hover:shadow-xl active:scale-[0.97]
                           cursor-pointer relative z-10 min-h-[36px] sm:min-h-[40px] md:min-h-[44px]
                           flex flex-col justify-center
                           ${getStatusColor(event.status)}
                         `}
-                        title={event.title}
+                        title={`${event.title}${event.time ? ' - ' + event.time : ''}${event.metadata?.price ? ' - ' + formatPrice(event.metadata.price) : ''}`}
                         style={{
                           display: 'flex',
                           opacity: 1,
@@ -284,20 +309,39 @@ export function ModernCalendar({
                           pointerEvents: 'auto',
                         }}
                       >
-                        <div className="truncate font-semibold text-white text-xs sm:text-sm md:text-base leading-tight mb-0.5">
+                        <div className="truncate font-bold text-white text-xs sm:text-sm md:text-base leading-tight mb-0.5">
                           {event.title}
                         </div>
-                        {event.time && (
-                          <div className="text-[11px] sm:text-xs md:text-sm text-white/90 truncate font-medium">
-                            {event.time}
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {event.time && (
+                            <div className="text-[10px] sm:text-[11px] md:text-xs text-white/95 truncate font-semibold flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {event.time.split(' - ')[0]}
+                            </div>
+                          )}
+                          {event.metadata?.price && event.metadata.price > 0 && (
+                            <div className="text-[10px] sm:text-[11px] md:text-xs text-white/95 truncate font-bold flex items-center gap-1">
+                              <DollarSign className="w-3 h-3" />
+                              {formatPrice(event.metadata.price)}
+                            </div>
+                          )}
+                        </div>
                       </button>
                     ))}
                     {dayEvents.length > 2 && (
-                      <div className="text-[11px] sm:text-xs md:text-sm text-indigo-700 font-semibold px-2 py-1 sm:px-2.5 sm:py-1.5 bg-indigo-100 rounded-lg border border-indigo-200 min-h-[28px] flex items-center justify-center">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (onEventClick && dayEvents.length > 2) {
+                            onEventClick(dayEvents[2])
+                          }
+                        }}
+                        className="text-[11px] sm:text-xs md:text-sm text-indigo-700 font-semibold px-2 py-1 sm:px-2.5 sm:py-1.5 bg-indigo-100 rounded-lg border-2 border-indigo-300 hover:bg-indigo-200 hover:border-indigo-400 min-h-[28px] flex items-center justify-center transition-all duration-200 cursor-pointer w-full"
+                      >
                         +{dayEvents.length - 2} more
-                      </div>
+                      </button>
                     )}
                   </div>
                 )}

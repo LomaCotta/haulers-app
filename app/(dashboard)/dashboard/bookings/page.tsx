@@ -26,10 +26,13 @@ import {
   Package,
   Home,
   Truck,
-  Stairs,
+  TrendingUp,
   ShoppingBag,
   Users,
-  PackageSearch
+  PackageSearch,
+  Archive,
+  ArchiveRestore,
+  Eye
 } from 'lucide-react'
 
 interface Booking {
@@ -88,6 +91,9 @@ interface ScheduledJob {
   scheduled_end_time: string
   crew_size: number
   status: string
+  quote_id?: string
+  is_archived?: boolean
+  provider_id?: string
   quote?: {
     full_name: string
     phone?: string
@@ -103,12 +109,14 @@ export default function BookingsPage() {
   const [isProvider, setIsProvider] = useState(false)
   const [providerId, setProviderId] = useState<string | null>(null)
   const [businessId, setBusinessId] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar')
+  const [viewMode, setViewMode] = useState<'calendar' | 'list'>('list') // Default to list for consumers
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [availabilityRules, setAvailabilityRules] = useState<AvailabilityRule[]>([])
   const [scheduledJobs, setScheduledJobs] = useState<ScheduledJob[]>([])
   const [providerBookings, setProviderBookings] = useState<Booking[]>([]) // Bookings from bookings table for providers
   const [saving, setSaving] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
+  const [archivingJob, setArchivingJob] = useState<string | null>(null)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null)
   const [eventsInitialized, setEventsInitialized] = useState(false)
@@ -147,7 +155,7 @@ export default function BookingsPage() {
       console.log('User is not a provider, fetching consumer bookings')
       fetchBookings()
     }
-  }, [isProvider, providerId, businessId, currentMonth])
+  }, [isProvider, providerId, businessId, currentMonth, showArchived])
 
   // Fetch bookings where the provider is the customer (bookings they made to other providers)
   const fetchProviderCustomerBookings = async () => {
@@ -579,6 +587,9 @@ export default function BookingsPage() {
                 serviceType: booking.service_type || '',
                 business: booking.business?.name,
                 isCustomerBooking: isCustomerBooking,
+                bookingId: booking.id, // Add booking ID for navigation
+                serviceDetails: booking.service_details || {}, // Add full service details
+                booking: booking, // Add full booking object
               },
             }
           })
@@ -666,6 +677,9 @@ export default function BookingsPage() {
               state: booking.service_state || booking.business?.state || '',
               price: booking.total_price_cents || booking.base_price_cents || 0,
               serviceType: booking.service_type || '',
+              bookingId: booking.id, // Add booking ID for navigation
+              serviceDetails: booking.service_details || {}, // Add full service details
+              booking: booking, // Add full booking object
             },
           }
         })
@@ -821,6 +835,11 @@ export default function BookingsPage() {
       console.log('Bookings with business data:', bookingsWithBusiness.length)
       console.log('Sample booking with business:', bookingsWithBusiness[0])
       setBookings(bookingsWithBusiness)
+      
+      // If consumer has bookings, default to list view
+      if (bookingsWithBusiness.length > 0 && !isProvider) {
+        setViewMode('list')
+      }
     } catch (error) {
       console.error('Unexpected error:', error)
       setBookings([])
@@ -882,6 +901,7 @@ export default function BookingsPage() {
       if (businessId) params.set('businessId', businessId)
       params.set('startDate', startOfMonth)
       params.set('endDate', endOfMonth)
+      if (showArchived) params.set('showArchived', 'true')
 
       const res = await fetch(`/api/movers/availability/scheduled?${params}`)
       const data = await res.json()
@@ -1209,10 +1229,62 @@ export default function BookingsPage() {
             {/* Jobs List - Scheduled Jobs from movers_scheduled_jobs */}
             {scheduledJobs.length > 0 && (
               <div>
-                <h2 className="text-xl font-semibold mb-4">Scheduled Jobs</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-xl font-semibold">
+                    {showArchived ? 'Archived Jobs' : 'Scheduled Jobs'}
+                  </h2>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowArchived(!showArchived)}
+                    className="border-2 border-gray-300 hover:border-orange-500"
+                  >
+                    {showArchived ? (
+                      <>
+                        <Eye className="w-4 h-4 mr-2" />
+                        Show Active
+                      </>
+                    ) : (
+                      <>
+                        <Archive className="w-4 h-4 mr-2" />
+                        Show Archived
+                      </>
+                    )}
+                  </Button>
+                </div>
                 <div className="space-y-4">
                   {scheduledJobs.map((job) => (
-                    <Card key={job.id}>
+                    <Card 
+                      key={job.id} 
+                      className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 cursor-pointer"
+                      onClick={async () => {
+                        // Scheduled jobs use quote_id, which is from movers_quotes, not bookings
+                        // We need to find the associated booking if it exists
+                        if (job.quote_id) {
+                          try {
+                            // Try to find booking linked to this quote
+                            const { data: booking } = await supabase
+                              .from('bookings')
+                              .select('id')
+                              .eq('service_details->>quote_id', job.quote_id)
+                              .or(`service_details->>'quoteId'.eq.${job.quote_id},service_details->>'quote_id'.eq.${job.quote_id}`)
+                              .maybeSingle()
+                            
+                            if (booking?.id) {
+                              window.location.href = `/dashboard/bookings/${booking.id}`
+                            } else {
+                              // No booking found - show quote details or job info
+                              alert('This scheduled job is linked to a quote, but no booking record exists yet. The booking detail view is not available.')
+                            }
+                          } catch (error) {
+                            console.error('Error finding booking for quote:', error)
+                            alert('Unable to open booking details. This may be a scheduled job without an associated booking record.')
+                          }
+                        } else {
+                          alert('This scheduled job has no associated quote. Booking details are not available.')
+                        }
+                      }}
+                    >
                       <CardContent className="p-6">
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
@@ -1258,6 +1330,95 @@ export default function BookingsPage() {
                               </div>
                             )}
                           </div>
+                          <div className="flex flex-col gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                            {job.quote_id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  try {
+                                    // Try to find booking linked to this quote
+                                    const { data: booking } = await supabase
+                                      .from('bookings')
+                                      .select('id')
+                                      .or(`service_details->>'quote_id'.eq.${job.quote_id},service_details->>'quoteId'.eq.${job.quote_id}`)
+                                      .maybeSingle()
+                                    
+                                    if (booking?.id) {
+                                      window.location.href = `/dashboard/bookings/${booking.id}`
+                                    } else {
+                                      // Show job details modal or navigate to quote details
+                                      // For now, show quote info
+                                      const quoteDetails = job.quote ? 
+                                        `Customer: ${job.quote.full_name}\nAddress: ${job.quote.pickup_address}\nPrice: $${((job.quote.price_total_cents || 0) / 100).toFixed(2)}` :
+                                        'No booking record found for this scheduled job.'
+                                      alert(quoteDetails)
+                                    }
+                                  } catch (error) {
+                                    console.error('Error finding booking:', error)
+                                    alert('Unable to find booking details.')
+                                  }
+                                }}
+                              >
+                                <Eye className="w-4 h-4 mr-2" />
+                                View Details
+                              </Button>
+                            )}
+                            {job.provider_id && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className={`border-2 ${job.is_archived 
+                                  ? 'border-green-500 hover:bg-green-50 hover:text-green-700' 
+                                  : 'border-orange-500 hover:bg-orange-50 hover:text-orange-700'
+                                }`}
+                                disabled={archivingJob === job.id}
+                                onClick={async (e) => {
+                                  e.stopPropagation()
+                                  setArchivingJob(job.id)
+                                  try {
+                                    const response = await fetch('/api/bookings/archive', {
+                                      method: job.is_archived ? 'DELETE' : 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        scheduledJobId: job.id,
+                                        providerId: job.provider_id
+                                      })
+                                    })
+
+                                    const data = await response.json()
+                                    if (response.ok) {
+                                      // Refresh scheduled jobs
+                                      if (isProvider && providerId) {
+                                        fetchScheduledJobs()
+                                      }
+                                    } else {
+                                      alert(data.error || 'Failed to update archive status')
+                                    }
+                                  } catch (error) {
+                                    console.error('Error archiving job:', error)
+                                    alert('Failed to update archive status')
+                                  } finally {
+                                    setArchivingJob(null)
+                                  }
+                                }}
+                              >
+                                {job.is_archived ? (
+                                  <>
+                                    <ArchiveRestore className="w-4 h-4 mr-2" />
+                                    Unarchive
+                                  </>
+                                ) : (
+                                  <>
+                                    <Archive className="w-4 h-4 mr-2" />
+                                    Archive
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
@@ -1295,7 +1456,13 @@ export default function BookingsPage() {
                           const bookingStatus = booking.booking_status || 'pending'
                           
                           return (
-                            <Card key={booking.id}>
+                            <Card 
+                              key={booking.id}
+                              className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 cursor-pointer"
+                              onClick={() => {
+                                window.location.href = `/dashboard/bookings/${booking.id}`
+                              }}
+                            >
                               <CardContent className="p-6">
                                 <div className="flex items-start justify-between">
                                   <div className="flex-1">
@@ -1366,6 +1533,47 @@ export default function BookingsPage() {
                                       )}
                                     </div>
                                   </div>
+                                  <div className="flex flex-col gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        window.location.href = `/dashboard/bookings/${booking.id}`
+                                      }}
+                                    >
+                                      <PackageSearch className="w-4 h-4 mr-2" />
+                                      Manage
+                                    </Button>
+                                    {bookingStatus === 'pending' || bookingStatus === 'requested' ? (
+                                      <Button
+                                        size="sm"
+                                        className="bg-orange-600 hover:bg-orange-700 text-white"
+                                        onClick={async (e) => {
+                                          e.stopPropagation()
+                                          try {
+                                            const response = await fetch(`/api/bookings/${booking.id}/status`, {
+                                              method: 'PATCH',
+                                              headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ booking_status: 'confirmed' })
+                                            })
+                                            if (response.ok) {
+                                              window.location.reload()
+                                            } else {
+                                              const data = await response.json()
+                                              alert(data.error || 'Failed to confirm booking')
+                                            }
+                                          } catch (error) {
+                                            console.error('Error updating status:', error)
+                                            alert('Failed to confirm booking. Please try again.')
+                                          }
+                                        }}
+                                      >
+                                        Confirm
+                                      </Button>
+                                    ) : null}
+                                  </div>
                                 </div>
                               </CardContent>
                             </Card>
@@ -1393,7 +1601,13 @@ export default function BookingsPage() {
                           const bookingStatus = booking.booking_status || 'pending'
                           
                           return (
-                            <Card key={booking.id}>
+                            <Card 
+                              key={booking.id}
+                              className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 cursor-pointer"
+                              onClick={() => {
+                                window.location.href = `/dashboard/bookings/${booking.id}`
+                              }}
+                            >
                               <CardContent className="p-6">
                                 <div className="flex items-start justify-between">
                                   <div className="flex-1">
@@ -1460,6 +1674,20 @@ export default function BookingsPage() {
                                         </div>
                                       )}
                                     </div>
+                                  </div>
+                                  <div className="flex flex-col gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        window.location.href = `/dashboard/bookings/${booking.id}`
+                                      }}
+                                    >
+                                      <PackageSearch className="w-4 h-4 mr-2" />
+                                      Track Order
+                                    </Button>
                                   </div>
                                 </div>
                               </CardContent>
@@ -1870,7 +2098,7 @@ export default function BookingsPage() {
                         {serviceDetails.stairs_flights > 0 && (
                           <div>
                             <div className="flex items-center gap-2 mb-1">
-                              <Stairs className="w-3.5 h-3.5 text-gray-400" />
+                              <TrendingUp className="w-3.5 h-3.5 text-gray-400" />
                               <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Stairs</span>
                             </div>
                             <p className="text-base font-medium text-gray-900 pl-5">

@@ -25,7 +25,13 @@ import {
   Star,
   Loader2,
   AlertCircle,
-  Edit
+  Edit,
+  TrendingUp,
+  Package,
+  ShoppingBag,
+  Users,
+  Home,
+  Truck
 } from "lucide-react"
 import { format } from "date-fns"
 import Link from "next/link"
@@ -90,10 +96,9 @@ export default function BookingTrackingPage() {
   const [isProvider, setIsProvider] = useState(false)
   const [isCustomer, setIsCustomer] = useState(false)
   const [showAddItemDialog, setShowAddItemDialog] = useState(false)
-  const [showInvoiceDialog, setShowInvoiceDialog] = useState(false)
   const [showReviewDialog, setShowReviewDialog] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
   const [addingItem, setAddingItem] = useState(false)
+  const [invoices, setInvoices] = useState<any[]>([])
 
   // Form states for adding items
   const [itemName, setItemName] = useState('')
@@ -125,12 +130,27 @@ export default function BookingTrackingPage() {
         .eq("id", id)
         .single()
 
-      if (bookingError || !bookingData) {
-        console.error('Booking error:', bookingError)
+      if (bookingError) {
+        console.error('Booking error:', {
+          message: bookingError.message,
+          details: bookingError.details,
+          hint: bookingError.hint,
+          code: bookingError.code,
+          error: JSON.stringify(bookingError, null, 2)
+        })
+        setBooking(null)
+        setLoading(false)
         return
       }
 
-      const bookingObj = bookingData as Booking
+      if (!bookingData) {
+        console.error('No booking data found for id:', id)
+        setBooking(null)
+        setLoading(false)
+        return
+      }
+
+      let bookingObj = bookingData as Booking
       const userIsCustomer = bookingObj.customer_id === user.id
       const userIsProvider = bookingObj.business?.owner_id === user.id
 
@@ -144,6 +164,139 @@ export default function BookingTrackingPage() {
 
       setBooking(bookingObj)
 
+      // Debug: Log service_details to understand structure
+      console.log('📦 Booking service_details:', JSON.stringify(bookingObj.service_details, null, 2))
+      console.log('📦 Booking service_address:', bookingObj.service_address)
+      console.log('📦 Booking service_city:', bookingObj.service_city)
+      console.log('📦 Booking service_state:', bookingObj.service_state)
+
+      // Try to fetch quote data if quote_id exists in service_details
+      const quoteId = (bookingObj.service_details as any)?.quote_id || (bookingObj.service_details as any)?.quoteId
+      
+      // First, verify service_details completeness using database function (if available)
+      try {
+        const { data: verification, error: verifyError } = await supabase.rpc(
+          'verify_service_details_completeness',
+          { p_booking_id: id }
+        )
+        
+        if (!verifyError && verification && !verification.valid && verification.missing_fields) {
+          console.log('⚠️ Service details incomplete, missing:', verification.missing_fields)
+          
+          // Try to auto-enrich using database function
+          const { data: enriched, error: enrichError } = await supabase.rpc(
+            'enrich_booking_service_details',
+            { p_booking_id: id }
+          )
+          
+          if (!enrichError && enriched) {
+            console.log('✅ Service details enriched by database function')
+            // Reload booking to get updated service_details
+            const { data: updatedBooking } = await supabase
+              .from('bookings')
+              .select('*')
+              .eq('id', id)
+              .single()
+            
+            if (updatedBooking) {
+              bookingObj = updatedBooking as Booking
+              setBooking(bookingObj)
+            }
+          }
+        }
+      } catch (err) {
+        // Function might not exist (migration not run), continue with fallback
+        console.log('Verification function not available, using fallback method')
+      }
+      
+      // ALWAYS fetch quote breakdown - ensure we have ALL service details
+      if (quoteId) {
+        try {
+          const currentDetails = (bookingObj.service_details || {}) as any
+          
+          // Check if we're missing critical data
+          const hasHeavyItems = currentDetails.heavy_items?.length > 0 || currentDetails.heavy_items_count > 0
+          const hasStairs = currentDetails.stairs_flights > 0 || currentDetails.stairs === true
+          const hasPacking = currentDetails.packing_help && currentDetails.packing_help !== 'none' || currentDetails.packing_rooms > 0
+          
+          const isMissingCriticalData = !hasHeavyItems && !hasStairs && !hasPacking
+          const isMissingBreakdown = !currentDetails.breakdown && isProvider
+          
+          // ALWAYS fetch quote to ensure we have complete data
+          if (isMissingCriticalData || isMissingBreakdown || true) { // Always fetch for now
+            const { data: quoteData, error: quoteError } = await supabase
+              .from('movers_quotes')
+              .select('*')
+              .eq('id', quoteId)
+              .single()
+
+            if (!quoteError && quoteData) {
+              console.log('📋 Found quote data for merge:', JSON.stringify(quoteData, null, 2))
+              console.log('📋 Quote breakdown:', JSON.stringify(quoteData.breakdown, null, 2))
+              
+              // Merge quote data into service_details - prioritize quote data
+              const quoteBreakdown = quoteData.breakdown || {}
+              
+              // Extract heavy items from quote breakdown - check multiple formats
+              let quoteHeavyItems = []
+              if (quoteBreakdown.heavy_items && Array.isArray(quoteBreakdown.heavy_items)) {
+                quoteHeavyItems = quoteBreakdown.heavy_items
+              } else if (quoteBreakdown.heavy_items_count > 0) {
+                quoteHeavyItems = [{
+                  band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || 'N/A',
+                  count: quoteBreakdown.heavy_items_count,
+                  price_cents: quoteBreakdown.heavy_item_price_cents || 0
+                }]
+              }
+              
+              // Build comprehensive merged details - merge ALL quote data
+              const mergedDetails = {
+                ...currentDetails,
+                quote_id: quoteId,
+                // Always include full breakdown for providers
+                breakdown: quoteBreakdown || currentDetails.breakdown || {},
+                // Merge pickup/delivery addresses if missing
+                pickup_address: currentDetails.pickup_address || quoteData.pickup_address || '',
+                dropoff_address: currentDetails.dropoff_address || quoteData.dropoff_address || '',
+                from_address: currentDetails.from_address || quoteData.pickup_address || '',
+                to_address: currentDetails.to_address || quoteData.dropoff_address || '',
+                // HEAVY ITEMS - use quote data if available
+                heavy_items: quoteHeavyItems.length > 0 ? quoteHeavyItems : (currentDetails.heavy_items || []),
+                heavy_items_count: quoteBreakdown.heavy_items_count !== undefined ? quoteBreakdown.heavy_items_count : (currentDetails.heavy_items_count || 0),
+                heavy_item_band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || currentDetails.heavy_item_band || 'none',
+                // STAIRS - use quote data if available
+                stairs_flights: quoteBreakdown.stairs_flights !== undefined ? quoteBreakdown.stairs_flights : (currentDetails.stairs_flights || 0),
+                stairs: quoteBreakdown.stairs_flights > 0 || quoteBreakdown.stairs === true || currentDetails.stairs === true,
+                // PACKING - use quote data if available
+                packing_help: quoteBreakdown.packing_help || quoteBreakdown.packing || currentDetails.packing_help || 'none',
+                packing_rooms: quoteBreakdown.packing_rooms !== undefined ? quoteBreakdown.packing_rooms : (currentDetails.packing_rooms || 0),
+                packing_materials: quoteBreakdown.packing_materials || currentDetails.packing_materials || [],
+                packing: quoteBreakdown.packing || currentDetails.packing || {},
+                // Other fields
+                move_size: quoteBreakdown.move_size || currentDetails.move_size || quoteData.move_size || 'unknown',
+                mover_team: quoteBreakdown.mover_team || quoteData.crew_size || currentDetails.mover_team || currentDetails.crew_size || 2,
+                crew_size: quoteData.crew_size || quoteBreakdown.mover_team || currentDetails.crew_size || currentDetails.mover_team || 2,
+                hourly_rate: quoteBreakdown.hourly_rate || currentDetails.hourly_rate || null,
+                hourly_rate_cents: quoteBreakdown.hourly_rate_cents || (quoteBreakdown.hourly_rate ? Math.round(quoteBreakdown.hourly_rate * 100) : null) || currentDetails.hourly_rate_cents,
+                storage: quoteBreakdown.storage || currentDetails.storage || 'none',
+                ins_coverage: quoteBreakdown.ins_coverage || currentDetails.ins_coverage || 'basic',
+                time_slot: currentDetails.time_slot || quoteBreakdown.time_slot || 'morning',
+              }
+              
+              console.log('✅ Merged service_details with quote data:', JSON.stringify(mergedDetails, null, 2))
+              
+              // Update booking object with merged details (client-side only, database already has it)
+              bookingObj.service_details = mergedDetails as any
+              setBooking({ ...bookingObj })
+            } else if (quoteError) {
+              console.error('❌ Error fetching quote:', quoteError)
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching quote:', err)
+        }
+      }
+
       // Load booking items
       const { data: items, error: itemsError } = await supabase
         .from('booking_items')
@@ -153,6 +306,17 @@ export default function BookingTrackingPage() {
 
       if (!itemsError && items) {
         setBookingItems(items as BookingItem[])
+      }
+
+      // Load invoices for this booking
+      const { data: invoicesData, error: invoicesError } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('booking_id', id)
+        .order('created_at', { ascending: false })
+
+      if (!invoicesError && invoicesData) {
+        setInvoices(invoicesData)
       }
 
       // Check if payment is complete and should show review prompt
@@ -244,36 +408,6 @@ export default function BookingTrackingPage() {
     }
   }
 
-  const handleCreateInvoice = async () => {
-    setSubmitting(true)
-    try {
-      const supabase = createClient()
-
-      // Update booking status to ready for payment
-      const { error: updateError } = await supabase
-        .from('bookings')
-        .update({
-          booking_status: 'confirmed',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id)
-
-      if (updateError) {
-        console.error('Error updating booking:', updateError)
-        alert('Failed to create invoice. Please try again.')
-        return
-      }
-
-      // Refresh booking
-      await loadBooking()
-      setShowInvoiceDialog(false)
-    } catch (error) {
-      console.error('Error creating invoice:', error)
-      alert('Failed to create invoice. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
 
   const formatPrice = (cents: number) => {
     return `$${(cents / 100).toFixed(2)}`
@@ -324,12 +458,22 @@ export default function BookingTrackingPage() {
     return (
       <div className="container mx-auto py-8 px-4">
         <div className="max-w-5xl mx-auto">
-          <Card>
+          <Card className="border-2 border-red-200 shadow-lg">
             <CardContent className="p-8 text-center">
               <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">Booking Not Found</h2>
-              <p className="text-muted-foreground mb-4">This booking could not be found or you don't have access to it.</p>
-              <Button onClick={() => router.push('/dashboard/bookings')}>Back to Bookings</Button>
+              <p className="text-muted-foreground mb-4">
+                This booking could not be found or you don't have access to it.
+              </p>
+              <p className="text-sm text-gray-500 mb-6">
+                The booking ID might be invalid, or you may not have permission to view this booking.
+              </p>
+              <Button 
+                onClick={() => router.push('/dashboard/bookings')}
+                className="bg-orange-600 hover:bg-orange-700"
+              >
+                Back to Bookings
+              </Button>
             </CardContent>
           </Card>
         </div>
@@ -345,7 +489,7 @@ export default function BookingTrackingPage() {
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">
-                {isProvider ? `Order #${booking.id.slice(0, 8)}` : 'Track Your Order'}
+                Order #{booking.id.slice(0, 8)}
               </h1>
               <p className="text-muted-foreground mt-2">
                 Created {format(new Date(booking.created_at), "PPP")}
@@ -445,48 +589,410 @@ export default function BookingTrackingPage() {
               <CardHeader>
                 <CardTitle>Service Details</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex items-start gap-3">
-                    <MapPin className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="font-semibold text-gray-900">Service Location</p>
-                      <p className="text-sm text-muted-foreground">
-                        {booking.service_address}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {booking.service_city}, {booking.service_state} {booking.service_postal_code}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <Calendar className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="font-semibold text-gray-900">Scheduled Date</p>
-                      <p className="text-sm text-muted-foreground">
-                        {format(new Date(booking.requested_date), "PPP")} at {booking.requested_time}
-                      </p>
-                    </div>
-                  </div>
-                </div>
+              <CardContent className="space-y-6">
+                {(() => {
+                  const serviceDetails = booking.service_details || {}
+                  
+                  // Debug log
+                  console.log('🔍 Parsing serviceDetails:', serviceDetails)
+                  
+                  // Extract quote ID for organization
+                  const quoteId = serviceDetails.quote_id || serviceDetails.quoteId || null
+                  
+                  // Handle pickup addresses - multiple formats
+                  let pickupAddresses: any[] = []
+                  if (serviceDetails.pickup_addresses && Array.isArray(serviceDetails.pickup_addresses)) {
+                    pickupAddresses = serviceDetails.pickup_addresses
+                  } else if (serviceDetails.from_address) {
+                    // Single pickup address
+                    const fromAddr = typeof serviceDetails.from_address === 'string' 
+                      ? serviceDetails.from_address 
+                      : (serviceDetails.from_address?.address || serviceDetails.from_address?.street || '')
+                    pickupAddresses = [{
+                      address: fromAddr,
+                      aptSuite: serviceDetails.from_address?.aptSuite || serviceDetails.from_apt || '',
+                      city: serviceDetails.from_city || booking.service_city || '',
+                      state: serviceDetails.from_state || booking.service_state || '',
+                      zip: serviceDetails.from_zip || booking.service_postal_code || ''
+                    }]
+                  } else if (booking.service_address) {
+                    // Fallback to service_address if no pickup address in details
+                    pickupAddresses = [{
+                      address: booking.service_address,
+                      city: booking.service_city || '',
+                      state: booking.service_state || '',
+                      zip: booking.service_postal_code || ''
+                    }]
+                  }
+                  
+                  // Handle delivery addresses - multiple formats
+                  let deliveryAddresses: any[] = []
+                  if (serviceDetails.delivery_addresses && Array.isArray(serviceDetails.delivery_addresses)) {
+                    deliveryAddresses = serviceDetails.delivery_addresses
+                  } else if (serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address) {
+                    const toAddr = serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address
+                    const addrStr = typeof toAddr === 'string' ? toAddr : (toAddr?.address || toAddr?.street || '')
+                    deliveryAddresses = [{
+                      address: addrStr,
+                      aptSuite: serviceDetails.to_address?.aptSuite || serviceDetails.to_apt || '',
+                      city: serviceDetails.to_city || serviceDetails.dropoff_city || '',
+                      state: serviceDetails.to_state || serviceDetails.dropoff_state || '',
+                      zip: serviceDetails.to_zip || serviceDetails.dropoff_zip || ''
+                    }]
+                  }
+                  
+                  // Fallback addresses for display
+                  const fromAddress = serviceDetails.from_address || serviceDetails.pickup_address || 
+                                    (pickupAddresses.length > 0 ? 
+                                      `${pickupAddresses[0].address || pickupAddresses[0].street || ''}, ${pickupAddresses[0].city || ''}, ${pickupAddresses[0].state || ''}` 
+                                      : booking.service_address)
+                  const toAddress = serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address ||
+                                  (deliveryAddresses.length > 0 ? 
+                                    `${deliveryAddresses[0].address || deliveryAddresses[0].street || ''}, ${deliveryAddresses[0].city || ''}, ${deliveryAddresses[0].state || ''}` 
+                                    : '')
+                  
+                  // Extract heavy items - handle different formats and check breakdown
+                  const breakdown = serviceDetails.breakdown || {}
+                  let heavyItems: any[] = []
+                  
+                  // Check service_details first
+                  if (serviceDetails.heavy_items && Array.isArray(serviceDetails.heavy_items)) {
+                    heavyItems = serviceDetails.heavy_items.filter((item: any) => item && (item.count > 0 || item.band || item.weight_band))
+                  } else if (serviceDetails.heavy_items_count > 0 && serviceDetails.heavy_item_band) {
+                    // Fallback: create heavy item from count and band
+                    heavyItems = [{
+                      band: serviceDetails.heavy_item_band,
+                      count: serviceDetails.heavy_items_count,
+                      price_cents: serviceDetails.heavy_item_price_cents || 0
+                    }]
+                  } 
+                  // Check breakdown if service_details doesn't have it
+                  if (heavyItems.length === 0 && breakdown.heavy_items) {
+                    if (Array.isArray(breakdown.heavy_items)) {
+                      heavyItems = breakdown.heavy_items.filter((item: any) => item && (item.count > 0 || item.band || item.weight_band))
+                    } else if (breakdown.heavy_items_count > 0) {
+                      heavyItems = [{
+                        band: breakdown.heavy_item_band || breakdown.weight_band || 'N/A',
+                        count: breakdown.heavy_items_count,
+                        price_cents: breakdown.heavy_item_price_cents || 0
+                      }]
+                    }
+                  }
+                  
+                  // Extract stairs - check both service_details and breakdown
+                  let stairsFlights = serviceDetails.stairs_flights !== undefined ? serviceDetails.stairs_flights : 
+                                    breakdown.stairs_flights !== undefined ? breakdown.stairs_flights : 
+                                    (serviceDetails.stairs === true ? 1 : 0)
+                  const hasStairs = stairsFlights > 0 || serviceDetails.stairs === true || breakdown.stairs === true
+                  
+                  // Extract packing info - check both service_details and breakdown
+                  const packingHelp = serviceDetails.packing_help || breakdown.packing_help || serviceDetails.packing || breakdown.packing || 'none'
+                  const packingRooms = serviceDetails.packing_rooms !== undefined ? serviceDetails.packing_rooms : 
+                                     breakdown.packing_rooms !== undefined ? breakdown.packing_rooms : 0
+                  const packingMaterials = serviceDetails.packing_materials || breakdown.packing_materials || []
+                  
+                  console.log('📊 Extracted service details:', {
+                    heavyItems,
+                    stairsFlights,
+                    hasStairs,
+                    packingHelp,
+                    packingRooms,
+                    packingMaterials,
+                    breakdown: Object.keys(breakdown)
+                  })
 
+                  return (
+                    <>
+                      {/* Quote ID Header - Organize everything under quote */}
+                      {quoteId && (
+                        <div className="pb-4 border-b-2 border-gray-300 mb-4">
+                          <div className="flex items-center gap-2">
+                            <FileText className="w-4 h-4 text-gray-500" />
+                            <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Quote ID:</span>
+                            <span className="text-sm font-mono font-medium text-gray-900">{quoteId}</span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Basic Info Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div className="flex items-start gap-3">
+                          <Calendar className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                          <div>
+                            <p className="font-semibold text-gray-900">Scheduled Date</p>
+                            <p className="text-sm text-muted-foreground">
+                              {format(new Date(booking.requested_date), "PPP")} at {booking.requested_time}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        {(serviceDetails.mover_team || serviceDetails.crew_size) && (
+                          <div className="flex items-start gap-3">
+                            <Users className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                            <div>
+                              <p className="font-semibold text-gray-900">Team Size</p>
+                              <p className="text-sm text-muted-foreground">
+                                {serviceDetails.mover_team || serviceDetails.crew_size} {(serviceDetails.mover_team || serviceDetails.crew_size) === 1 ? 'mover' : 'movers'}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Pickup Address(es) */}
+                      {(pickupAddresses.length > 0 || fromAddress) && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Truck className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Pickup Address{pickupAddresses.length > 1 ? 'es' : ''}
+                            </h5>
+                          </div>
+                          <div className="pl-6 space-y-3">
+                            {pickupAddresses.length > 0 ? (
+                              pickupAddresses.map((addr: any, idx: number) => (
+                                <div key={idx} className="space-y-1">
+                                  {pickupAddresses.length > 1 && (
+                                    <p className="text-base font-medium text-gray-900 mb-1">
+                                      {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
+                                    </p>
+                                  )}
+                                  <p className="text-base text-gray-900 leading-relaxed break-words">
+                                    {addr.address || addr.street || addr}
+                                    {addr.aptSuite && `, ${addr.aptSuite}`}
+                                    {addr.apt_suite && `, ${addr.apt_suite}`}
+                                    {(addr.city || addr.city_name) && `, ${addr.city || addr.city_name}`}
+                                    {(addr.state || addr.state_name) && `, ${addr.state || addr.state_name}`}
+                                    {(addr.zip || addr.zip_code || addr.postal_code) && ` ${addr.zip || addr.zip_code || addr.postal_code}`}
+                                  </p>
+                                </div>
+                              ))
+                            ) : (
+                              <p className="text-base text-gray-900 leading-relaxed break-words">{fromAddress}</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Delivery Address(es) */}
+                      {(deliveryAddresses.length > 0 || toAddress) && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-3">
+                            <Home className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                              Delivery Address{deliveryAddresses.length > 1 ? 'es' : ''}
+                            </h5>
+                          </div>
+                          <div className="pl-6 space-y-3">
+                            {deliveryAddresses.length > 0 ? (
+                              deliveryAddresses.map((addr: any, idx: number) => (
+                                <div key={idx} className="space-y-1">
+                                  {deliveryAddresses.length > 1 && (
+                                    <p className="text-base font-medium text-gray-900 mb-1">
+                                      {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
+                                    </p>
+                                  )}
+                                  <p className="text-base text-gray-900 leading-relaxed break-words">
+                                    {addr.address || addr.street || addr}
+                                    {addr.aptSuite && `, ${addr.aptSuite}`}
+                                    {addr.apt_suite && `, ${addr.apt_suite}`}
+                                    {(addr.city || addr.city_name) && `, ${addr.city || addr.city_name}`}
+                                    {(addr.state || addr.state_name) && `, ${addr.state || addr.state_name}`}
+                                    {(addr.zip || addr.zip_code || addr.postal_code) && ` ${addr.zip || addr.zip_code || addr.postal_code}`}
+                                  </p>
+                                </div>
+                              ))
+                            ) : toAddress ? (
+                              <p className="text-base text-gray-900 leading-relaxed break-words">{toAddress}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Service Options Grid */}
+                      <div className="grid grid-cols-2 gap-x-8 gap-y-4 pt-4 border-t border-gray-200 mb-6">
+                        {/* Move Size */}
+                        {serviceDetails.move_size && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Home className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Move Size</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5 capitalize">
+                              {String(serviceDetails.move_size).replace('_', ' ')}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Time Slot */}
+                        {serviceDetails.time_slot && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <Clock className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Time Slot</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5 capitalize">
+                              {String(serviceDetails.time_slot).replace('_', ' ')}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Hourly Rate */}
+                        {booking.hourly_rate_cents > 0 && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <DollarSign className="w-3.5 h-3.5 text-gray-400" />
+                              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">Hourly Rate</span>
+                            </div>
+                            <p className="text-base font-medium text-gray-900 pl-5">
+                              {formatPrice(booking.hourly_rate_cents)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* STAIRS SECTION - ALWAYS SHOW */}
+                      <div className="pt-4 border-t-2 border-gray-300 mb-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <TrendingUp className="w-5 h-5 text-gray-600" />
+                          <h5 className="text-sm font-bold uppercase tracking-wide text-gray-900">Stairs</h5>
+                        </div>
+                        <div className="pl-7">
+                          {hasStairs || stairsFlights > 0 ? (
+                            <p className="text-base font-semibold text-gray-900">
+                              {stairsFlights > 0 
+                                ? `${stairsFlights} flight${stairsFlights !== 1 ? 's' : ''}` 
+                                : 'Yes - Details available'}
+                            </p>
+                          ) : (
+                            <p className="text-base text-gray-500 italic">No stairs</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* PACKING SECTION - ALWAYS SHOW */}
+                      <div className="pt-4 border-t-2 border-gray-300 mb-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <Package className="w-5 h-5 text-gray-600" />
+                          <h5 className="text-sm font-bold uppercase tracking-wide text-gray-900">Packing</h5>
+                        </div>
+                        <div className="pl-7 space-y-2">
+                          {(packingHelp && packingHelp !== 'none') || packingRooms > 0 || (packingMaterials && packingMaterials.length > 0) ? (
+                            <>
+                              {packingHelp && packingHelp !== 'none' && (
+                                <p className="text-base font-semibold text-gray-900 capitalize mb-1">
+                                  Type: {String(packingHelp).replace('_', ' ')}
+                                </p>
+                              )}
+                              {packingRooms > 0 && (
+                                <p className="text-base text-gray-700">
+                                  {packingRooms} room{packingRooms !== 1 ? 's' : ''} to pack
+                                </p>
+                              )}
+                              {packingMaterials && Array.isArray(packingMaterials) && packingMaterials.length > 0 && (
+                                <div className="mt-3 pt-3 border-t border-gray-200">
+                                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-600 mb-2">Materials Included</p>
+                                  <ul className="space-y-1.5">
+                                    {packingMaterials.map((item: any, idx: number) => (
+                                      <li key={idx} className="text-sm text-gray-700">
+                                        • {item.name || item} {item.quantity && item.quantity > 1 ? `(x${item.quantity})` : ''}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="text-base text-gray-500 italic">No packing requested</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* HEAVY ITEMS SECTION - ALWAYS SHOW */}
+                      <div className="pt-4 border-t-2 border-gray-300 mb-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <ShoppingBag className="w-5 h-5 text-gray-600" />
+                          <h5 className="text-sm font-bold uppercase tracking-wide text-gray-900">Heavy Items</h5>
+                        </div>
+                        <div className="pl-7">
+                          {heavyItems.length > 0 ? (
+                            <ul className="space-y-2">
+                              {heavyItems.map((item: any, idx: number) => (
+                                <li key={idx} className="text-base font-semibold text-gray-900">
+                                  • Weight range: <span className="font-bold">{item.band || item.weight_band || 'N/A'}</span> lbs 
+                                  ({item.count || 0} {item.count === 1 ? 'item' : 'items'})
+                                </li>
+                              ))}
+                            </ul>
+                          ) : serviceDetails.heavy_items_count > 0 ? (
+                            <p className="text-base font-semibold text-gray-900">
+                              Weight range: <span className="font-bold">{serviceDetails.heavy_item_band || 'N/A'}</span> lbs 
+                              ({serviceDetails.heavy_items_count} {serviceDetails.heavy_items_count === 1 ? 'item' : 'items'})
+                            </p>
+                          ) : (
+                            <p className="text-base text-gray-500 italic">No heavy items specified</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Storage */}
+                      {serviceDetails.storage && serviceDetails.storage !== 'none' && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Package className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Storage</h5>
+                          </div>
+                          <p className="text-base font-medium text-gray-900 pl-6 capitalize">
+                            {String(serviceDetails.storage).replace('_', ' ')}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Insurance - Only show if it's meaningful (not just "basic" which is $0) */}
+                      {serviceDetails.ins_coverage && 
+                       serviceDetails.ins_coverage !== 'none' && 
+                       serviceDetails.ins_coverage !== 'basic' && (
+                        <div className="pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <CheckCircle className="w-4 h-4 text-gray-500" />
+                            <h5 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Insurance Coverage</h5>
+                          </div>
+                          <p className="text-base font-medium text-gray-900 pl-6 capitalize">
+                            {String(serviceDetails.ins_coverage).replace('_', ' ')}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+
+                {/* Customer Notes */}
                 {booking.customer_notes && (
                   <div className="pt-4 border-t border-gray-200">
-                    <p className="font-semibold text-gray-900 mb-2">Customer Notes</p>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{booking.customer_notes}</p>
+                    <h5 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Customer Notes</h5>
+                    <div className="pl-6 border-l-2 border-gray-300">
+                      <p className="text-base text-gray-900 leading-relaxed break-words italic whitespace-pre-wrap">
+                        {booking.customer_notes}
+                      </p>
+                    </div>
                   </div>
                 )}
 
+                {/* Business Notes (Provider Only) */}
                 {isProvider && booking.business_notes && (
                   <div className="pt-4 border-t border-gray-200">
-                    <p className="font-semibold text-gray-900 mb-2">Internal Notes</p>
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{booking.business_notes}</p>
+                    <h5 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Internal Notes</h5>
+                    <div className="pl-6 border-l-2 border-gray-300">
+                      <p className="text-base text-gray-900 leading-relaxed break-words italic whitespace-pre-wrap">
+                        {booking.business_notes}
+                      </p>
+                    </div>
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            {/* Provider Actions - Add Items */}
+            {/* Provider Actions - Add Items & Create Invoice */}
             {isProvider && booking.booking_status !== 'completed' && booking.booking_status !== 'cancelled' && (
               <Card className="border-2 border-orange-200 bg-orange-50/30 shadow-lg">
                 <CardHeader>
@@ -600,72 +1106,16 @@ export default function BookingTrackingPage() {
                       </DialogContent>
                     </Dialog>
 
-                    {booking.booking_status === 'confirmed' || booking.booking_status === 'in_progress' ? (
-                      <Dialog open={showInvoiceDialog} onOpenChange={setShowInvoiceDialog}>
-                        <DialogTrigger asChild>
-                          <Button variant="outline" className="border-2 border-gray-800">
-                            <FileText className="w-4 h-4 mr-2" />
-                            Generate Invoice
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                          <DialogHeader>
-                            <DialogTitle>Generate Invoice</DialogTitle>
-                            <DialogDescription>
-                              Create an invoice for this order. The customer will be able to view and pay it.
-                            </DialogDescription>
-                          </DialogHeader>
-                          <div className="py-4 space-y-4">
-                            <div className="p-4 bg-gray-50 rounded-lg space-y-2">
-                              <div className="flex justify-between">
-                                <span className="font-medium">Subtotal:</span>
-                                <span>{formatPrice(calculateSubtotal())}</span>
-                              </div>
-                              {bookingItems.length > 0 && (
-                                <>
-                                  {bookingItems.map((item) => (
-                                    <div key={item.id} className="flex justify-between text-sm text-muted-foreground pl-4">
-                                      <span>{item.item_name} (x{item.quantity}):</span>
-                                      <span>{formatPrice(item.total_price_cents)}</span>
-                                    </div>
-                                  ))}
-                                  <div className="flex justify-between text-sm text-muted-foreground pl-4">
-                                    <span>Additional Items:</span>
-                                    <span>{formatPrice(booking.additional_fees_cents)}</span>
-                                  </div>
-                                </>
-                              )}
-                              <div className="pt-2 border-t border-gray-300 flex justify-between font-semibold">
-                                <span>Total:</span>
-                                <span className="text-lg">{formatPrice(calculateTotal())}</span>
-                              </div>
-                            </div>
-                            <div className="flex justify-end gap-3 pt-4">
-                              <Button variant="outline" onClick={() => setShowInvoiceDialog(false)}>
-                                Cancel
-                              </Button>
-                              <Button 
-                                onClick={handleCreateInvoice} 
-                                disabled={submitting}
-                                className="bg-orange-600 hover:bg-orange-700"
-                              >
-                                {submitting ? (
-                                  <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Generating...
-                                  </>
-                                ) : (
-                                  <>
-                                    <FileText className="w-4 h-4 mr-2" />
-                                    Generate Invoice
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    ) : null}
+                    {(booking.booking_status === 'confirmed' || booking.booking_status === 'in_progress' || booking.booking_status === 'completed') && (
+                      <Button 
+                        variant="outline" 
+                        className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                        onClick={() => router.push(`/dashboard/invoices/new?bookingId=${booking.id}`)}
+                      >
+                        <FileText className="w-4 h-4 mr-2" />
+                        Create Invoice
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -744,7 +1194,113 @@ export default function BookingTrackingPage() {
                   Invoice Summary
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className="space-y-4">
+                {/* Price Breakdown from Quote */}
+                {(() => {
+                  const serviceDetails = booking.service_details || {}
+                  const quoteId = serviceDetails.quote_id || serviceDetails.quoteId
+                  const quoteBreakdown = serviceDetails.breakdown || {}
+                  
+                  // Calculate breakdown from quote if available
+                  const baseHourly = quoteBreakdown.base_hourly || quoteBreakdown.basePrice || booking.base_price_cents || 0
+                  const packingCost = quoteBreakdown.packing || quoteBreakdown.packingCost || 0
+                  const stairsCost = quoteBreakdown.stairs || quoteBreakdown.stairsCost || 0
+                  const heavyItemsCost = quoteBreakdown.heavy_items || quoteBreakdown.heavyItemsCost || 0
+                  const distanceCost = quoteBreakdown.distanceCost || 0
+                  const destinationFee = quoteBreakdown.destination_fee || (serviceDetails.destination_fee ? parseFloat(serviceDetails.destination_fee) * 100 : 0)
+                  const insuranceCost = quoteBreakdown.insurance || (quoteBreakdown.insuranceCost ? parseFloat(quoteBreakdown.insuranceCost) * 100 : 0)
+                  const storageCost = quoteBreakdown.storage || quoteBreakdown.storageCost || 0
+                  
+                  const hasBreakdown = baseHourly > 0 || packingCost > 0 || stairsCost > 0 || heavyItemsCost > 0 || distanceCost > 0 || destinationFee > 0 || insuranceCost > 0 || storageCost > 0
+                  
+                  return hasBreakdown ? (
+                    <div className="mb-4 pb-4 border-b border-gray-200">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">Price Breakdown</p>
+                      <div className="space-y-2">
+                        {baseHourly > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Base (Hourly Rate)</span>
+                            <span className="font-medium text-gray-900">{formatPrice(baseHourly)}</span>
+                          </div>
+                        )}
+                        {distanceCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Distance</span>
+                            <span className="font-medium text-gray-900">{formatPrice(distanceCost)}</span>
+                          </div>
+                        )}
+                        {destinationFee > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Destination Fee</span>
+                            <span className="font-medium text-gray-900">{formatPrice(destinationFee)}</span>
+                          </div>
+                        )}
+                        {packingCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Packing</span>
+                            <span className="font-medium text-gray-900">{formatPrice(packingCost)}</span>
+                          </div>
+                        )}
+                        {stairsCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Stairs</span>
+                            <span className="font-medium text-gray-900">{formatPrice(stairsCost)}</span>
+                          </div>
+                        )}
+                        {heavyItemsCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Heavy Items</span>
+                            <span className="font-medium text-gray-900">{formatPrice(heavyItemsCost)}</span>
+                          </div>
+                        )}
+                        {storageCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Storage</span>
+                            <span className="font-medium text-gray-900">{formatPrice(storageCost)}</span>
+                          </div>
+                        )}
+                        {insuranceCost > 0 && (
+                          <div className="flex justify-between text-sm py-1">
+                            <span className="text-gray-600">Insurance</span>
+                            <span className="font-medium text-gray-900">{formatPrice(insuranceCost)}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null
+                })()}
+
+                {/* Existing Invoices */}
+                {invoices.length > 0 && (
+                  <div className="mb-4 pb-4 border-b border-gray-200">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Invoices</p>
+                    <div className="space-y-2">
+                      {invoices.map((invoice) => (
+                        <Link
+                          key={invoice.id}
+                          href={`/dashboard/invoices/${invoice.id}`}
+                          className="flex items-center justify-between p-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                        >
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">{invoice.invoice_number}</p>
+                            <p className="text-xs text-gray-600">
+                              Status: <span className="font-medium">{invoice.status.replace('_', ' ')}</span>
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-gray-900">{formatPrice(invoice.total_cents)}</p>
+                            {invoice.balance_cents > 0 && (
+                              <p className="text-xs text-orange-600 font-medium">
+                                Balance: {formatPrice(invoice.balance_cents)}
+                              </p>
+                            )}
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-2 pb-3 border-b border-gray-200">
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">Base Price</span>
@@ -781,11 +1337,21 @@ export default function BookingTrackingPage() {
                   <span className="font-semibold text-lg">Total</span>
                   <span className="font-bold text-xl text-gray-900">{formatPrice(calculateTotal())}</span>
                 </div>
-                {booking.payment_status !== 'paid' && isCustomer && (
+                {invoices.length === 0 && isProvider && booking.booking_status === 'completed' && (
                   <Button 
                     className="w-full bg-orange-600 hover:bg-orange-700 mt-4"
-                    onClick={() => router.push(`/dashboard/bookings/${id}/pay`)}
+                    onClick={() => router.push(`/dashboard/invoices/new?bookingId=${booking.id}`)}
                   >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Create Invoice
+                  </Button>
+                )}
+                {invoices.length > 0 && invoices.some(inv => inv.balance_cents > 0 && inv.status !== 'draft') && isCustomer && (
+                  <Button 
+                    className="w-full bg-orange-600 hover:bg-orange-700 mt-4"
+                    onClick={() => router.push(`/dashboard/invoices/${invoices[0].id}/pay`)}
+                  >
+                    <DollarSign className="w-4 h-4 mr-2" />
                     Pay Invoice
                   </Button>
                 )}

@@ -48,7 +48,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
-    // Build query
+    // Check for archive filter
+    const showArchived = searchParams.get('showArchived') === 'true'
+
+    // Build query - try with archive filter first, fallback if column doesn't exist
     let query = supabase
       .from('movers_scheduled_jobs')
       .select(`
@@ -64,6 +67,12 @@ export async function GET(request: NextRequest) {
         )
       `)
       .eq('provider_id', resolvedProviderId)
+    
+    // Try to apply archive filter - if column doesn't exist, query will fail
+    // We'll catch that and retry without the filter
+    let shouldApplyArchiveFilter = !showArchived
+    
+    query = query
       .order('scheduled_date', { ascending: true })
       .order('scheduled_start_time', { ascending: true })
 
@@ -74,7 +83,46 @@ export async function GET(request: NextRequest) {
       query = query.lte('scheduled_date', endDate)
     }
 
-    const { data: scheduled, error } = await query
+    // Try to apply archive filter if needed
+    if (shouldApplyArchiveFilter) {
+      query = query.or('is_archived.is.null,is_archived.eq.false')
+    }
+
+    let { data: scheduled, error } = await query
+
+    // If error is due to missing column, retry without archive filter
+    if (error && (error.message?.includes('is_archived') || error.code === '42703')) {
+      console.warn('Archive column not found, ignoring archive filter. Please run migration 025_add_job_archive.sql')
+      // Rebuild query without archive filter
+      query = supabase
+        .from('movers_scheduled_jobs')
+        .select(`
+          *,
+          quote:movers_quotes(
+            id,
+            full_name,
+            email,
+            phone,
+            pickup_address,
+            dropoff_address,
+            price_total_cents
+          )
+        `)
+        .eq('provider_id', resolvedProviderId)
+        .order('scheduled_date', { ascending: true })
+        .order('scheduled_start_time', { ascending: true })
+      
+      if (startDate) {
+        query = query.gte('scheduled_date', startDate)
+      }
+      if (endDate) {
+        query = query.lte('scheduled_date', endDate)
+      }
+      
+      const retryResult = await query
+      scheduled = retryResult.data
+      error = retryResult.error
+    }
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 })

@@ -700,7 +700,14 @@ function ReservationSubmissionStep({
   providerId,
   businessId,
   timeSlot,
-  onBack
+  onBack,
+  // CRITICAL: Pass service details from step 3
+  heavySelections,
+  hasStairs,
+  stairFlights,
+  needsPacking,
+  packingChoice,
+  packingRooms
 }: {
   details: MoveDetails
   quote: any
@@ -708,6 +715,12 @@ function ReservationSubmissionStep({
   businessId?: string
   timeSlot?: string
   onBack: () => void
+  heavySelections?: Array<{ key: string; min: number; max: number; price_cents: number; count: number }>
+  hasStairs?: boolean
+  stairFlights?: number
+  needsPacking?: boolean
+  packingChoice?: 'kit' | 'paygo' | 'none'
+  packingRooms?: number
 }) {
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -752,6 +765,45 @@ function ReservationSubmissionStep({
     setSubmitting(true)
     setError(null)
 
+    // CRITICAL: Extract all service details from quote AND from component state
+    // The quote breakdown might not have all fields, so we use both sources
+    const quoteBreakdown = quote?.breakdown || quote?.price?.breakdown || {}
+    
+    // Use state values if available (they're more accurate), otherwise fall back to quote breakdown
+    const selectedHeavy = heavySelections?.filter(s => s.count > 0) || []
+    const quoteServiceDetails = {
+      heavy_items: selectedHeavy.length > 0 
+        ? selectedHeavy.map(s => ({ band: `${s.min}-${s.max}`, count: s.count, price_cents: s.price_cents }))
+        : (quoteBreakdown.heavy_items || []),
+      heavy_items_count: selectedHeavy.length > 0
+        ? selectedHeavy.reduce((sum, s) => sum + s.count, 0)
+        : (quoteBreakdown.heavy_items_count || 0),
+      heavy_item_band: selectedHeavy.length > 1 
+        ? 'multi' 
+        : (selectedHeavy.length === 1 ? `${selectedHeavy[0].min}-${selectedHeavy[0].max}` : (quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || 'none')),
+      stairs_flights: (hasStairs && stairFlights !== undefined) 
+        ? stairFlights 
+        : (quoteBreakdown.stairs_flights !== undefined ? quoteBreakdown.stairs_flights : 0),
+      packing_help: needsPacking 
+        ? (packingChoice === 'kit' ? 'kit' : (packingChoice === 'paygo' ? 'paygo' : 'none'))
+        : (quoteBreakdown.packing_help || quoteBreakdown.packing || 'none'),
+      packing_rooms: (needsPacking && packingRooms !== undefined) 
+        ? packingRooms 
+        : (quoteBreakdown.packing_rooms !== undefined ? quoteBreakdown.packing_rooms : 0),
+      packing_materials: quoteBreakdown.packing_materials || [],
+    }
+    
+    console.log('[Reservation Submit] Service details from state:', {
+      heavySelections: selectedHeavy.length,
+      hasStairs,
+      stairFlights,
+      needsPacking,
+      packingChoice,
+      packingRooms
+    })
+    console.log('[Reservation Submit] Sending service details:', JSON.stringify(quoteServiceDetails, null, 2))
+    console.log('[Reservation Submit] Quote breakdown:', JSON.stringify(quoteBreakdown, null, 2))
+
     try {
       const res = await fetch('/api/movers/reservations/create', {
         method: 'POST',
@@ -775,6 +827,9 @@ function ReservationSubmissionStep({
           }),
           teamSize: quote.price.mover_team || 2,
           totalPriceCents: Math.round(parseFloat(quote.price.amount) * 100),
+          // CRITICAL: Send all service details so they're saved to database
+          ...quoteServiceDetails,
+          quoteBreakdown: quoteBreakdown, // Send full breakdown
         }),
       })
 
@@ -811,81 +866,117 @@ function ReservationSubmissionStep({
   }
 
   if (success) {
-    const quoteId = reservationData?.quote_id || reservationData?.references?.quote_id
+    // Use booking ID as the unified order number - this is the ONE number everyone uses
     const bookingId = reservationData?.booking_id || reservationData?.references?.booking_id
-    const reservationId = reservationData?.reservation_id || reservationData?.scheduled_job_id
+    const quoteId = reservationData?.quote_id || reservationData?.references?.quote_id
+    const reservationId = reservationData?.reservation_id || reservationData?.scheduled_job_id // Internal reference only
     
     return (
-      <section className="text-center py-12 max-w-2xl mx-auto px-4">
-        <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-6">
-          <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
-        </div>
-        <h1 className="text-3xl font-bold text-gray-900 mb-4">Reservation Confirmed!</h1>
-        <p className="text-lg text-gray-600 mb-6">
-          Your move has been scheduled. We'll send you a confirmation email shortly.
-        </p>
-        
-        {/* Reference Information */}
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-6 mb-8 text-left">
-          <h3 className="font-semibold text-gray-900 mb-4">Your Reservation Details</h3>
-          <div className="space-y-2 text-sm">
-            {quoteId && (
-              <div className="flex items-center justify-between py-2 border-b border-gray-200">
-                <span className="text-gray-600 font-medium">Quote ID:</span>
-                <div className="flex items-center gap-2">
-                  <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
-                    {quoteId.slice(0, 8)}...
-                  </code>
-                  <a
-                    href={`/quotes/${quoteId}`}
-                    className="text-orange-600 hover:text-orange-700 font-medium underline text-xs"
-                  >
-                    View Quote/Receipt
-                  </a>
-                </div>
-              </div>
-            )}
-            {bookingId && (
-              <div className="flex items-center justify-between py-2 border-b border-gray-200">
-                <span className="text-gray-600 font-medium">Booking ID:</span>
-                <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
-                  {bookingId.slice(0, 8)}...
-                </code>
-              </div>
-            )}
-            {reservationId && (
-              <div className="flex items-center justify-between py-2">
-                <span className="text-gray-600 font-medium">Reservation ID:</span>
-                <code className="bg-white px-2 py-1 rounded border border-gray-300 text-gray-900 font-mono text-xs">
-                  {reservationId.slice(0, 8)}...
-                </code>
-              </div>
-            )}
-          </div>
-          {quoteId && (
-            <p className="text-xs text-gray-500 mt-4 pt-4 border-t border-gray-200">
-              💡 Save your Quote ID for reference: <code className="font-mono">{quoteId}</code>
+      <section className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-orange-50/30 py-12 px-4">
+        <div className="max-w-3xl mx-auto">
+          {/* Success Icon */}
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-500/20">
+              <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 mb-4 tracking-tight">
+              Reservation Confirmed!
+            </h1>
+            <p className="text-xl text-gray-600 max-w-xl mx-auto leading-relaxed">
+              Your move has been scheduled. We'll send you a confirmation email shortly.
             </p>
-          )}
-        </div>
+          </div>
+          
+          {/* Elegant Details Card */}
+          <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-xl mb-8 overflow-hidden">
+            {/* Card Header */}
+            <div className="bg-gradient-to-r from-gray-900 to-gray-800 px-6 sm:px-8 py-6">
+              <h2 className="text-2xl font-bold text-white">Your Reservation Details</h2>
+            </div>
+            
+            {/* Card Content */}
+            <div className="p-6 sm:p-8 space-y-6">
+              {/* Unified Order Number - This is the ONE number to use */}
+              {bookingId && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-4 border-b-2 border-orange-200">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-orange-500/20">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Your Order Number</p>
+                      <p className="text-2xl font-bold text-gray-900 tracking-tight">#{bookingId.slice(0, 8).toUpperCase()}</p>
+                      <p className="text-xs text-gray-500 mt-1">Use this number for all inquiries</p>
+                    </div>
+                  </div>
+                  {quoteId && (
+                    <a
+                      href={`/quotes/${quoteId}`}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-700 font-medium text-sm transition-colors border border-orange-200 hover:border-orange-300"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                      View Quote & Receipt
+                    </a>
+                  )}
+                </div>
+              )}
+              
+              {/* Internal References - Hidden by default, only shown if user wants details */}
+              {(quoteId || reservationId) && (
+                <details className="py-4 border-b border-gray-100">
+                  <summary className="text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:text-gray-700 mb-2">
+                    Technical Details (for support)
+                  </summary>
+                  <div className="mt-3 space-y-2 pl-4 border-l-2 border-gray-200">
+                    {quoteId && (
+                      <div className="flex items-center justify-between py-1.5">
+                        <span className="text-xs text-gray-600 font-medium">Quote ID:</span>
+                        <code className="text-xs font-mono text-gray-800 bg-gray-50 px-2 py-1 rounded">{quoteId}</code>
+                      </div>
+                    )}
+                    {reservationId && (
+                      <div className="flex items-center justify-between py-1.5">
+                        <span className="text-xs text-gray-600 font-medium">Reservation ID:</span>
+                        <code className="text-xs font-mono text-gray-800 bg-gray-50 px-2 py-1 rounded">{reservationId}</code>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
+            </div>
+          </div>
 
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          {quoteId && (
+          {/* Action Buttons */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            {quoteId && (
+              <button
+                className="group px-8 py-4 rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-semibold text-base shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30 transition-all flex items-center justify-center gap-2"
+                onClick={() => window.location.href = `/quotes/${quoteId}`}
+              >
+                <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                View Quote & Receipt
+              </button>
+            )}
             <button
-              className="px-6 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-lg"
-              onClick={() => window.location.href = `/quotes/${quoteId}`}
+              className="group px-8 py-4 rounded-xl bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white font-semibold text-base shadow-lg shadow-orange-500/20 hover:shadow-xl hover:shadow-orange-500/30 transition-all flex items-center justify-center gap-2"
+              onClick={() => window.location.href = '/dashboard/bookings'}
             >
-              View Quote & Receipt
+              View My Bookings
+              <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
             </button>
-          )}
-          <button
-            className="px-8 py-4 rounded-xl bg-gradient-to-r from-orange-600 to-orange-700 hover:from-orange-700 hover:to-orange-800 text-white font-semibold text-lg shadow-lg shadow-orange-500/20 hover:shadow-xl"
-            onClick={() => window.location.href = '/dashboard/bookings'}
-          >
-            View My Bookings →
-          </button>
+          </div>
         </div>
       </section>
     )
@@ -2619,6 +2710,12 @@ function WizardInner() {
           businessId={businessIdParam}
           timeSlot={(details as any).timeSlot}
           onBack={() => setStep(6)}
+          heavySelections={heavySelections}
+          hasStairs={hasStairs}
+          stairFlights={stairFlights}
+          needsPacking={needsPacking}
+          packingChoice={packingChoice}
+          packingRooms={packingRooms}
         />
       )}
 

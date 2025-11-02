@@ -31,29 +31,51 @@ import Link from "next/link"
 interface Booking {
   id: string
   customer_id?: string
-  consumer_id?: string
   business_id: string
-  status?: 'requested' | 'quoted' | 'accepted' | 'scheduled' | 'completed' | 'canceled'
-  move_date: string
-  details: any // JSONB: size, addresses, stairs, notes
-  quote_cents?: number
-  deposit_cents?: number
-  stripe_payment_intent?: string
+  booking_status?: 'requested' | 'quoted' | 'confirmed' | 'scheduled' | 'completed' | 'cancelled'
+  service_type?: string
+  requested_date?: string
+  requested_time?: string
+  service_address?: string
+  service_city?: string
+  service_state?: string
+  service_postal_code?: string
+  base_price_cents?: number
+  total_price_cents?: number
+  additional_fees_cents?: number
+  hourly_rate_cents?: number
+  payment_status?: string
+  service_details?: any // CRITICAL: Full service details JSONB
+  customer_notes?: string
+  business_notes?: string
+  customer_phone?: string
+  customer_email?: string
+  actual_start_time?: string | null
+  actual_end_time?: string | null
+  estimated_duration_hours?: number
   created_at: string
   updated_at: string
   business?: {
     id: string
     name: string
     owner_id: string
-  }
-  consumer?: {
-    id: string
-    full_name: string
+    phone?: string
+    email?: string
+    description?: string
   }
   customer?: {
     id: string
     full_name: string
+    email?: string
+    phone?: string
   }
+  // Legacy fields for backward compatibility
+  status?: string
+  move_date?: string
+  details?: any
+  quote_cents?: number
+  deposit_cents?: number
+  stripe_payment_intent?: string
 }
 
 interface BookingStats {
@@ -89,29 +111,43 @@ export default function AdminBookingsPage() {
     try {
       setLoading(true)
       
-      // Actual schema columns: id, consumer_id, business_id, status, move_date, details, quote_cents, deposit_cents, stripe_payment_intent, created_at, updated_at
-      // Try simpler query first to isolate the issue
-      console.log('Starting bookings query...')
+      // CRITICAL: Admin query should fetch ALL booking fields including service_details
+      // Actual schema columns: id, customer_id, business_id, booking_status, requested_date, requested_time, 
+      // service_address, service_city, service_state, service_postal_code, service_type, 
+      // base_price_cents, total_price_cents, additional_fees_cents, hourly_rate_cents,
+      // payment_status, service_details (JSONB), customer_notes, business_notes, customer_phone, customer_email, etc.
+      console.log('[Admin] Starting bookings query with full access...')
       
+      // CRITICAL: Admin needs ALL booking data including service_details
       let query = supabase
         .from('bookings')
         .select(`
           *,
-          business:businesses(id, name, owner_id),
-          customer:profiles!bookings_customer_id_fkey(id, full_name)
+          business:businesses(id, name, owner_id, phone, email, description),
+          customer:profiles!bookings_customer_id_fkey(id, full_name, email, phone)
         `)
         .order('created_at', { ascending: false })
-        .limit(50) // Limit to avoid huge queries
+        .limit(100) // Admin should see more
 
-      // Apply filters - only use columns that exist in the actual schema
-      // status enum: 'requested','quoted','accepted','scheduled','completed','canceled'
+      // Apply filters - use actual booking_status column
       if (filters.status !== 'all') {
-        query = query.eq('status', filters.status)
+        // Map filter values to actual booking_status values
+        const statusMap: Record<string, string> = {
+          'requested': 'requested',
+          'quoted': 'quoted',
+          'accepted': 'confirmed',
+          'scheduled': 'scheduled',
+          'completed': 'completed',
+          'canceled': 'cancelled'
+        }
+        const actualStatus = statusMap[filters.status] || filters.status
+        query = query.eq('booking_status', actualStatus)
       }
       
-      // Search filter - search in details JSONB (only column that exists for search)
+      // Search filter - search in service_details JSONB and customer info
       if (filters.search) {
-        query = query.ilike('details', `%${filters.search}%`)
+        // Search in multiple fields
+        query = query.or(`service_details.ilike.%${filters.search}%,customer_notes.ilike.%${filters.search}%`)
       }
 
       const { data, error } = await query

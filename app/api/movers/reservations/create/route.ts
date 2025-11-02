@@ -16,7 +16,16 @@ export async function POST(request: NextRequest) {
       pickupAddresses,
       deliveryAddresses,
       teamSize,
-      totalPriceCents
+      totalPriceCents,
+      // CRITICAL: Get service details from request body if available
+      heavy_items,
+      heavy_items_count,
+      heavy_item_band,
+      stairs_flights,
+      packing_help,
+      packing_rooms,
+      packing_materials,
+      quoteBreakdown
     } = body
 
     const supabase = await createClient()
@@ -428,6 +437,131 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Fetch quote data to include all service details in booking
+        // CRITICAL: Use breakdown from body first (it has the actual service details), then fetch from DB
+        let quoteBreakdownData: any = quoteBreakdown || {}
+        let quoteData: any = null
+        
+        if (finalQuoteId) {
+          const { data: quote } = await supabase
+            .from('movers_quotes')
+            .select('breakdown, pickup_address, dropoff_address, move_date, crew_size, price_total_cents')
+            .eq('id', finalQuoteId)
+            .single()
+          
+          if (quote) {
+            quoteData = quote
+            // Use breakdown from body if provided (it's more complete), otherwise use DB breakdown
+            const dbBreakdown = quote.breakdown || {}
+            quoteBreakdownData = Object.keys(quoteBreakdownData).length > 0 ? quoteBreakdownData : dbBreakdown
+            
+            console.log('[Reservations API] Quote breakdown from body:', JSON.stringify(quoteBreakdown, null, 2))
+            console.log('[Reservations API] Quote breakdown from DB:', JSON.stringify(dbBreakdown, null, 2))
+            console.log('[Reservations API] Using quote breakdown:', JSON.stringify(quoteBreakdownData, null, 2))
+            
+            // CRITICAL: Update the quote's breakdown if body has better data
+            if (Object.keys(quoteBreakdown || {}).length > 0 && JSON.stringify(quoteBreakdown) !== JSON.stringify(dbBreakdown)) {
+              console.log('[Reservations API] Updating quote breakdown with complete data from body...')
+              await supabase
+                .from('movers_quotes')
+                .update({ 
+                  breakdown: quoteBreakdown,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', finalQuoteId)
+              
+              quoteBreakdownData = quoteBreakdown
+              console.log('[Reservations API] ✅ Quote breakdown updated in database')
+            }
+          }
+        }
+        
+        // If no quote breakdown from body or DB, try to build it from individual fields
+        if (Object.keys(quoteBreakdownData).length === 0) {
+          quoteBreakdownData = {
+            heavy_items: heavy_items || [],
+            heavy_items_count: heavy_items_count || 0,
+            heavy_item_band: heavy_item_band || 'none',
+            stairs_flights: stairs_flights !== undefined ? stairs_flights : 0,
+            packing_help: packing_help || 'none',
+            packing_rooms: packing_rooms !== undefined ? packing_rooms : 0,
+            packing_materials: packing_materials || [],
+          }
+          console.log('[Reservations API] Built breakdown from individual fields:', JSON.stringify(quoteBreakdownData, null, 2))
+        }
+        
+        // Build comprehensive service_details from quote breakdown and reservation data
+        const serviceDetails: any = {
+          quote_id: finalQuoteId,
+          scheduled_job_id: jobId,
+          pickup_addresses: pickupAddresses || [],
+          delivery_addresses: deliveryAddresses || [],
+          from_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
+          to_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
+          pickup_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
+          dropoff_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
+          crew_size: teamSize || quoteData?.crew_size || 2,
+          mover_team: teamSize || quoteData?.crew_size || 2,
+          time_slot: timeSlot,
+          move_date: moveDate,
+          source: 'movers_reservation',
+          // Merge all data from quote breakdown (heavy_items, stairs_flights, packing, etc.)
+          ...quoteBreakdownData,
+          // CRITICAL: Ensure these specific fields are ALWAYS set for database storage
+          // Priority: body fields > quoteBreakdownData > defaults
+          // Heavy Items - prioritize body, then quote breakdown, then empty array
+          heavy_items: Array.isArray(body.heavy_items) && body.heavy_items.length > 0
+            ? body.heavy_items
+            : (Array.isArray(quoteBreakdownData.heavy_items) && quoteBreakdownData.heavy_items.length > 0 
+              ? quoteBreakdownData.heavy_items 
+              : []),
+          heavy_items_count: body.heavy_items_count !== undefined && body.heavy_items_count > 0
+            ? body.heavy_items_count
+            : (quoteBreakdownData.heavy_items_count !== undefined && quoteBreakdownData.heavy_items_count > 0
+              ? quoteBreakdownData.heavy_items_count
+              : 0),
+          heavy_item_band: body.heavy_item_band || body.weight_band 
+            || quoteBreakdownData.heavy_item_band || quoteBreakdownData.weight_band 
+            || 'none',
+          // Stairs - ALWAYS store the flights count
+          stairs_flights: body.stairs_flights !== undefined 
+            ? body.stairs_flights 
+            : (quoteBreakdownData.stairs_flights !== undefined 
+              ? quoteBreakdownData.stairs_flights 
+              : 0),
+          stairs: (body.stairs_flights !== undefined && body.stairs_flights > 0)
+            || body.stairs === true
+            || (quoteBreakdownData.stairs_flights !== undefined && quoteBreakdownData.stairs_flights > 0) 
+            || quoteBreakdownData.stairs === true,
+          // Packing - ALWAYS store all packing details
+          packing_help: body.packing_help 
+            || quoteBreakdownData.packing_help || quoteBreakdownData.packing
+            || 'none',
+          packing_rooms: body.packing_rooms !== undefined 
+            ? body.packing_rooms 
+            : (quoteBreakdownData.packing_rooms !== undefined 
+              ? quoteBreakdownData.packing_rooms 
+              : 0),
+          packing_materials: Array.isArray(body.packing_materials) && body.packing_materials.length > 0
+            ? body.packing_materials
+            : (Array.isArray(quoteBreakdownData.packing_materials) && quoteBreakdownData.packing_materials.length > 0
+              ? quoteBreakdownData.packing_materials
+              : []),
+          packing: body.packing || quoteBreakdownData.packing || {},
+          move_size: quoteBreakdownData.move_size || body.move_size || `${teamSize || 2}-bedroom`,
+          mover_team: quoteBreakdownData.mover_team || teamSize || 2,
+          hourly_rate: quoteBreakdownData.hourly_rate || body.hourly_rate || null,
+          hourly_rate_cents: quoteBreakdownData.hourly_rate_cents || (quoteBreakdownData.hourly_rate ? Math.round(quoteBreakdownData.hourly_rate * 100) : null),
+          storage: quoteBreakdownData.storage || body.storage || 'none',
+          ins_coverage: quoteBreakdownData.ins_coverage || body.ins_coverage || 'basic',
+          // Include customer info
+          full_name: fullName,
+          email: email,
+          phone: phone,
+        }
+        
+        console.log('[Reservations API] Complete service_details:', JSON.stringify(serviceDetails, null, 2))
+        
         // Create booking record for customer visibility
         const { data: booking, error: bookingError } = await supabase
           .from('bookings')
@@ -445,20 +579,13 @@ export async function POST(request: NextRequest) {
             service_postal_code: zip || '',
             base_price_cents: totalPriceCents || 0,
             total_price_cents: totalPriceCents || 0,
+            hourly_rate_cents: serviceDetails.hourly_rate_cents || null,
             customer_phone: phone,
             customer_email: email,
             customer_notes: `Reservation via movers booking system. Quote ID: ${finalQuoteId || 'N/A'}`,
-            service_details: {
-              quote_id: finalQuoteId,
-              scheduled_job_id: jobId,
-              pickup_addresses: pickupAddresses || [],
-              delivery_addresses: deliveryAddresses || [],
-              crew_size: teamSize || 2,
-              time_slot: timeSlot,
-              source: 'movers_reservation'
-            }
+            service_details: serviceDetails
           })
-          .select('id')
+          .select('id, service_details')
           .single()
         
         if (bookingError) {
@@ -469,6 +596,39 @@ export async function POST(request: NextRequest) {
         } else if (booking) {
           bookingId = booking.id
           console.log('[Reservations API] Successfully created booking record for customer:', bookingId)
+          
+          // Verify service_details was saved correctly
+          console.log('[Reservations API] Saved service_details:', JSON.stringify(booking.service_details, null, 2))
+          
+          // Verify completeness using database function (if available)
+          try {
+            const { data: verification, error: verifyError } = await supabase.rpc(
+              'verify_service_details_completeness',
+              { p_booking_id: bookingId }
+            )
+            
+            if (!verifyError && verification) {
+              console.log('[Reservations API] Service details verification:', JSON.stringify(verification, null, 2))
+              
+              // If missing fields, try to enrich
+              if (!verification.valid && verification.missing_fields) {
+                console.log('[Reservations API] Missing fields detected, attempting to enrich...')
+                const { data: enriched, error: enrichError } = await supabase.rpc(
+                  'enrich_booking_service_details',
+                  { p_booking_id: bookingId }
+                )
+                
+                if (!enrichError && enriched) {
+                  console.log('[Reservations API] Successfully enriched service_details')
+                } else {
+                  console.error('[Reservations API] Error enriching service_details:', enrichError)
+                }
+              }
+            }
+          } catch (err) {
+            // Function might not exist yet (migration not run), that's okay
+            console.log('[Reservations API] Verification function not available (migration may not be run)')
+          }
         }
       }
     } else {
