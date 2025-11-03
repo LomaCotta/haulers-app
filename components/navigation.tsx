@@ -136,7 +136,6 @@ export function Navigation({ user: propUser }: NavigationProps) {
               <div className="flex flex-col space-y-6 pt-6">
                 {/* Public Links */}
                 <div className="space-y-2">
-                  <h3 className="font-semibold text-sm text-gray-500 uppercase tracking-wider px-3 mb-2">Public</h3>
                   {publicLinks.map((link) => (
                     <Link
                       key={link.href}

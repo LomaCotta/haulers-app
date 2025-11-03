@@ -75,22 +75,27 @@ export function calculateQuote(params: QuoteInput, overrides: CalcOverrides = {}
   })
   
   // Check if packing is requested (either kit or paygo)
-  if (packing_help && packing_help !== 'none' && packing_rooms > 0) {
+  if (packing_help && packing_help !== 'none') {
     if (packing_help === 'kit') {
       // Full Packing Kit: per_room_cents * number of rooms
-      if (overrides.packingConfig?.enabled && overrides.packingConfig?.per_room_cents) {
-        const perRoomCents = overrides.packingConfig.per_room_cents
-        packingCost = (perRoomCents * packing_rooms) / 100
-      } else if (overrides.packingConfig?.per_room_cents) {
-        // Use per_room_cents even if enabled is false (might be defaulting)
-        const perRoomCents = overrides.packingConfig.per_room_cents
-        packingCost = (perRoomCents * packing_rooms) / 100
-      } else {
-        // Fallback: use default $99 per room if no config
-        packingCost = 99 * packing_rooms
+      // CRITICAL: Only calculate cost if packing_rooms > 0
+      if (packing_rooms > 0) {
+        if (overrides.packingConfig?.enabled && overrides.packingConfig?.per_room_cents) {
+          const perRoomCents = overrides.packingConfig.per_room_cents
+          packingCost = (perRoomCents * packing_rooms) / 100
+        } else if (overrides.packingConfig?.per_room_cents) {
+          // Use per_room_cents even if enabled is false (might be defaulting)
+          const perRoomCents = overrides.packingConfig.per_room_cents
+          packingCost = (perRoomCents * packing_rooms) / 100
+        } else {
+          // Fallback: use default $99 per room if no config
+          packingCost = 99 * packing_rooms
+        }
       }
+      // If no rooms selected, cost is 0 (user needs to select rooms)
     } else if (packing_help === 'paygo') {
-      // Pay as You Go: calculate from selected materials
+      // Pay as You Go: calculate ONLY from selected materials
+      // CRITICAL: Do NOT use packing_rooms - Pay as You Go is based on materials only
       const selectedMaterials = params.packing_materials || []
       if (selectedMaterials.length > 0) {
         // Sum up material costs
@@ -99,10 +104,8 @@ export function calculateQuote(params: QuoteInput, overrides: CalcOverrides = {}
           return sum + ((mat.price_cents || 0) * quantity / 100)
         }, 0)
       }
-      // If no materials provided but paygo is selected, use per-room cost if available
-      if (packingCost === 0 && packing_rooms > 0 && overrides.packingConfig?.per_room_cents) {
-        packingCost = (overrides.packingConfig.per_room_cents * packing_rooms) / 100
-      }
+      // CRITICAL: Pay as You Go has $0 upfront cost - materials are billed separately
+      // Do NOT fall back to per-room cost - that's only for Full Packing Kit
     }
   }
   

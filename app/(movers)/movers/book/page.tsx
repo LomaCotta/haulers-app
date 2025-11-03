@@ -787,9 +787,13 @@ function ReservationSubmissionStep({
       packing_help: needsPacking 
         ? (packingChoice === 'kit' ? 'kit' : (packingChoice === 'paygo' ? 'paygo' : 'none'))
         : (quoteBreakdown.packing_help || quoteBreakdown.packing || 'none'),
-      packing_rooms: (needsPacking && packingRooms !== undefined) 
+      // CRITICAL: Only include packing_rooms for Full Packing Kit (kit option)
+      // Pay as You Go (paygo) and I will pack myself (none) don't use room count - set to 0
+      packing_rooms: (needsPacking && packingChoice === 'kit' && packingRooms !== undefined && packingRooms > 0)
         ? packingRooms 
-        : (quoteBreakdown.packing_rooms !== undefined ? quoteBreakdown.packing_rooms : 0),
+        : (packingChoice === 'kit' && quoteBreakdown.packing_rooms !== undefined && quoteBreakdown.packing_rooms > 0 
+          ? quoteBreakdown.packing_rooms 
+          : 0),
       packing_materials: quoteBreakdown.packing_materials || [],
     }
     
@@ -1690,21 +1694,45 @@ function WizardInner() {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
+      {/* Mobile-friendly Step Progress - Timeline Style */}
       <div className="mb-6">
-        <ol className="flex items-center text-sm gap-3">
-          {[1,2,3,4,5,6,7].map(n => (
-            <li
-              key={n}
-              className={`px-3 py-1 rounded-full border transition-colors ${
-                n===step
-                  ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
-                  : 'border-orange-200 text-orange-700 hover:bg-orange-50'
-              }`}
-            >
-              Step {n}
-            </li>
-          ))}
-        </ol>
+        {/* Mobile/Tablet: Compact progress bar with step indicator - Show on screens smaller than 1024px */}
+        <div className="block lg:hidden">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700">
+              Step {step} of 7
+            </span>
+            <span className="text-xs text-gray-500">
+              {Math.round((step / 7) * 100)}%
+            </span>
+          </div>
+          <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden shadow-inner">
+            <div 
+              className="h-full bg-gradient-to-r from-orange-500 to-orange-600 rounded-full transition-all duration-300 shadow-sm"
+              style={{ width: `${(step / 7) * 100}%` }}
+            />
+          </div>
+        </div>
+        
+        {/* Desktop: Full step indicator - Only show on large screens (1024px+) */}
+        <div className="hidden lg:block">
+          <ol className="flex items-center text-sm gap-3">
+            {[1,2,3,4,5,6,7].map(n => (
+              <li
+                key={n}
+                className={`px-3 py-1 rounded-full border transition-colors ${
+                  n===step
+                    ? 'bg-orange-600 text-white border-orange-600 shadow-sm'
+                    : n < step
+                    ? 'bg-orange-100 text-orange-700 border-orange-300'
+                    : 'border-orange-200 text-orange-700 hover:bg-orange-50'
+                }`}
+              >
+                Step {n}
+              </li>
+            ))}
+          </ol>
+        </div>
       </div>
 
       {step === 3 && (
@@ -1750,7 +1778,12 @@ function WizardInner() {
                   </button>
                   <button
                     type="button"
-                    onClick={()=>{ setNeedsPacking(true); setPackingChoice('paygo') }}
+                    onClick={()=>{ 
+                      setNeedsPacking(true); 
+                      setPackingChoice('paygo');
+                      // CRITICAL: Reset packing_rooms to 0 for Pay as You Go - rooms are not relevant
+                      setPackingRooms(0);
+                    }}
                     className={`group p-5 border rounded-xl transition-all text-left hover:shadow-md hover:-translate-y-0.5 ${packingChoice==='paygo' ? 'border-orange-500 shadow-md ring-1 ring-orange-200' : 'border-gray-200'}`}
                   >
                     <div className="flex items-center justify-between mb-2">
@@ -1769,13 +1802,19 @@ function WizardInner() {
                 <div className="mt-4">
                   <button
                     type="button"
-                    onClick={()=>{ setNeedsPacking(false); setPackingChoice('none') }}
+                    onClick={()=>{ 
+                      setNeedsPacking(false); 
+                      setPackingChoice('none');
+                      // CRITICAL: Reset packing_rooms to 0 for I will pack myself - rooms are not relevant
+                      setPackingRooms(0);
+                    }}
                     className={`w-full md:w-auto px-6 py-3 rounded-xl border transition hover:shadow ${needsPacking ? 'border-gray-300' : 'border-orange-500 shadow ring-1 ring-orange-200'}`}
                   >
                     I will pack everything myself
                   </button>
                 </div>
-                {needsPacking && (
+                {/* CRITICAL: Only show "number of rooms" for Full Packing Kit - NOT for Pay as You Go or I will pack myself */}
+                {needsPacking && packingChoice === 'kit' && (
                   <div className="mt-6">
                     <label className="block text-sm font-semibold mb-4 text-gray-900">How many rooms?</label>
                     <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
@@ -2489,10 +2528,19 @@ function WizardInner() {
                     )
                   })()}
 
-                  {quote.price.breakdown.packing > 0 && (
+                  {/* CRITICAL: Only show packing option based on what was selected */}
+                  {packingChoice === 'kit' && quote.price.breakdown.packing > 0 && (
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-700">Packing</span>
+                      <span className="text-gray-700">Full Packing Kit</span>
                       <span className="font-semibold text-gray-900">${quote.price.breakdown.packing}</span>
+                    </div>
+                  )}
+                  
+                  {/* Only show "Pay as You Go" if that option was selected, not if Full Packing Kit was selected */}
+                  {packingChoice === 'paygo' && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-700">Pay as You Go</span>
+                      <span className="font-semibold text-gray-900">$0</span>
                     </div>
                   )}
 
@@ -2516,11 +2564,6 @@ function WizardInner() {
                       <span className="font-semibold text-gray-900">${quote.price.destination_fee}</span>
                     </div>
                   )}
-                  
-                  <div className="flex justify-between text-sm">
-                    <span className="text-gray-700">Pay as You Go</span>
-                    <span className="font-semibold text-gray-900">$0</span>
-                  </div>
                 </div>
               </div>
 
