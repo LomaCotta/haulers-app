@@ -140,7 +140,10 @@ export default function MessageModal({
     try {
       setSending(true)
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        console.error('Error sending message: User not authenticated')
+        return
+      }
 
       // Send message to the recipient
       const { data: newMessage, error } = await supabase
@@ -161,6 +164,44 @@ export default function MessageModal({
 
       if (error) {
         console.error('Error sending message:', error)
+        // Try fallback: check if recipient_id column exists, if not use booking_id approach
+        if (error.code === '42703' || error.message?.includes('recipient_id')) {
+          // Fallback: try without recipient_id (might be using booking-based messaging)
+          const { data: fallbackMessage, error: fallbackError } = await supabase
+            .from('messages')
+            .insert({
+              sender_id: user.id,
+              body: message.trim(),
+              message_type: 'general',
+              is_read: false
+            })
+            .select(`
+              *,
+              sender:profiles!messages_sender_id_fkey(id, full_name, avatar_url)
+            `)
+            .single()
+          
+          if (fallbackError) {
+            console.error('Fallback error sending message:', fallbackError)
+            alert('Failed to send message. Please check your database schema.')
+            return
+          }
+          
+          // Add recipient info manually
+          const messageWithRecipient = {
+            ...fallbackMessage,
+            recipient_id: recipientId,
+            sender: fallbackMessage.sender || { id: user.id, full_name: 'You', avatar_url: null }
+          }
+          
+          setMessages(prev => [...prev, messageWithRecipient])
+          setMessage('')
+          if (onMessageSent) {
+            onMessageSent(messageWithRecipient)
+          }
+          return
+        }
+        alert('Failed to send message: ' + (error.message || 'Unknown error'))
         return
       }
 
@@ -170,8 +211,9 @@ export default function MessageModal({
       if (onMessageSent) {
         onMessageSent(newMessage)
       }
-    } catch (error) {
-      console.error('Error:', error)
+    } catch (error: any) {
+      console.error('Error sending message:', error)
+      alert('Failed to send message: ' + (error.message || 'Unknown error'))
     } finally {
       setSending(false)
     }

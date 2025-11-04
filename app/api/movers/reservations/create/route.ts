@@ -35,10 +35,18 @@ export async function POST(request: NextRequest) {
     } = body
 
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
 
-    // Allow both authenticated and guest bookings
-    // Guest bookings will use the provided email/phone from the form
+    // REQUIRE authentication - no guest bookings allowed
+    if (authError || !user) {
+      console.error('[Reservations API] ❌ Unauthorized: User must be logged in to create booking')
+      return NextResponse.json({ 
+        error: 'Authentication required. Please log in to create a booking.',
+        code: 'UNAUTHORIZED'
+      }, { status: 401 })
+    }
+
+    console.log('[Reservations API] ✅ Authenticated user:', user.id, user.email)
 
     // Resolve provider_id from business_id if needed
     let resolvedProviderId = providerId
@@ -56,6 +64,14 @@ export async function POST(request: NextRequest) {
 
     if (!resolvedProviderId || !moveDate || !timeSlot) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+
+    // CRITICAL: Require businessId for booking creation
+    if (!businessId) {
+      return NextResponse.json({ 
+        error: 'Missing business_id. Cannot create booking without business reference.',
+        code: 'MISSING_BUSINESS_ID'
+      }, { status: 400 })
     }
 
     // Check availability, auto-creating default rules if needed
@@ -270,7 +286,7 @@ export async function POST(request: NextRequest) {
     // STEP 1: ALWAYS create or update quote record FIRST using security definer function
     // This ensures we have a quote_id before creating the scheduled job and bypasses RLS
     let finalQuoteId: string | null = quoteId && quoteId !== 'null' ? quoteId : null
-    const userId = user?.id || null
+    const userId = user.id // User is guaranteed to exist due to auth check above
     
     console.log('[Reservations API] STEP 1: Creating/updating quote')
     console.log('[Reservations API] Provided quoteId:', quoteId)
@@ -422,13 +438,17 @@ export async function POST(request: NextRequest) {
       console.error('[Reservations API] ❌ RPC returned no quote_id. This should not happen!')
     }
     
-    // Validate we have a quote_id before proceeding
+    // REQUIRE quote_id - fail if we can't create one
     if (!finalQuoteId) {
-      console.error('[Reservations API] ⚠️ WARNING: No quote_id available. Scheduled job will be created without quote link.')
-      console.error('[Reservations API] This means customer info will not be linked to the reservation.')
-    } else {
-      console.log('[Reservations API] ✅ Quote ID confirmed:', finalQuoteId)
+      console.error('[Reservations API] ❌ CRITICAL ERROR: Could not create quote. Booking cannot proceed without quote_id.')
+      return NextResponse.json({ 
+        error: 'Failed to create quote. Please try again.',
+        code: 'QUOTE_CREATION_FAILED',
+        details: quoteRpcError?.message || 'Quote creation failed'
+      }, { status: 500 })
     }
+    
+    console.log('[Reservations API] ✅ Quote ID confirmed:', finalQuoteId)
 
     // STEP 2: Create scheduled job using security definer function to bypass RLS
     // Now we have finalQuoteId to link it properly
@@ -490,270 +510,299 @@ export async function POST(request: NextRequest) {
     }
 
     // CRITICAL: Also create a row in the bookings table so customers can see their reservations
+    // userId and businessId are guaranteed at this point
     let bookingId: string | null = null
-    if (userId && businessId) {
-      // Get business info for booking
-      const { data: business } = await supabase
-        .from('businesses')
-        .select('id, name')
-        .eq('id', businessId)
-        .maybeSingle()
+    
+    // Get business info for booking
+    const { data: business } = await supabase
+      .from('businesses')
+      .select('id, name')
+      .eq('id', businessId)
+      .maybeSingle()
 
-      if (business) {
-        // Convert time slot to time format
-        const timeSlotMap: Record<string, string> = {
-          'morning': '08:00:00',
-          'afternoon': '12:00:00',
-          'full_day': '08:00:00'
+    if (!business) {
+      console.error('[Reservations API] ❌ Business not found:', businessId)
+      return NextResponse.json({ 
+        error: 'Business not found',
+        code: 'BUSINESS_NOT_FOUND'
+      }, { status: 404 })
+    }
+    // Convert time slot to time format
+    const timeSlotMap: Record<string, string> = {
+      'morning': '08:00:00',
+      'afternoon': '12:00:00',
+      'full_day': '08:00:00'
+    }
+    
+    // Get pickup and delivery addresses
+    const pickupAddr = pickupAddresses?.[0] || ''
+    const deliveryAddr = deliveryAddresses?.[0] || ''
+    const serviceAddress = pickupAddr || deliveryAddr || ''
+    
+    // Extract city/state/zip from address (improved parsing)
+    // Typical format: "123 Main St, City, State ZIP" or "123 Main St, City, State"
+    let city = ''
+    let state = ''
+    let zip = ''
+    
+    if (serviceAddress) {
+      const addressParts = serviceAddress.split(',').map((s: string) => s.trim())
+      // Last part should be "State ZIP" or just "State"
+      if (addressParts.length >= 2) {
+        city = addressParts[addressParts.length - 2] || ''
+        const stateZipPart = addressParts[addressParts.length - 1] || ''
+        // Try to parse state and zip (format: "CA 90210" or "California 90210")
+        const stateZipMatch = stateZipPart.match(/^(.+?)\s+(\d{5}(?:-\d{4})?)$/)
+        if (stateZipMatch) {
+          state = stateZipMatch[1].trim()
+          zip = stateZipMatch[2].trim()
+        } else {
+          // No zip found, just use as state
+          state = stateZipPart.trim()
         }
+      } else if (addressParts.length === 1) {
+        // Single part address - try to extract what we can
+        city = addressParts[0] || ''
+      }
+    }
+    
+    // Fetch quote data to include all service details in booking
+    // CRITICAL: Use breakdown from body first (it has the actual service details), then fetch from DB
+    let quoteBreakdownData: any = quoteBreakdown || {}
+    let quoteData: any = null
+    
+    if (finalQuoteId) {
+      const { data: quote } = await supabase
+        .from('movers_quotes')
+        .select('breakdown, pickup_address, dropoff_address, move_date, crew_size, price_total_cents')
+        .eq('id', finalQuoteId)
+        .single()
+      
+      if (quote) {
+        quoteData = quote
+        // Use breakdown from body if provided (it's more complete), otherwise use DB breakdown
+        const dbBreakdown = quote.breakdown || {}
+        quoteBreakdownData = Object.keys(quoteBreakdownData).length > 0 ? quoteBreakdownData : dbBreakdown
         
-        // Get pickup and delivery addresses
-        const pickupAddr = pickupAddresses?.[0] || ''
-        const deliveryAddr = deliveryAddresses?.[0] || ''
-        const serviceAddress = pickupAddr || deliveryAddr || ''
+        console.log('[Reservations API] Quote breakdown from body:', JSON.stringify(quoteBreakdown, null, 2))
+        console.log('[Reservations API] Quote breakdown from DB:', JSON.stringify(dbBreakdown, null, 2))
+        console.log('[Reservations API] Using quote breakdown:', JSON.stringify(quoteBreakdownData, null, 2))
         
-        // Extract city/state/zip from address (improved parsing)
-        // Typical format: "123 Main St, City, State ZIP" or "123 Main St, City, State"
-        let city = ''
-        let state = ''
-        let zip = ''
-        
-        if (serviceAddress) {
-          const addressParts = serviceAddress.split(',').map((s: string) => s.trim())
-          // Last part should be "State ZIP" or just "State"
-          if (addressParts.length >= 2) {
-            city = addressParts[addressParts.length - 2] || ''
-            const stateZipPart = addressParts[addressParts.length - 1] || ''
-            // Try to parse state and zip (format: "CA 90210" or "California 90210")
-            const stateZipMatch = stateZipPart.match(/^(.+?)\s+(\d{5}(?:-\d{4})?)$/)
-            if (stateZipMatch) {
-              state = stateZipMatch[1].trim()
-              zip = stateZipMatch[2].trim()
-            } else {
-              // No zip found, just use as state
-              state = stateZipPart.trim()
-            }
-          } else if (addressParts.length === 1) {
-            // Single part address - try to extract what we can
-            city = addressParts[0] || ''
-          }
-        }
-        
-        // Fetch quote data to include all service details in booking
-        // CRITICAL: Use breakdown from body first (it has the actual service details), then fetch from DB
-        let quoteBreakdownData: any = quoteBreakdown || {}
-        let quoteData: any = null
-        
-        if (finalQuoteId) {
-          const { data: quote } = await supabase
+        // CRITICAL: Update the quote's breakdown if body has better data
+        if (Object.keys(quoteBreakdown || {}).length > 0 && JSON.stringify(quoteBreakdown) !== JSON.stringify(dbBreakdown)) {
+          console.log('[Reservations API] Updating quote breakdown with complete data from body...')
+          await supabase
             .from('movers_quotes')
-            .select('breakdown, pickup_address, dropoff_address, move_date, crew_size, price_total_cents')
+            .update({ 
+              breakdown: quoteBreakdown,
+              updated_at: new Date().toISOString()
+            })
             .eq('id', finalQuoteId)
-            .single()
           
-          if (quote) {
-            quoteData = quote
-            // Use breakdown from body if provided (it's more complete), otherwise use DB breakdown
-            const dbBreakdown = quote.breakdown || {}
-            quoteBreakdownData = Object.keys(quoteBreakdownData).length > 0 ? quoteBreakdownData : dbBreakdown
-            
-            console.log('[Reservations API] Quote breakdown from body:', JSON.stringify(quoteBreakdown, null, 2))
-            console.log('[Reservations API] Quote breakdown from DB:', JSON.stringify(dbBreakdown, null, 2))
-            console.log('[Reservations API] Using quote breakdown:', JSON.stringify(quoteBreakdownData, null, 2))
-            
-            // CRITICAL: Update the quote's breakdown if body has better data
-            if (Object.keys(quoteBreakdown || {}).length > 0 && JSON.stringify(quoteBreakdown) !== JSON.stringify(dbBreakdown)) {
-              console.log('[Reservations API] Updating quote breakdown with complete data from body...')
-              await supabase
-                .from('movers_quotes')
-                .update({ 
-                  breakdown: quoteBreakdown,
-                  updated_at: new Date().toISOString()
-                })
-                .eq('id', finalQuoteId)
-              
-              quoteBreakdownData = quoteBreakdown
-              console.log('[Reservations API] ✅ Quote breakdown updated in database')
-            }
-          }
+          quoteBreakdownData = quoteBreakdown
+          console.log('[Reservations API] ✅ Quote breakdown updated in database')
         }
-        
-        // If no quote breakdown from body or DB, try to build it from individual fields
-        if (Object.keys(quoteBreakdownData).length === 0) {
-          quoteBreakdownData = {
-            heavy_items: heavy_items || [],
-            heavy_items_count: heavy_items_count || 0,
-            heavy_item_band: heavy_item_band || 'none',
-            stairs_flights: stairs_flights !== undefined ? stairs_flights : 0,
-            packing_help: packing_help || 'none',
-            packing_rooms: packing_rooms !== undefined ? packing_rooms : 0,
-            packing_materials: packing_materials || [],
-          }
-          console.log('[Reservations API] Built breakdown from individual fields:', JSON.stringify(quoteBreakdownData, null, 2))
-        }
-        
-        // Build comprehensive service_details from quote breakdown and reservation data
-        const serviceDetails: any = {
+      }
+    }
+    
+    // If no quote breakdown from body or DB, try to build it from individual fields
+    if (Object.keys(quoteBreakdownData).length === 0) {
+      quoteBreakdownData = {
+        heavy_items: heavy_items || [],
+        heavy_items_count: heavy_items_count || 0,
+        heavy_item_band: heavy_item_band || 'none',
+        stairs_flights: stairs_flights !== undefined ? stairs_flights : 0,
+        packing_help: packing_help || 'none',
+        packing_rooms: packing_rooms !== undefined ? packing_rooms : 0,
+        packing_materials: packing_materials || [],
+      }
+      console.log('[Reservations API] Built breakdown from individual fields:', JSON.stringify(quoteBreakdownData, null, 2))
+    }
+    
+    // Build comprehensive service_details from quote breakdown and reservation data
+    const serviceDetails: any = {
+      quote_id: finalQuoteId,
+      scheduled_job_id: jobId,
+      pickup_addresses: pickupAddresses || [],
+      delivery_addresses: deliveryAddresses || [],
+      to_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
+      pickup_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
+      dropoff_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
+      crew_size: teamSize || quoteData?.crew_size || 2,
+      time_slot: timeSlot,
+      move_date: moveDate,
+      source: 'movers_reservation',
+      // Merge all data from quote breakdown (heavy_items, stairs_flights, packing, etc.)
+      ...quoteBreakdownData,
+      // CRITICAL: Ensure these specific fields are ALWAYS set for database storage
+      // Priority: body fields > quoteBreakdownData > defaults
+      // Heavy Items - prioritize body, then quote breakdown, then empty array
+      heavy_items: Array.isArray(body.heavy_items) && body.heavy_items.length > 0
+        ? body.heavy_items
+        : (Array.isArray(quoteBreakdownData.heavy_items) && quoteBreakdownData.heavy_items.length > 0 
+          ? quoteBreakdownData.heavy_items 
+          : []),
+      heavy_items_count: body.heavy_items_count !== undefined && body.heavy_items_count > 0
+        ? body.heavy_items_count
+        : (quoteBreakdownData.heavy_items_count !== undefined && quoteBreakdownData.heavy_items_count > 0
+          ? quoteBreakdownData.heavy_items_count
+          : 0),
+      heavy_item_band: body.heavy_item_band || body.weight_band 
+        || quoteBreakdownData.heavy_item_band || quoteBreakdownData.weight_band 
+        || 'none',
+      // Stairs - ALWAYS store the flights count
+      stairs_flights: body.stairs_flights !== undefined 
+        ? body.stairs_flights 
+        : (quoteBreakdownData.stairs_flights !== undefined 
+          ? quoteBreakdownData.stairs_flights 
+          : 0),
+      stairs: (body.stairs_flights !== undefined && body.stairs_flights > 0)
+        || body.stairs === true
+        || (quoteBreakdownData.stairs_flights !== undefined && quoteBreakdownData.stairs_flights > 0) 
+        || quoteBreakdownData.stairs === true,
+      // Packing - ALWAYS store all packing details
+      packing_help: body.packing_help 
+        || quoteBreakdownData.packing_help || quoteBreakdownData.packing
+        || 'none',
+      packing_rooms: body.packing_rooms !== undefined 
+        ? body.packing_rooms 
+        : (quoteBreakdownData.packing_rooms !== undefined 
+          ? quoteBreakdownData.packing_rooms 
+          : 0),
+      packing_materials: Array.isArray(body.packing_materials) && body.packing_materials.length > 0
+        ? body.packing_materials
+        : (Array.isArray(quoteBreakdownData.packing_materials) && quoteBreakdownData.packing_materials.length > 0
+          ? quoteBreakdownData.packing_materials
+          : []),
+      packing: body.packing || quoteBreakdownData.packing || {},
+      move_size: quoteBreakdownData.move_size || body.move_size || `${teamSize || 2}-bedroom`,
+      mover_team: quoteBreakdownData.mover_team || teamSize || 2,
+      hourly_rate: quoteBreakdownData.hourly_rate || body.hourly_rate || null,
+      hourly_rate_cents: quoteBreakdownData.hourly_rate_cents || (quoteBreakdownData.hourly_rate ? Math.round(quoteBreakdownData.hourly_rate * 100) : null),
+      storage: quoteBreakdownData.storage || body.storage || 'none',
+      ins_coverage: quoteBreakdownData.ins_coverage || body.ins_coverage || 'basic',
+      // CRITICAL: Include destination fee, double drive time, and mileage info
+      destination_fee: body.destination_fee || quoteBreakdownData.destination_fee || quoteData?.destination_fee || null,
+      destination_fee_cents: body.destination_fee ? Math.round(parseFloat(body.destination_fee) * 100) : (quoteBreakdownData.destination_fee_cents || null),
+      double_drive_time: body.double_drive_time !== undefined 
+        ? body.double_drive_time 
+        : (quoteBreakdownData.double_drive_time !== undefined 
+          ? quoteBreakdownData.double_drive_time 
+          : false),
+      trip_distance_miles: body.trip_distance_miles !== undefined 
+        ? body.trip_distance_miles 
+        : (body.trip_distances?.distance !== undefined 
+          ? body.trip_distances.distance 
+          : (quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null)),
+      trip_distance_duration: body.trip_distance_duration !== undefined 
+        ? body.trip_distance_duration 
+        : (body.trip_distances?.duration !== undefined 
+          ? body.trip_distances.duration 
+          : (quoteBreakdownData.trip_distance_duration || quoteData?.trip_distance_duration || null)),
+      trip_distances: body.trip_distances || quoteBreakdownData.trip_distances || null,
+      mileage: body.trip_distance_miles || body.trip_distances?.distance || quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null,
+      // Include customer info
+      full_name: fullName,
+      email: email,
+      phone: phone,
+    }
+    
+    console.log('[Reservations API] Complete service_details:', JSON.stringify(serviceDetails, null, 2))
+    
+    // Create booking record for customer visibility
+    // CRITICAL: Generate tracking ID for better traceability
+    const trackingId = `MOVE-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
+    
+    const { data: booking, error: bookingError } = await supabase
+      .from('bookings')
+      .insert({
+        customer_id: userId,
+        business_id: businessId,
+        service_type: 'moving',
+        booking_status: 'confirmed',
+        requested_date: moveDate,
+        requested_time: timeSlotMap[timeSlot] || '09:00:00',
+        estimated_duration_hours: timeSlot === 'full_day' ? 8 : 4,
+        service_address: serviceAddress,
+        service_city: city || '',
+        service_state: state || '',
+        service_postal_code: zip || '',
+        base_price_cents: totalPriceCents || 0,
+        total_price_cents: totalPriceCents || 0,
+        hourly_rate_cents: serviceDetails.hourly_rate_cents || null,
+        customer_phone: phone,
+        customer_email: email,
+        customer_notes: `Reservation via movers booking system. Quote ID: ${finalQuoteId}. Tracking ID: ${trackingId}`,
+        source: 'web', // Must be one of: 'web', 'mobile', 'admin', 'api' (per DB constraint)
+        service_details: {
+          ...serviceDetails,
+          tracking_id: trackingId,
           quote_id: finalQuoteId,
-          scheduled_job_id: jobId,
-          pickup_addresses: pickupAddresses || [],
-          delivery_addresses: deliveryAddresses || [],
-          from_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
-          to_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
-          pickup_address: quoteData?.pickup_address || pickupAddresses?.[0] || '',
-          dropoff_address: quoteData?.dropoff_address || deliveryAddresses?.[0] || '',
-          crew_size: teamSize || quoteData?.crew_size || 2,
-          time_slot: timeSlot,
-          move_date: moveDate,
-          source: 'movers_reservation',
-          // Merge all data from quote breakdown (heavy_items, stairs_flights, packing, etc.)
-          ...quoteBreakdownData,
-          // CRITICAL: Ensure these specific fields are ALWAYS set for database storage
-          // Priority: body fields > quoteBreakdownData > defaults
-          // Heavy Items - prioritize body, then quote breakdown, then empty array
-          heavy_items: Array.isArray(body.heavy_items) && body.heavy_items.length > 0
-            ? body.heavy_items
-            : (Array.isArray(quoteBreakdownData.heavy_items) && quoteBreakdownData.heavy_items.length > 0 
-              ? quoteBreakdownData.heavy_items 
-              : []),
-          heavy_items_count: body.heavy_items_count !== undefined && body.heavy_items_count > 0
-            ? body.heavy_items_count
-            : (quoteBreakdownData.heavy_items_count !== undefined && quoteBreakdownData.heavy_items_count > 0
-              ? quoteBreakdownData.heavy_items_count
-              : 0),
-          heavy_item_band: body.heavy_item_band || body.weight_band 
-            || quoteBreakdownData.heavy_item_band || quoteBreakdownData.weight_band 
-            || 'none',
-          // Stairs - ALWAYS store the flights count
-          stairs_flights: body.stairs_flights !== undefined 
-            ? body.stairs_flights 
-            : (quoteBreakdownData.stairs_flights !== undefined 
-              ? quoteBreakdownData.stairs_flights 
-              : 0),
-          stairs: (body.stairs_flights !== undefined && body.stairs_flights > 0)
-            || body.stairs === true
-            || (quoteBreakdownData.stairs_flights !== undefined && quoteBreakdownData.stairs_flights > 0) 
-            || quoteBreakdownData.stairs === true,
-          // Packing - ALWAYS store all packing details
-          packing_help: body.packing_help 
-            || quoteBreakdownData.packing_help || quoteBreakdownData.packing
-            || 'none',
-          packing_rooms: body.packing_rooms !== undefined 
-            ? body.packing_rooms 
-            : (quoteBreakdownData.packing_rooms !== undefined 
-              ? quoteBreakdownData.packing_rooms 
-              : 0),
-          packing_materials: Array.isArray(body.packing_materials) && body.packing_materials.length > 0
-            ? body.packing_materials
-            : (Array.isArray(quoteBreakdownData.packing_materials) && quoteBreakdownData.packing_materials.length > 0
-              ? quoteBreakdownData.packing_materials
-              : []),
-          packing: body.packing || quoteBreakdownData.packing || {},
-          move_size: quoteBreakdownData.move_size || body.move_size || `${teamSize || 2}-bedroom`,
-          mover_team: quoteBreakdownData.mover_team || teamSize || 2,
-          hourly_rate: quoteBreakdownData.hourly_rate || body.hourly_rate || null,
-          hourly_rate_cents: quoteBreakdownData.hourly_rate_cents || (quoteBreakdownData.hourly_rate ? Math.round(quoteBreakdownData.hourly_rate * 100) : null),
-          storage: quoteBreakdownData.storage || body.storage || 'none',
-          ins_coverage: quoteBreakdownData.ins_coverage || body.ins_coverage || 'basic',
-          // CRITICAL: Include destination fee, double drive time, and mileage info
-          destination_fee: body.destination_fee || quoteBreakdownData.destination_fee || quoteData?.destination_fee || null,
-          destination_fee_cents: body.destination_fee ? Math.round(parseFloat(body.destination_fee) * 100) : (quoteBreakdownData.destination_fee_cents || null),
-          double_drive_time: body.double_drive_time !== undefined 
-            ? body.double_drive_time 
-            : (quoteBreakdownData.double_drive_time !== undefined 
-              ? quoteBreakdownData.double_drive_time 
-              : false),
-          trip_distance_miles: body.trip_distance_miles !== undefined 
-            ? body.trip_distance_miles 
-            : (body.trip_distances?.distance !== undefined 
-              ? body.trip_distances.distance 
-              : (quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null)),
-          trip_distance_duration: body.trip_distance_duration !== undefined 
-            ? body.trip_distance_duration 
-            : (body.trip_distances?.duration !== undefined 
-              ? body.trip_distances.duration 
-              : (quoteBreakdownData.trip_distance_duration || quoteData?.trip_distance_duration || null)),
-          trip_distances: body.trip_distances || quoteBreakdownData.trip_distances || null,
-          mileage: body.trip_distance_miles || body.trip_distances?.distance || quoteBreakdownData.trip_distance_miles || quoteData?.trip_distance_miles || null,
-          // Include customer info
-          full_name: fullName,
-          email: email,
-          phone: phone,
+          booking_source: 'movers_booking_wizard', // This can be any string since it's in JSONB
+          created_at: new Date().toISOString(),
+          created_by: userId
         }
+      })
+      .select('id, service_details, created_at')
+      .single()
+    
+    if (bookingError) {
+      console.error('[Reservations API] ❌ CRITICAL ERROR: Failed to create booking record:', bookingError)
+      console.error('[Reservations API] Booking error details:', JSON.stringify(bookingError, null, 2))
+      return NextResponse.json({ 
+        error: 'Failed to create booking record',
+        code: 'BOOKING_CREATION_FAILED',
+        details: bookingError.message,
+        quote_id: finalQuoteId // Return quote_id even if booking fails
+      }, { status: 500 })
+    }
+    
+    if (booking) {
+      bookingId = booking.id
+      console.log('[Reservations API] Successfully created booking record for customer:', bookingId)
+      
+      // Verify service_details was saved correctly
+      console.log('[Reservations API] Saved service_details:', JSON.stringify(booking.service_details, null, 2))
+      
+      // Verify completeness using database function (if available)
+      try {
+        const { data: verification, error: verifyError } = await supabase.rpc(
+          'verify_service_details_completeness',
+          { p_booking_id: bookingId }
+        )
         
-        console.log('[Reservations API] Complete service_details:', JSON.stringify(serviceDetails, null, 2))
-        
-        // Create booking record for customer visibility
-        const { data: booking, error: bookingError } = await supabase
-          .from('bookings')
-          .insert({
-            customer_id: userId,
-            business_id: businessId,
-            service_type: 'moving',
-            booking_status: 'confirmed',
-            requested_date: moveDate,
-            requested_time: timeSlotMap[timeSlot] || '09:00:00',
-            estimated_duration_hours: timeSlot === 'full_day' ? 8 : 4,
-            service_address: serviceAddress,
-            service_city: city || '',
-            service_state: state || '',
-            service_postal_code: zip || '',
-            base_price_cents: totalPriceCents || 0,
-            total_price_cents: totalPriceCents || 0,
-            hourly_rate_cents: serviceDetails.hourly_rate_cents || null,
-            customer_phone: phone,
-            customer_email: email,
-            customer_notes: `Reservation via movers booking system. Quote ID: ${finalQuoteId || 'N/A'}`,
-            service_details: serviceDetails
-          })
-          .select('id, service_details')
-          .single()
-        
-        if (bookingError) {
-          console.error('[Reservations API] Error creating booking record:', bookingError)
-          console.error('[Reservations API] Booking error details:', JSON.stringify(bookingError, null, 2))
-          // This is critical - without this, customers can't see their reservation
-          // But don't fail the whole reservation
-        } else if (booking) {
-          bookingId = booking.id
-          console.log('[Reservations API] Successfully created booking record for customer:', bookingId)
+        if (!verifyError && verification) {
+          console.log('[Reservations API] Service details verification:', JSON.stringify(verification, null, 2))
           
-          // Verify service_details was saved correctly
-          console.log('[Reservations API] Saved service_details:', JSON.stringify(booking.service_details, null, 2))
-          
-          // Verify completeness using database function (if available)
-          try {
-            const { data: verification, error: verifyError } = await supabase.rpc(
-              'verify_service_details_completeness',
+          // If missing fields, try to enrich
+          if (!verification.valid && verification.missing_fields) {
+            console.log('[Reservations API] Missing fields detected, attempting to enrich...')
+            const { data: enriched, error: enrichError } = await supabase.rpc(
+              'enrich_booking_service_details',
               { p_booking_id: bookingId }
             )
             
-            if (!verifyError && verification) {
-              console.log('[Reservations API] Service details verification:', JSON.stringify(verification, null, 2))
-              
-              // If missing fields, try to enrich
-              if (!verification.valid && verification.missing_fields) {
-                console.log('[Reservations API] Missing fields detected, attempting to enrich...')
-                const { data: enriched, error: enrichError } = await supabase.rpc(
-                  'enrich_booking_service_details',
-                  { p_booking_id: bookingId }
-                )
-                
-                if (!enrichError && enriched) {
-                  console.log('[Reservations API] Successfully enriched service_details')
-                } else {
-                  console.error('[Reservations API] Error enriching service_details:', enrichError)
-                }
-              }
+            if (!enrichError && enriched) {
+              console.log('[Reservations API] Successfully enriched service_details')
+            } else {
+              console.error('[Reservations API] Error enriching service_details:', enrichError)
             }
-          } catch (err) {
-            // Function might not exist yet (migration not run), that's okay
-            console.log('[Reservations API] Verification function not available (migration may not be run)')
           }
         }
+      } catch (err) {
+        // Function might not exist yet (migration not run), that's okay
+        console.log('[Reservations API] Verification function not available (migration may not be run)')
       }
-    } else {
-      console.warn('[Reservations API] Cannot create booking record - missing userId or businessId:', { userId, businessId })
+    }
+    
+    // CRITICAL: bookingId must be set at this point
+    if (!bookingId) {
+      console.error('[Reservations API] ❌ CRITICAL ERROR: bookingId is null after booking creation attempt')
+      return NextResponse.json({ 
+        error: 'Failed to create booking record',
+        code: 'BOOKING_ID_MISSING',
+        quote_id: finalQuoteId
+      }, { status: 500 })
     }
 
     // Get provider owner user_id for notifications
@@ -786,6 +835,26 @@ export async function POST(request: NextRequest) {
         // Don't fail the reservation if notification fails
       }
     }
+
+    // CRITICAL: All IDs must be present for successful response
+    if (!finalQuoteId || !bookingId) {
+      console.error('[Reservations API] ❌ CRITICAL ERROR: Missing required IDs in response', {
+        quote_id: finalQuoteId,
+        booking_id: bookingId
+      })
+      return NextResponse.json({ 
+        error: 'Booking created but missing required tracking IDs',
+        code: 'MISSING_TRACKING_IDS',
+        quote_id: finalQuoteId || null,
+        booking_id: bookingId || null
+      }, { status: 500 })
+    }
+    
+    console.log('[Reservations API] ✅ Successfully created booking with all tracking IDs:', {
+      quote_id: finalQuoteId,
+      booking_id: bookingId,
+      scheduled_job_id: jobId || scheduledJob?.id
+    })
 
     return NextResponse.json({ 
       success: true,

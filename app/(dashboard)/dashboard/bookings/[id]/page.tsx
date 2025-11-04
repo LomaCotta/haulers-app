@@ -32,10 +32,14 @@ import {
   Users,
   Home,
   Truck,
-  X
+  X,
+  User,
+  PhoneCall,
+  MessageSquare
 } from "lucide-react"
 import { format } from "date-fns"
 import Link from "next/link"
+import MessageModal from "@/components/message-modal"
 
 interface Booking {
   id: string
@@ -72,6 +76,12 @@ interface Booking {
     email: string
     owner_id: string
   }
+  customer?: {
+    id: string
+    full_name: string | null
+    avatar_url: string | null
+    phone: string | null
+  }
 }
 
 interface BookingItem {
@@ -100,6 +110,7 @@ export default function BookingTrackingPage() {
   const [showAddItemDialog, setShowAddItemDialog] = useState(false)
   const [showReviewDialog, setShowReviewDialog] = useState(false)
   const [showEditDialog, setShowEditDialog] = useState(false)
+  const [showChatModal, setShowChatModal] = useState(false)
   const [addingItem, setAddingItem] = useState(false)
   const [saving, setSaving] = useState(false)
   const [invoices, setInvoices] = useState<any[]>([])
@@ -143,11 +154,39 @@ export default function BookingTrackingPage() {
   const [editStairsFlights, setEditStairsFlights] = useState(0)
   const [editPackingHelp, setEditPackingHelp] = useState<'none' | 'kit' | 'paygo'>('none')
   const [editPackingRooms, setEditPackingRooms] = useState(0)
+  const [editPackingMaterials, setEditPackingMaterials] = useState<Array<{name: string; price_cents: number; quantity?: number; included?: boolean}>>([])
+  const [editPackingConfig, setEditPackingConfig] = useState<{per_room_cents?: number; materials?: Array<{name: string; price_cents: number; included?: boolean}>} | null>(null)
+  const [editHeavyItemTiers, setEditHeavyItemTiers] = useState<Array<{min_weight_lbs: number; max_weight_lbs: number; price_cents: number}>>([])
   const [editTimeSlot, setEditTimeSlot] = useState('')
 
   useEffect(() => {
     loadBooking()
   }, [id])
+
+  // Sync hourly rate from provider settings when Team Size changes in Edit dialog
+  useEffect(() => {
+    const run = async () => {
+      if (!showEditDialog || !booking?.business_id || !editMoverTeam) return
+      try {
+        const teamSize = Number(editMoverTeam)
+        const tier = await fetchTierForTeam(booking.business_id, teamSize)
+        if (tier) {
+          // tier.hourly_rate_cents IS the team rate (not per mover), use it directly
+          if (typeof tier.hourly_rate_cents === 'number' && tier.hourly_rate_cents > 0) {
+            setEditHourlyRateCents(tier.hourly_rate_cents)
+          } else if ((booking.hourly_rate_cents || 0) > 0) {
+            setEditHourlyRateCents(booking.hourly_rate_cents)
+          }
+          if (tier.min_hours != null && tier.min_hours > 0 && editEstimatedDuration < tier.min_hours) {
+            setEditEstimatedDuration(tier.min_hours)
+          }
+        } else if ((booking.hourly_rate_cents || 0) > 0) {
+          setEditHourlyRateCents(booking.hourly_rate_cents)
+        }
+      } catch (_) {}
+    }
+    run()
+  }, [showEditDialog, editMoverTeam, booking?.business_id])
 
   // Poll for updates if customer (to see changes made by provider/admin)
   useEffect(() => {
@@ -216,6 +255,17 @@ export default function BookingTrackingPage() {
         `)
         .eq("id", id)
         .single()
+      
+      // Fetch customer profile separately
+      let customerData = null
+      if (bookingData?.customer_id) {
+        const { data: customerProfile } = await supabase
+          .from("profiles")
+          .select("id, full_name, avatar_url, phone")
+          .eq("id", bookingData.customer_id)
+          .single()
+        customerData = customerProfile
+      }
 
       if (bookingError) {
         console.error('Booking error:', {
@@ -237,7 +287,10 @@ export default function BookingTrackingPage() {
         return
       }
 
-      let bookingObj = bookingData as Booking
+      let bookingObj = {
+        ...bookingData,
+        customer: customerData
+      } as Booking
       const userIsCustomer = bookingObj.customer_id === user.id
       const userIsProvider = bookingObj.business?.owner_id === user.id
 
@@ -267,7 +320,14 @@ export default function BookingTrackingPage() {
       }
 
       // Debug: Log service_details to understand structure
-      console.log('📦 Booking service_details:', JSON.stringify(bookingObj.service_details, null, 2))
+      console.log('📦 Booking loaded from DB:', {
+        mover_team: bookingObj.service_details?.mover_team,
+        crew_size: bookingObj.service_details?.crew_size,
+        hourly_rate_cents: bookingObj.hourly_rate_cents,
+        breakdown_mover_team: bookingObj.service_details?.breakdown?.mover_team,
+        breakdown_crew_size: bookingObj.service_details?.breakdown?.crew_size
+      })
+      console.log('📦 Full service_details:', JSON.stringify(bookingObj.service_details, null, 2))
       console.log('📦 Booking service_address:', bookingObj.service_address)
       console.log('📦 Booking service_city:', bookingObj.service_city)
       console.log('📦 Booking service_state:', bookingObj.service_state)
@@ -275,40 +335,49 @@ export default function BookingTrackingPage() {
       // Try to fetch quote data if quote_id exists in service_details
       const quoteId = (bookingObj.service_details as any)?.quote_id || (bookingObj.service_details as any)?.quoteId
       
+      // CRITICAL: Only enrich if mover_team/crew_size don't exist (user hasn't set team size yet)
+      // If team size is already set, skip enrichment to preserve user edits
+      const hasTeamSize = bookingObj.service_details?.mover_team || bookingObj.service_details?.crew_size
+      
       // First, verify service_details completeness using database function (if available)
-      try {
-        const { data: verification, error: verifyError } = await supabase.rpc(
-          'verify_service_details_completeness',
-          { p_booking_id: id }
-        )
-        
-        if (!verifyError && verification && !verification.valid && verification.missing_fields) {
-          console.log('⚠️ Service details incomplete, missing:', verification.missing_fields)
-          
-          // Try to auto-enrich using database function
-          const { data: enriched, error: enrichError } = await supabase.rpc(
-            'enrich_booking_service_details',
+      // BUT ONLY if team size hasn't been manually set
+      if (!hasTeamSize) {
+        try {
+          const { data: verification, error: verifyError } = await supabase.rpc(
+            'verify_service_details_completeness',
             { p_booking_id: id }
           )
           
-          if (!enrichError && enriched) {
-            console.log('✅ Service details enriched by database function')
-            // Reload booking to get updated service_details
-            const { data: updatedBooking } = await supabase
-              .from('bookings')
-              .select('*')
-              .eq('id', id)
-              .single()
+          if (!verifyError && verification && !verification.valid && verification.missing_fields) {
+            console.log('⚠️ Service details incomplete, missing:', verification.missing_fields)
             
-            if (updatedBooking) {
-              bookingObj = updatedBooking as Booking
-              setBooking(bookingObj)
+            // Try to auto-enrich using database function (only if team size not set)
+            const { data: enriched, error: enrichError } = await supabase.rpc(
+              'enrich_booking_service_details',
+              { p_booking_id: id }
+            )
+            
+            if (!enrichError && enriched) {
+              console.log('✅ Service details enriched by database function')
+              // Reload booking to get updated service_details
+              const { data: updatedBooking } = await supabase
+                .from('bookings')
+                .select('*')
+                .eq('id', id)
+                .single()
+              
+              if (updatedBooking) {
+                bookingObj = updatedBooking as Booking
+                setBooking(bookingObj)
+              }
             }
           }
+        } catch (err) {
+          // Function might not exist (migration not run), continue with fallback
+          console.log('Verification function not available, using fallback method')
         }
-      } catch (err) {
-        // Function might not exist (migration not run), continue with fallback
-        console.log('Verification function not available, using fallback method')
+      } else {
+        console.log('🔒 Skipping enrichment - team size already set (preserving user edits)')
       }
       
       // ALWAYS fetch quote breakdown - ensure we have ALL service details
@@ -375,11 +444,12 @@ export default function BookingTrackingPage() {
                 packing_materials: quoteBreakdown.packing_materials || currentDetails.packing_materials || [],
                 packing: quoteBreakdown.packing || currentDetails.packing || {},
                 // Other fields
-                move_size: quoteBreakdown.move_size || currentDetails.move_size || quoteData.move_size || 'unknown',
-                mover_team: quoteBreakdown.mover_team || quoteData.crew_size || currentDetails.mover_team || currentDetails.crew_size || 2,
-                crew_size: quoteData.crew_size || quoteBreakdown.mover_team || currentDetails.crew_size || currentDetails.mover_team || 2,
-                hourly_rate: quoteBreakdown.hourly_rate || currentDetails.hourly_rate || null,
-                hourly_rate_cents: quoteBreakdown.hourly_rate_cents || (quoteBreakdown.hourly_rate ? Math.round(quoteBreakdown.hourly_rate * 100) : null) || currentDetails.hourly_rate_cents,
+                move_size: currentDetails.move_size || quoteBreakdown.move_size || quoteData.move_size || 'unknown',
+                // CRITICAL: Prioritize saved booking data over quote data - quote is old, booking is current
+                mover_team: currentDetails.mover_team || currentDetails.crew_size || quoteBreakdown.mover_team || quoteData.crew_size || 2,
+                crew_size: currentDetails.crew_size || currentDetails.mover_team || quoteData.crew_size || quoteBreakdown.mover_team || 2,
+                hourly_rate: currentDetails.hourly_rate || quoteBreakdown.hourly_rate || null,
+                hourly_rate_cents: currentDetails.hourly_rate_cents || bookingObj.hourly_rate_cents || (quoteBreakdown.hourly_rate_cents || (quoteBreakdown.hourly_rate ? Math.round(quoteBreakdown.hourly_rate * 100) : null)),
                 storage: quoteBreakdown.storage || currentDetails.storage || 'none',
                 ins_coverage: quoteBreakdown.ins_coverage || currentDetails.ins_coverage || 'basic',
                 time_slot: currentDetails.time_slot || quoteBreakdown.time_slot || 'morning',
@@ -510,6 +580,65 @@ export default function BookingTrackingPage() {
     }
   }
 
+  // Helper: fetch provider config via API and pick the right tier
+  const fetchTierForTeam = async (businessId: string, teamSize: number) => {
+    try {
+      const res = await fetch(`/api/movers/provider-config?businessId=${encodeURIComponent(businessId)}`, { cache: 'no-store' })
+      const json = await res.json()
+      console.log('[Edit Booking] provider-config response', json)
+      if (!res.ok) return null
+      const tiers = (json?.config?.tiers || []) as Array<{ crew_size: number; hourly_rate_cents?: number; min_hours?: number }>
+      // local, client-safe pickTier
+      const exact = tiers.find(t => t.crew_size === teamSize)
+      if (exact) return exact
+      if (!tiers.length) return null
+      return tiers.reduce((best, t) => (Math.abs(t.crew_size - teamSize) < Math.abs((best?.crew_size ?? Infinity) - teamSize) ? t : best), tiers[0])
+    } catch (_) {
+      return null
+    }
+  }
+
+  // Helper: fetch provider heavy item tiers
+  const fetchHeavyItemTiers = async (businessId: string) => {
+    try {
+      const res = await fetch(`/api/movers/provider-config?businessId=${encodeURIComponent(businessId)}`, { cache: 'no-store' })
+      const json = await res.json()
+      console.log('[Edit Booking] fetchHeavyItemTiers response:', json)
+      if (!res.ok) return []
+      const tiers = json?.config?.heavy_item_tiers || []
+      console.log('[Edit Booking] Heavy item tiers:', tiers)
+      return Array.isArray(tiers) ? tiers : []
+    } catch (err) {
+      console.error('[Edit Booking] Error fetching heavy item tiers:', err)
+      return []
+    }
+  }
+
+  // Helper: fetch provider packing config
+  const fetchPackingConfig = async (businessId: string) => {
+    try {
+      const res = await fetch(`/api/movers/provider-config?businessId=${encodeURIComponent(businessId)}`, { cache: 'no-store' })
+      const json = await res.json()
+      console.log('[Edit Booking] fetchPackingConfig full response:', JSON.stringify(json, null, 2))
+      if (!res.ok) {
+        console.error('[Edit Booking] fetchPackingConfig error:', json)
+        return null
+      }
+      const packing = json?.config?.packing
+      console.log('[Edit Booking] Packing object:', packing)
+      // CRITICAL: Materials are in config.packing.materials (not config.materials)
+      const materials = packing?.materials || []
+      console.log('[Edit Booking] Packing materials array:', materials, 'length:', materials?.length)
+      return {
+        per_room_cents: packing?.per_room_cents,
+        materials: Array.isArray(materials) ? materials : []
+      }
+    } catch (err) {
+      console.error('[Edit Booking] Error fetching packing config:', err)
+      return null
+    }
+  }
+
   const handleEditBooking = () => {
     if (!booking) return
     
@@ -527,13 +656,44 @@ export default function BookingTrackingPage() {
     
     // Service details
     setEditMoveSize(serviceDetails.move_size || '')
-    setEditMoverTeam(serviceDetails.mover_team || serviceDetails.crew_size || booking.estimated_duration_hours || 2)
+    // CRITICAL: Read team size from multiple sources, prioritizing most recently saved
+    const teamSize = serviceDetails.mover_team || 
+                     serviceDetails.crew_size || 
+                     serviceDetails.breakdown?.mover_team || 
+                     serviceDetails.breakdown?.crew_size ||
+                     booking.service_details?.mover_team ||
+                     booking.service_details?.crew_size ||
+                     2
+    console.log('🔍 Edit Dialog: Reading team size:', {
+      serviceDetails_mover_team: serviceDetails.mover_team,
+      serviceDetails_crew_size: serviceDetails.crew_size,
+      breakdown_mover_team: serviceDetails.breakdown?.mover_team,
+      breakdown_crew_size: serviceDetails.breakdown?.crew_size,
+      booking_mover_team: booking.service_details?.mover_team,
+      booking_crew_size: booking.service_details?.crew_size,
+      final_team_size: teamSize,
+      full_service_details: JSON.stringify(serviceDetails, null, 2)
+    })
+    setEditMoverTeam(teamSize)
     setEditHourlyRateCents(booking.hourly_rate_cents || serviceDetails.hourly_rate_cents || 0)
     setEditEstimatedDuration(booking.estimated_duration_hours || serviceDetails.estimated_duration_hours || 3)
     setEditStairsFlights(serviceDetails.stairs_flights || 0)
     setEditPackingHelp(serviceDetails.packing_help || serviceDetails.packing || 'none')
     setEditPackingRooms(serviceDetails.packing_rooms || 0)
+    setEditPackingMaterials(serviceDetails.packing_materials || [])
     setEditTimeSlot(serviceDetails.time_slot || '')
+
+    // Immediately pull tier pricing for current team size so UI shows real rate (not 0)
+    if (booking.business_id) {
+      fetchTierForTeam(booking.business_id, teamSize).then((tier) => {
+        if (tier?.hourly_rate_cents != null) {
+          setEditHourlyRateCents(tier.hourly_rate_cents)
+        }
+        if (tier?.min_hours != null && tier.min_hours > 0) {
+          setEditEstimatedDuration((prev) => Math.max(tier.min_hours!, prev))
+        }
+      })
+    }
     
     // Helper function to parse full address string into components
     const parseAddressString = (addrString: string): {address: string; city: string; state: string; zip: string} => {
@@ -715,23 +875,54 @@ export default function BookingTrackingPage() {
     setEditDeliveryAddresses(deliveryAddrs)
     
     // Heavy items
-    let heavyItems: Array<{band: string; count: number; price_cents: number}> = []
+    let initialHeavyItems: Array<{band: string; count: number; price_cents: number}> = []
     if (serviceDetails.heavy_items && Array.isArray(serviceDetails.heavy_items)) {
-      heavyItems = serviceDetails.heavy_items.map((item: any) => ({
+      initialHeavyItems = serviceDetails.heavy_items.map((item: any) => ({
         band: item.band || item.weight_range || item.weight_band || 'N/A',
         count: item.count || 1,
         price_cents: item.price_cents || (item.price ? Math.round(item.price * 100) : 0)
       }))
     } else if (serviceDetails.heavy_items_count > 0) {
-      heavyItems = [{
+      initialHeavyItems = [{
         band: serviceDetails.heavy_item_band || serviceDetails.weight_band || 'N/A',
         count: serviceDetails.heavy_items_count,
         price_cents: serviceDetails.heavy_item_price_cents || 0
       }]
     }
-    setEditHeavyItems(heavyItems.length > 0 ? heavyItems : [{band: '201-400', count: 0, price_cents: 0}])
+    setEditHeavyItems(initialHeavyItems.length > 0 ? initialHeavyItems : [])
     
     setShowEditDialog(true)
+    
+    // Fetch heavy item tiers and packing config after dialog opens
+    if (booking.business_id) {
+      // Fetch heavy item tiers
+      fetchHeavyItemTiers(booking.business_id).then((tiers) => {
+        if (tiers && tiers.length > 0) {
+          setEditHeavyItemTiers(tiers)
+          // Auto-update prices for existing heavy items based on provider config
+          setEditHeavyItems(prev => {
+            if (prev.length === 0) return prev
+            return prev.map(item => {
+              const bandParts = item.band.split('-')
+              const min = parseInt(bandParts[0])
+              const max = bandParts[1] ? parseInt(bandParts[1].replace(/\D/g, '')) : Infinity
+              const tier = tiers.find(t => t.min_weight_lbs === min && t.max_weight_lbs === max)
+              if (tier) {
+                return { ...item, price_cents: tier.price_cents }
+              }
+              return item
+            })
+          })
+        }
+      })
+      
+      // Fetch packing config
+      fetchPackingConfig(booking.business_id).then((config) => {
+        if (config) {
+          setEditPackingConfig(config)
+        }
+      })
+    }
   }
   
   const addPickupAddress = () => {
@@ -823,7 +1014,13 @@ export default function BookingTrackingPage() {
   }
   
   const addHeavyItem = () => {
-    setEditHeavyItems([...editHeavyItems, {band: '201-400', count: 0, price_cents: 0}])
+    // Use first available tier or default
+    const defaultTier = editHeavyItemTiers.length > 0 ? editHeavyItemTiers[0] : null
+    const defaultBand = defaultTier 
+      ? `${defaultTier.min_weight_lbs}-${defaultTier.max_weight_lbs}`
+      : '201-400'
+    const defaultPrice = defaultTier?.price_cents || 0
+    setEditHeavyItems([...editHeavyItems, {band: defaultBand, count: 0, price_cents: defaultPrice}])
   }
   
   const removeHeavyItem = (index: number) => {
@@ -1056,7 +1253,22 @@ export default function BookingTrackingPage() {
       
       // Heavy items - filter out items with count 0 or missing data
       // If all items are removed, explicitly set to empty array
-      const validHeavyItems = editHeavyItems.filter(item => item && item.count > 0 && item.band)
+      // CRITICAL: Use provider tier prices if available
+      const validHeavyItems = editHeavyItems
+        .filter(item => item && item.count > 0 && item.band)
+        .map(item => {
+          // Match band to provider tier and use tier price if available
+          const bandParts = item.band.split('-')
+          const min = parseInt(bandParts[0])
+          const max = bandParts[1] ? parseInt(bandParts[1].replace(/\D/g, '')) : Infinity
+          const tier = editHeavyItemTiers.find(t => t.min_weight_lbs === min && t.max_weight_lbs === max)
+          
+          return {
+            band: item.band,
+            count: item.count,
+            price_cents: tier?.price_cents || item.price_cents || 0
+          }
+        })
       
       const updatedServiceDetails = {
         ...currentServiceDetails,
@@ -1100,8 +1312,8 @@ export default function BookingTrackingPage() {
         },
         // Service details
         move_size: editMoveSize || currentServiceDetails.move_size,
-        mover_team: editMoverTeam,
-        crew_size: editMoverTeam,
+        mover_team: Number(editMoverTeam) || 2,
+        crew_size: Number(editMoverTeam) || 2,
         hourly_rate_cents: editHourlyRateCents,
         hourly_rate: editHourlyRateCents / 100,
         estimated_duration_hours: editEstimatedDuration,
@@ -1110,24 +1322,32 @@ export default function BookingTrackingPage() {
         heavy_items: validHeavyItems.length > 0 ? validHeavyItems : [],
         heavy_items_count: validHeavyItems.reduce((sum, item) => sum + (item.count || 0), 0),
         heavy_item_band: validHeavyItems.length > 0 ? validHeavyItems[0].band : null,
-        heavy_item_price_cents: validHeavyItems.length > 0 ? validHeavyItems[0].price_cents : 0,
+        heavy_item_price_cents: validHeavyItems.length > 0 
+          ? validHeavyItems[0].price_cents || 0
+          : 0,
         // Stairs - ensure this is always set, even when removed (0)
         stairs_flights: editStairsFlights || 0,
         stairs: (editStairsFlights || 0) > 0,
-        // Packing - if set to "none", clear packing_rooms
+        // Packing - only set packing_rooms for Full Packing Kit (kit option)
+        // Pay as You Go (paygo) and I will pack myself (none) don't use room count - set to 0
         packing_help: editPackingHelp,
         packing: editPackingHelp,
-        packing_rooms: editPackingHelp === 'none' ? 0 : (editPackingRooms || 0),
+        packing_rooms: (editPackingHelp === 'kit' && editPackingRooms > 0) ? editPackingRooms : 0,
+        // CRITICAL: Include packing_materials for Pay as You Go (filter out materials with quantity 0)
+        packing_materials: editPackingHelp === 'paygo' ? editPackingMaterials.filter(m => (m.quantity || 0) > 0) : [],
       }
 
       // Debug: Log what we're sending
-      console.log('Saving booking with service_details:', {
-        stairs_flights: updatedServiceDetails.stairs_flights,
-        stairs: updatedServiceDetails.stairs,
-        heavy_items: updatedServiceDetails.heavy_items,
-        heavy_items_count: updatedServiceDetails.heavy_items_count,
-        heavy_item_band: updatedServiceDetails.heavy_item_band,
-        heavy_item_price_cents: updatedServiceDetails.heavy_item_price_cents
+      console.log('💾 Saving booking:', {
+        editMoverTeam: editMoverTeam,
+        editMoverTeamType: typeof editMoverTeam,
+        service_details: {
+          mover_team: updatedServiceDetails.mover_team,
+          crew_size: updatedServiceDetails.crew_size,
+          hourly_rate_cents: updatedServiceDetails.hourly_rate_cents,
+          stairs_flights: updatedServiceDetails.stairs_flights,
+          heavy_items: updatedServiceDetails.heavy_items,
+        }
       })
 
       const response = await fetch(`/api/bookings/${id}`, {
@@ -1151,17 +1371,35 @@ export default function BookingTrackingPage() {
       const result = await response.json()
 
       if (!response.ok) {
-        throw new Error(result.error || 'Failed to update booking')
+        throw new Error(result.error || result.details || 'Failed to update booking')
       }
 
-      // Refresh booking data immediately
-      await loadBooking()
+      // Update booking state immediately with API response (includes all updates)
+      // CRITICAL: Create a new object to ensure React detects the change
+      if (result.booking) {
+        const updatedBooking = {
+          ...result.booking,
+          service_details: result.booking.service_details ? { ...result.booking.service_details } : {}
+        } as Booking
+        setBooking(updatedBooking)
+        console.log('✅ Booking updated from API response:', {
+          mover_team: updatedBooking.service_details?.mover_team,
+          crew_size: updatedBooking.service_details?.crew_size,
+          breakdown_mover_team: updatedBooking.service_details?.breakdown?.mover_team,
+          breakdown_crew_size: updatedBooking.service_details?.breakdown?.crew_size,
+          hourly_rate_cents: updatedBooking.hourly_rate_cents,
+          total_price_cents: updatedBooking.total_price_cents
+        })
+      } else {
+        console.error('❌ No booking in API response:', result)
+      }
+      
       setShowEditDialog(false)
       
       // Show nice toast notification
       setToast({
         show: true,
-        message: 'Booking updated successfully! All changes including removals have been saved.',
+        message: 'Booking updated successfully! Team size and all changes have been saved.',
         type: 'success'
       })
       
@@ -1170,12 +1408,19 @@ export default function BookingTrackingPage() {
         setToast({ show: false, message: '', type: 'success' })
       }, 4000)
       
-      // Force a full page reload after a short delay to ensure display updates
-      setTimeout(() => {
-        if (typeof window !== 'undefined') {
-          window.location.reload()
-        }
-      }, 500)
+      // CRITICAL: Refresh from DB immediately to ensure display is updated
+      // Use a short delay to ensure DB write has propagated
+      setTimeout(async () => {
+        console.log('🔄 Refreshing booking from database...')
+        await loadBooking()
+        // Force a full page refresh to ensure all displays update correctly
+        // This ensures React re-renders with fresh data from DB
+        setTimeout(() => {
+          if (typeof window !== 'undefined') {
+            window.location.reload()
+          }
+        }, 500)
+      }, 800)
     } catch (error) {
       console.error('Error updating booking:', error)
       alert(error instanceof Error ? error.message : 'Failed to update booking. Please try again.')
@@ -1369,7 +1614,13 @@ export default function BookingTrackingPage() {
                   const serviceDetails = booking.service_details || {}
                   
                   // Debug log
-                  console.log('🔍 Parsing serviceDetails:', serviceDetails)
+                  console.log('🔍 Parsing serviceDetails:', {
+                    mover_team: serviceDetails.mover_team,
+                    crew_size: serviceDetails.crew_size,
+                    breakdown_mover_team: serviceDetails.breakdown?.mover_team,
+                    breakdown_crew_size: serviceDetails.breakdown?.crew_size,
+                    full_service_details: serviceDetails
+                  })
                   
                   // Extract quote ID for organization
                   const quoteId = serviceDetails.quote_id || serviceDetails.quoteId || null
@@ -1416,12 +1667,26 @@ export default function BookingTrackingPage() {
                     }]
                   }
                   
-                  // Fallback addresses for display
-                  const fromAddress = serviceDetails.from_address || serviceDetails.pickup_address || 
+                  // Fallback addresses for display (ensure strings, never objects)
+                  const formatAddress = (addr: any): string => {
+                    if (!addr) return ''
+                    if (typeof addr === 'string') return addr
+                    if (typeof addr === 'object') {
+                      const street = addr.address || addr.street || ''
+                      const city = addr.city || ''
+                      const state = addr.state || ''
+                      const zip = addr.zip || addr.postal_code || ''
+                      const parts = [street, [city, state].filter(Boolean).join(', '), zip].filter(Boolean)
+                      return parts.join(', ').replace(/,\s*,/g, ', ').trim()
+                    }
+                    return String(addr)
+                  }
+                  
+                  const fromAddress = formatAddress(serviceDetails.from_address || serviceDetails.pickup_address) || 
                                     (pickupAddresses.length > 0 ? 
                                       `${pickupAddresses[0].address || pickupAddresses[0].street || ''}, ${pickupAddresses[0].city || ''}, ${pickupAddresses[0].state || ''}` 
-                                      : booking.service_address)
-                  const toAddress = serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address ||
+                                      : (booking.service_address || ''))
+                  const toAddress = formatAddress(serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address) ||
                                   (deliveryAddresses.length > 0 ? 
                                     `${deliveryAddresses[0].address || deliveryAddresses[0].street || ''}, ${deliveryAddresses[0].city || ''}, ${deliveryAddresses[0].state || ''}` 
                                     : '')
@@ -1538,17 +1803,28 @@ export default function BookingTrackingPage() {
                           </div>
                         </div>
                         
-                        {(serviceDetails.mover_team || serviceDetails.crew_size) && (
-                          <div className="flex items-start gap-3">
-                            <Users className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
-                            <div>
-                              <p className="font-semibold text-gray-900">Team Size</p>
-                              <p className="text-sm text-muted-foreground">
-                                {serviceDetails.mover_team || serviceDetails.crew_size} {(serviceDetails.mover_team || serviceDetails.crew_size) === 1 ? 'mover' : 'movers'}
-                              </p>
+                        {(() => {
+                          // CRITICAL: Get team size from multiple sources, prioritizing current saved data
+                          const teamSize = serviceDetails.mover_team || 
+                                         serviceDetails.crew_size || 
+                                         serviceDetails.breakdown?.mover_team || 
+                                         serviceDetails.breakdown?.crew_size ||
+                                         booking.service_details?.mover_team ||
+                                         booking.service_details?.crew_size ||
+                                         null
+                          
+                          return teamSize ? (
+                            <div className="flex items-start gap-3">
+                              <Users className="h-5 w-5 text-muted-foreground mt-0.5 flex-shrink-0" />
+                              <div>
+                                <p className="font-semibold text-gray-900">Team Size</p>
+                                <p className="text-sm text-muted-foreground">
+                                  {teamSize} {teamSize === 1 ? 'mover' : 'movers'}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          ) : null
+                        })()}
                       </div>
 
                       {/* Pickup Address(es) */}
@@ -1569,14 +1845,18 @@ export default function BookingTrackingPage() {
                                       {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
                                     </p>
                                   )}
-                                  <p className="text-base text-gray-900 leading-relaxed break-words">
-                                    {addr.address || addr.street || addr}
-                                    {addr.aptSuite && `, ${addr.aptSuite}`}
-                                    {addr.apt_suite && `, ${addr.apt_suite}`}
-                                    {(addr.city || addr.city_name) && `, ${addr.city || addr.city_name}`}
-                                    {(addr.state || addr.state_name) && `, ${addr.state || addr.state_name}`}
-                                    {(addr.zip || addr.zip_code || addr.postal_code) && ` ${addr.zip || addr.zip_code || addr.postal_code}`}
-                                  </p>
+                                  {(() => {
+                                    const street = addr.address || addr.street || ''
+                                    const apt = addr.aptSuite || addr.apt_suite || ''
+                                    const city = addr.city || addr.city_name || ''
+                                    const state = addr.state || addr.state_name || ''
+                                    const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+                                    const parts = [street, apt, city, state, zip].filter(Boolean)
+                                    const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
+                                    return (
+                                      <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
+                                    )
+                                  })()}
                                 </div>
                               ))
                             ) : (
@@ -1604,14 +1884,18 @@ export default function BookingTrackingPage() {
                                       {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
                                     </p>
                                   )}
-                                  <p className="text-base text-gray-900 leading-relaxed break-words">
-                                    {addr.address || addr.street || addr}
-                                    {addr.aptSuite && `, ${addr.aptSuite}`}
-                                    {addr.apt_suite && `, ${addr.apt_suite}`}
-                                    {(addr.city || addr.city_name) && `, ${addr.city || addr.city_name}`}
-                                    {(addr.state || addr.state_name) && `, ${addr.state || addr.state_name}`}
-                                    {(addr.zip || addr.zip_code || addr.postal_code) && ` ${addr.zip || addr.zip_code || addr.postal_code}`}
-                                  </p>
+                                  {(() => {
+                                    const street = addr.address || addr.street || ''
+                                    const apt = addr.aptSuite || addr.apt_suite || ''
+                                    const city = addr.city || addr.city_name || ''
+                                    const state = addr.state || addr.state_name || ''
+                                    const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+                                    const parts = [street, apt, city, state, zip].filter(Boolean)
+                                    const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
+                                    return (
+                                      <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
+                                    )
+                                  })()}
                                 </div>
                               ))
                             ) : toAddress ? (
@@ -1948,108 +2232,7 @@ export default function BookingTrackingPage() {
                         Edit Booking
                       </Button>
                     )}
-                    <Dialog open={showAddItemDialog} onOpenChange={setShowAddItemDialog}>
-                      <DialogTrigger asChild>
-                        <Button className="bg-orange-600 hover:bg-orange-700 text-white">
-                          <Plus className="w-4 h-4 mr-2" />
-                          Add Extra Hours / Items
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-[500px]">
-                        <DialogHeader>
-                          <DialogTitle>Add Item to Order</DialogTitle>
-                          <DialogDescription>
-                            Add extra hours, materials, or other charges to this order.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <div className="space-y-4 py-4">
-                          <div>
-                            <Label htmlFor="itemName">Item Name *</Label>
-                            <Input
-                              id="itemName"
-                              value={itemName}
-                              onChange={(e) => setItemName(e.target.value)}
-                              placeholder="e.g., Extra Hour, Packing Materials, Fuel Surcharge"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="itemDescription">Description</Label>
-                            <Textarea
-                              id="itemDescription"
-                              value={itemDescription}
-                              onChange={(e) => setItemDescription(e.target.value)}
-                              placeholder="Optional description..."
-                              rows={3}
-                            />
-                          </div>
-                          <div className="grid grid-cols-2 gap-4">
-                            <div>
-                              <Label htmlFor="itemCategory">Category</Label>
-                              <select
-                                id="itemCategory"
-                                value={itemCategory}
-                                onChange={(e) => setItemCategory(e.target.value)}
-                                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                              >
-                                <option value="labor">Labor / Hours</option>
-                                <option value="material">Materials</option>
-                                <option value="equipment">Equipment</option>
-                                <option value="service">Other Service</option>
-                              </select>
-                            </div>
-                            <div>
-                              <Label htmlFor="itemQuantity">Quantity</Label>
-                              <Input
-                                id="itemQuantity"
-                                type="number"
-                                min="1"
-                                value={itemQuantity}
-                                onChange={(e) => setItemQuantity(parseInt(e.target.value) || 1)}
-                              />
-                            </div>
-                          </div>
-                          <div>
-                            <Label htmlFor="itemUnitPrice">Unit Price ($) *</Label>
-                            <Input
-                              id="itemUnitPrice"
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={itemUnitPrice}
-                              onChange={(e) => setItemUnitPrice(e.target.value)}
-                              placeholder="0.00"
-                            />
-                            {itemUnitPrice && itemQuantity && (
-                              <p className="text-sm text-muted-foreground mt-1">
-                                Total: {formatPrice(Math.round(parseFloat(itemUnitPrice) * 100) * itemQuantity)}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex justify-end gap-3 pt-4">
-                            <Button variant="outline" onClick={() => setShowAddItemDialog(false)}>
-                              Cancel
-                            </Button>
-                            <Button 
-                              onClick={handleAddItem} 
-                              disabled={addingItem || !itemName.trim() || !itemUnitPrice.trim()}
-                              className="bg-orange-600 hover:bg-orange-700"
-                            >
-                              {addingItem ? (
-                                <>
-                                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                  Adding...
-                                </>
-                              ) : (
-                                <>
-                                  <Plus className="w-4 h-4 mr-2" />
-                                  Add Item
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
+                    {/* Add Extra Hours / Items removed: all edits happen via Edit Booking */}
 
                     {(booking.booking_status === 'confirmed' || booking.booking_status === 'in_progress' || booking.booking_status === 'completed') && (
                       <Button 
@@ -2101,35 +2284,88 @@ export default function BookingTrackingPage() {
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
+                    {/* Move Size Selection - Card-based UI */}
+                    <div className="space-y-4">
                       <div>
                         <Label htmlFor="editMoveSize">Move Size</Label>
-                        <select
-                          id="editMoveSize"
-                          value={editMoveSize}
-                          onChange={(e) => setEditMoveSize(e.target.value)}
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        >
-                          <option value="">Select size</option>
-                          <option value="studio">Studio</option>
-                          <option value="1-bedroom">1 Bedroom</option>
-                          <option value="2-bedroom">2 Bedroom</option>
-                          <option value="3-bedroom">3 Bedroom</option>
-                          <option value="4-bedroom">4 Bedroom</option>
-                          <option value="5+">5+ Bedroom</option>
-                        </select>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-2">
+                          {[
+                            {label:'Studio', movers:2, value:'studio'},
+                            {label:'1 Bedroom', movers:2, value:'1-bedroom'},
+                            {label:'2 Bedroom', movers:3, value:'2-bedroom'},
+                            {label:'3 Bedroom', movers:4, value:'3-bedroom'},
+                            {label:'4+ Bedroom', movers:5, value:'4-bedroom'},
+                            {label:'Custom Size', movers:3, value:'custom'},
+                          ].map(opt => (
+                            <button
+                              key={opt.value}
+                              type="button"
+                              onClick={() => {
+                                setEditMoveSize(opt.value)
+                                setEditMoverTeam(opt.movers)
+                              }}
+                              className={`p-4 border-2 rounded-lg text-left transition-all duration-200 ${
+                                editMoveSize === opt.value || opt.movers === editMoverTeam
+                                  ? 'border-orange-500 bg-orange-50 shadow-md' 
+                                  : 'border-gray-300 hover:border-orange-300 hover:bg-orange-50/50'
+                              }`}
+                            >
+                              <div className="text-base font-semibold text-gray-900">{opt.label}</div>
+                              <div className="text-orange-600 mt-1 text-sm font-medium">{opt.movers} Movers</div>
+                            </button>
+                          ))}
+                        </div>
                       </div>
-                      <div>
-                        <Label htmlFor="editMoverTeam">Team Size (Movers)</Label>
-                        <Input
-                          id="editMoverTeam"
-                          type="number"
-                          min="1"
-                          max="8"
-                          value={editMoverTeam}
-                          onChange={(e) => setEditMoverTeam(parseInt(e.target.value) || 2)}
-                        />
+
+                      {/* Team Size Adjuster & Hourly Rate */}
+                      <div className="p-4 border-2 border-gray-200 rounded-lg bg-gray-50/50 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-semibold text-gray-700">Team Size</span>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="px-3 py-1 border-orange-200 text-orange-700 hover:bg-orange-50"
+                              onClick={() => setEditMoverTeam(m => Math.max(1, (parseInt(String(m)) || 2) - 1))}
+                            >
+                              −
+                            </Button>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={10}
+                              value={editMoverTeam}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value)
+                                if (!isNaN(val)) setEditMoverTeam(Math.min(10, Math.max(1, val)))
+                              }}
+                              className="w-16 text-center border-gray-300"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="px-3 py-1 border-orange-200 text-orange-700 hover:bg-orange-50"
+                              onClick={() => setEditMoverTeam(m => Math.min(10, (parseInt(String(m)) || 2) + 1))}
+                            >
+                              +
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xl font-bold text-gray-900">
+                            {formatPrice(editHourlyRateCents || 0)}/hr
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            Rate for {editMoverTeam} {editMoverTeam === 1 ? 'mover' : 'movers'} team
+                          </p>
+                        </div>
                       </div>
+                    </div>
+
+                    {/* Additional Fields */}
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="editEstimatedDuration">Estimated Duration (Hours)</Label>
                         <Input
@@ -2138,19 +2374,6 @@ export default function BookingTrackingPage() {
                           min="1"
                           value={editEstimatedDuration}
                           onChange={(e) => setEditEstimatedDuration(parseInt(e.target.value) || 3)}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="editHourlyRate">Hourly Rate (per mover, $)</Label>
-                        <Input
-                          id="editHourlyRate"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={editHourlyRateCents / 100}
-                          onChange={(e) => setEditHourlyRateCents(Math.round(parseFloat(e.target.value) * 100) || 0)}
                         />
                       </div>
                       <div>
@@ -2418,7 +2641,7 @@ export default function BookingTrackingPage() {
                     ))}
                   </div>
 
-                  {/* Heavy Items */}
+                  {/* Heavy Items - Card-based UI matching packing materials */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between border-b pb-2">
                       <h3 className="text-sm font-semibold text-gray-900">Heavy Items</h3>
@@ -2427,109 +2650,392 @@ export default function BookingTrackingPage() {
                         Add Item
                       </Button>
                     </div>
-                    {editHeavyItems.map((item, idx) => (
-                      <div key={idx} className="border rounded-lg p-4 space-y-3 bg-gray-50">
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-gray-700">Heavy Item {idx + 1}</span>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => removeHeavyItem(idx)}>
-                            Remove
-                          </Button>
+                    {editHeavyItems.length === 0 ? (
+                      <div className="p-4 border border-gray-200 rounded-lg bg-gray-50 text-center">
+                        <p className="text-sm text-gray-600">No heavy items added</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {editHeavyItems.map((item, idx) => {
+                          // Find matching tier for current band
+                          const bandParts = item.band.split('-')
+                          const min = parseInt(bandParts[0])
+                          const max = bandParts[1] ? parseInt(bandParts[1].replace(/\D/g, '')) : Infinity
+                          const matchingTier = editHeavyItemTiers.find(t => t.min_weight_lbs === min && t.max_weight_lbs === max)
+                          const displayPrice = matchingTier?.price_cents || item.price_cents || 0
+                          const totalForItem = displayPrice * item.count
+                          
+                          return (
+                            <div key={idx} className={`p-4 border rounded-lg ${item.count > 0 ? 'border-orange-500 bg-orange-50' : 'border-gray-200 bg-white'}`}>
+                              <div className="flex items-center justify-between mb-3">
+                                <span className="text-sm font-semibold text-gray-900">Heavy Item {idx + 1}</span>
+                                <Button type="button" variant="ghost" size="sm" onClick={() => removeHeavyItem(idx)} className="text-red-600 hover:text-red-700">
+                                  Remove
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-3 gap-3">
+                                <div>
+                                  <Label>Weight Range (lbs)</Label>
+                                  <select
+                                    value={item.band}
+                                    onChange={(e) => {
+                                      const updated = [...editHeavyItems]
+                                      const newBand = e.target.value
+                                      updated[idx].band = newBand
+                                      // Auto-populate price from provider config
+                                      const newBandParts = newBand.split('-')
+                                      const newMin = parseInt(newBandParts[0])
+                                      const newMax = newBandParts[1] ? parseInt(newBandParts[1].replace(/\D/g, '')) : Infinity
+                                      const tier = editHeavyItemTiers.find(t => t.min_weight_lbs === newMin && t.max_weight_lbs === newMax)
+                                      if (tier) {
+                                        updated[idx].price_cents = tier.price_cents
+                                      }
+                                      setEditHeavyItems(updated)
+                                    }}
+                                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                  >
+                                    {editHeavyItemTiers.length > 0 ? (
+                                      editHeavyItemTiers.map(tier => (
+                                        <option key={`${tier.min_weight_lbs}-${tier.max_weight_lbs}`} value={`${tier.min_weight_lbs}-${tier.max_weight_lbs}`}>
+                                          {tier.min_weight_lbs}-{tier.max_weight_lbs} lbs
+                                        </option>
+                                      ))
+                                    ) : (
+                                      <>
+                                        <option value="201-400">201-400 lbs</option>
+                                        <option value="401-600">401-600 lbs</option>
+                                        <option value="601-800">601-800 lbs</option>
+                                        <option value="801-1000">801-1000 lbs</option>
+                                        <option value="1001+">1001+ lbs</option>
+                                      </>
+                                    )}
+                                  </select>
+                                  {matchingTier && (
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      Provider rate: ${(matchingTier.price_cents / 100).toFixed(2)}/item
+                                    </p>
+                                  )}
+                                </div>
+                                <div>
+                                  <Label>Count</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    value={item.count}
+                                    onChange={(e) => {
+                                      const updated = [...editHeavyItems]
+                                      updated[idx].count = parseInt(e.target.value) || 0
+                                      setEditHeavyItems(updated)
+                                    }}
+                                    className="text-center"
+                                  />
+                                </div>
+                                <div>
+                                  <Label>Price per Item ($)</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={displayPrice / 100}
+                                    onChange={(e) => {
+                                      const updated = [...editHeavyItems]
+                                      updated[idx].price_cents = Math.round(parseFloat(e.target.value) * 100) || 0
+                                      setEditHeavyItems(updated)
+                                    }}
+                                    disabled={!!matchingTier}
+                                    className={matchingTier ? 'bg-gray-100 cursor-not-allowed' : ''}
+                                    title={matchingTier ? 'Price is set from provider config' : ''}
+                                  />
+                                  {matchingTier && (
+                                    <p className="text-xs text-gray-500 mt-1 italic">From provider config</p>
+                                  )}
+                                </div>
+                              </div>
+                              {item.count > 0 && displayPrice > 0 && (
+                                <div className="mt-3 pt-3 border-t border-gray-200">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-sm text-gray-600">Subtotal:</span>
+                                    <span className="text-lg font-bold text-orange-600">
+                                      ${(totalForItem / 100).toFixed(2)} ({item.count} × ${(displayPrice / 100).toFixed(2)})
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {editHeavyItems.length > 0 && editHeavyItems.some(item => item.count > 0) && (
+                      <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                        <div className="flex justify-between items-center">
+                          <span className="font-semibold text-gray-900">Total Heavy Items Cost:</span>
+                          <span className="text-2xl font-bold text-orange-600">
+                            ${(editHeavyItems.reduce((sum, item) => {
+                              const bandParts = item.band.split('-')
+                              const min = parseInt(bandParts[0])
+                              const max = bandParts[1] ? parseInt(bandParts[1].replace(/\D/g, '')) : Infinity
+                              const tier = editHeavyItemTiers.find(t => t.min_weight_lbs === min && t.max_weight_lbs === max)
+                              const price = tier?.price_cents || item.price_cents || 0
+                              return sum + (price * item.count)
+                            }, 0) / 100).toFixed(2)}
+                          </span>
                         </div>
-                        <div className="grid grid-cols-3 gap-3">
-                          <div>
-                            <Label>Weight Range (lbs)</Label>
-                            <select
-                              value={item.band}
-                              onChange={(e) => {
-                                const updated = [...editHeavyItems]
-                                updated[idx].band = e.target.value
-                                setEditHeavyItems(updated)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Stairs */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-gray-900 border-b pb-2">Additional Services</h3>
+                    <div>
+                      <Label htmlFor="editStairsFlights">Stairs (Flights)</Label>
+                      <Input
+                        id="editStairsFlights"
+                        type="number"
+                        min="0"
+                        value={editStairsFlights}
+                        onChange={(e) => setEditStairsFlights(parseInt(e.target.value) || 0)}
+                        placeholder="0"
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Packing Selection - Card-based UI matching booking form */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-semibold text-gray-900 border-b pb-2">Choose your packing option</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPackingHelp('kit')
+                          // Don't reset rooms - keep current value
+                        }}
+                        className={`group p-5 border rounded-xl transition-all text-left hover:shadow-md hover:-translate-y-0.5 ${editPackingHelp === 'kit' ? 'border-orange-500 shadow-md ring-1 ring-orange-200' : 'border-gray-200'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-lg font-semibold">Full Packing Kit</div>
+                          <span className="text-xs px-2 py-1 rounded-full bg-orange-100 text-orange-700">Best Value</span>
+                        </div>
+                        <div className="text-3xl font-bold text-orange-600">
+                          {editPackingConfig?.per_room_cents ? (editPackingRooms > 0 ? `$${Math.round(((editPackingConfig.per_room_cents || 0) * editPackingRooms) / 100)}` : `$${Math.round((editPackingConfig.per_room_cents || 0) / 100)}/room`) : '$—'}
+                        </div>
+                        <ul className="mt-3 list-disc list-inside text-sm text-gray-700 space-y-1">
+                          <li>Complete packing supplies for your move</li>
+                          {(editPackingConfig?.materials || []).filter(m => m.included).slice(0, 4).map(m => (
+                            <li key={m.name}>{m.name}</li>
+                          ))}
+                        </ul>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPackingHelp('paygo')
+                          // CRITICAL: Reset packing_rooms to 0 for Pay as You Go - rooms are not relevant
+                          setEditPackingRooms(0)
+                          // Don't reset materials - keep existing selections
+                        }}
+                        className={`group p-5 border rounded-xl transition-all text-left hover:shadow-md hover:-translate-y-0.5 ${editPackingHelp === 'paygo' ? 'border-orange-500 shadow-md ring-1 ring-orange-200' : 'border-gray-200'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-lg font-semibold">Pay as You Go</div>
+                          <span className="text-xs px-2 py-1 rounded-full bg-blue-100 text-blue-700">Flexible</span>
+                        </div>
+                        <div className="text-3xl font-bold text-orange-600">
+                          ${(() => {
+                            const total = editPackingMaterials.reduce((sum, m) => sum + ((m.price_cents || 0) * (m.quantity || 1)), 0)
+                            return Math.round(total / 100)
+                          })()}
+                        </div>
+                        <div className="mt-3 text-sm text-gray-700">Choose individual items as needed</div>
+                        <ul className="mt-2 list-disc list-inside text-sm text-gray-700 space-y-1">
+                          {(editPackingConfig?.materials || []).slice(0, 6).map(m => (
+                            <li key={m.name}>{m.name}: ${Math.round((m.price_cents || 0) / 100)}</li>
+                          ))}
+                        </ul>
+                      </button>
+                    </div>
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditPackingHelp('none')
+                          // CRITICAL: Reset packing_rooms to 0 for I will pack myself - rooms are not relevant
+                          setEditPackingRooms(0)
+                        }}
+                        className={`w-full md:w-auto px-6 py-3 rounded-xl border transition hover:shadow ${editPackingHelp === 'none' ? 'border-orange-500 shadow ring-1 ring-orange-200' : 'border-gray-300'}`}
+                      >
+                        Customer will pack
+                      </button>
+                    </div>
+                    {/* CRITICAL: Only show "number of rooms" for Full Packing Kit - NOT for Pay as You Go or I will pack myself */}
+                    {editPackingHelp === 'kit' && (
+                      <div className="mt-6">
+                        <label className="block text-sm font-semibold mb-4 text-gray-900">How many rooms?</label>
+                        <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
+                          {[1, 2, 3, 4, 5, 6].map((num) => (
+                            <button
+                              key={num}
+                              type="button"
+                              onClick={() => {
+                                if (num === 6) {
+                                  // For 6+, set to 6 and show custom input
+                                  setEditPackingRooms(6)
+                                } else {
+                                  setEditPackingRooms(num)
+                                }
                               }}
-                              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                              className={`
+                                relative p-4 rounded-xl border-2 transition-all duration-200 font-semibold text-lg
+                                ${editPackingRooms === num || (num === 6 && editPackingRooms >= 6)
+                                  ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-orange-100 text-orange-700 shadow-md shadow-orange-500/20 scale-105'
+                                  : 'border-gray-200 bg-white text-gray-700 hover:border-orange-300 hover:bg-orange-50/50 hover:shadow-sm'
+                                }
+                              `}
                             >
-                              <option value="201-400">201-400 lbs</option>
-                              <option value="401-600">401-600 lbs</option>
-                              <option value="601-800">601-800 lbs</option>
-                              <option value="801-1000">801-1000 lbs</option>
-                              <option value="1001+">1001+ lbs</option>
-                            </select>
-                          </div>
-                          <div>
-                            <Label>Count</Label>
-                            <Input
-                              type="number"
-                              min="0"
-                              value={item.count}
-                              onChange={(e) => {
-                                const updated = [...editHeavyItems]
-                                updated[idx].count = parseInt(e.target.value) || 0
-                                setEditHeavyItems(updated)
-                              }}
-                            />
-                          </div>
-                          <div>
-                            <Label>Price per Item ($)</Label>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min="0"
-                              value={item.price_cents / 100}
-                              onChange={(e) => {
-                                const updated = [...editHeavyItems]
-                                updated[idx].price_cents = Math.round(parseFloat(e.target.value) * 100) || 0
-                                setEditHeavyItems(updated)
-                              }}
-                            />
-                          </div>
+                              {num === 6 ? (
+                                <span className="block">
+                                  <span className="block text-base">6+</span>
+                                  <span className="text-xs font-normal text-gray-500 mt-0.5">Custom</span>
+                                </span>
+                              ) : (
+                                <span>{num}</span>
+                              )}
+                              {(editPackingRooms === num || (num === 6 && editPackingRooms >= 6)) && (
+                                <div className="absolute top-1 right-1 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center">
+                                  <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                  </svg>
+                                </div>
+                              )}
+                            </button>
+                          ))}
                         </div>
-                        {item.count > 0 && item.price_cents > 0 && (
-                          <div className="text-xs text-gray-600">
-                            Total: {formatPrice(item.price_cents * item.count)} ({item.count} × {formatPrice(item.price_cents)})
+                        {editPackingRooms >= 6 && (
+                          <div className="mt-3 flex items-center gap-3">
+                            <span className="text-sm text-gray-600">Custom number:</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setEditPackingRooms(Math.max(6, editPackingRooms - 1))}
+                                className="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-gray-700 transition-colors font-semibold"
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                min={6}
+                                value={editPackingRooms}
+                                onChange={e => setEditPackingRooms(Math.max(6, parseInt(e.target.value) || 6))}
+                                className="w-20 text-center border border-gray-300 rounded-lg px-3 py-1.5 font-semibold focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setEditPackingRooms(editPackingRooms + 1)}
+                                className="px-3 py-1.5 border border-gray-300 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-gray-700 transition-colors font-semibold"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-
-                  {/* Stairs & Packing */}
-                  <div className="space-y-4">
-                    <h3 className="text-sm font-semibold text-gray-900 border-b pb-2">Additional Services</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <Label htmlFor="editStairsFlights">Stairs (Flights)</Label>
-                        <Input
-                          id="editStairsFlights"
-                          type="number"
-                          min="0"
-                          value={editStairsFlights}
-                          onChange={(e) => setEditStairsFlights(parseInt(e.target.value) || 0)}
-                          placeholder="0"
-                        />
-                      </div>
-                      <div>
-                        <Label htmlFor="editPackingHelp">Packing Type</Label>
-                        <select
-                          id="editPackingHelp"
-                          value={editPackingHelp}
-                          onChange={(e) => setEditPackingHelp(e.target.value as 'none' | 'kit' | 'paygo')}
-                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                        >
-                          <option value="none">No Packing</option>
-                          <option value="kit">Full Packing Kit</option>
-                          <option value="paygo">Pay as You Go</option>
-                        </select>
-                      </div>
-                    </div>
-                    {editPackingHelp === 'kit' && (
-                      <div>
-                        <Label htmlFor="editPackingRooms">Packing Rooms</Label>
-                        <Input
-                          id="editPackingRooms"
-                          type="number"
-                          min="0"
-                          value={editPackingRooms}
-                          onChange={(e) => setEditPackingRooms(parseInt(e.target.value) || 0)}
-                        />
+                    )}
+                    
+                    {/* CRITICAL: Show materials selector for Pay as You Go */}
+                    {editPackingHelp === 'paygo' && (
+                      <div className="mt-6">
+                        <label className="block text-sm font-semibold mb-4 text-gray-900">Select Packing Materials</label>
+                        {!editPackingConfig ? (
+                          <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                            <p className="text-sm text-gray-600">Loading materials...</p>
+                          </div>
+                        ) : (editPackingConfig.materials && editPackingConfig.materials.length > 0) ? (
+                          <div className="space-y-3">
+                            {editPackingConfig.materials.map((material, idx) => {
+                              const selectedMaterial = editPackingMaterials.find(m => m.name === material.name)
+                              const quantity = selectedMaterial?.quantity || 0
+                              const isSelected = quantity > 0
+                              
+                              return (
+                                <div key={idx} className={`p-4 border rounded-lg ${isSelected ? 'border-orange-500 bg-orange-50' : 'border-gray-200'}`}>
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex-1">
+                                      <div className="font-medium text-gray-900">{material.name}</div>
+                                      <div className="text-sm text-gray-600">${Math.round((material.price_cents || 0) / 100)} each</div>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...editPackingMaterials]
+                                          const existingIdx = updated.findIndex(m => m.name === material.name)
+                                          if (existingIdx >= 0) {
+                                            const existing = updated[existingIdx]
+                                            if (existing && (existing.quantity ?? 0) > 1) {
+                                              updated[existingIdx] = { ...existing, quantity: (existing.quantity ?? 1) - 1 }
+                                            } else {
+                                              updated.splice(existingIdx, 1)
+                                            }
+                                          }
+                                          setEditPackingMaterials(updated)
+                                        }}
+                                        disabled={quantity === 0}
+                                        className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-gray-700 transition-colors font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                                      >
+                                        −
+                                      </button>
+                                      <span className="w-12 text-center font-semibold">{quantity}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const updated = [...editPackingMaterials]
+                                          const existingIdx = updated.findIndex(m => m.name === material.name)
+                                          if (existingIdx >= 0) {
+                                            updated[existingIdx].quantity = (updated[existingIdx].quantity || 1) + 1
+                                          } else {
+                                            updated.push({
+                                              name: material.name,
+                                              price_cents: material.price_cents || 0,
+                                              quantity: 1,
+                                              included: material.included
+                                            })
+                                          }
+                                          setEditPackingMaterials(updated)
+                                        }}
+                                        className="px-3 py-1 border border-gray-300 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-gray-700 transition-colors font-semibold"
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {isSelected && (
+                                    <div className="mt-2 text-sm text-orange-700">
+                                      Subtotal: ${Math.round(((material.price_cents || 0) * quantity) / 100)} ({quantity} × ${Math.round((material.price_cents || 0) / 100)})
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ) : (
+                          <div className="p-4 border border-orange-200 rounded-lg bg-orange-50">
+                            <p className="text-sm text-orange-700">
+                              No packing materials available. Please configure materials in your provider settings first.
+                            </p>
+                          </div>
+                        )}
+                        {editPackingMaterials.length > 0 && (
+                          <div className="mt-4 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                            <div className="flex justify-between items-center">
+                              <span className="font-semibold text-gray-900">Total Materials Cost:</span>
+                              <span className="text-2xl font-bold text-orange-600">
+                                ${Math.round(editPackingMaterials.reduce((sum, m) => sum + ((m.price_cents || 0) * (m.quantity || 1)), 0) / 100)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2660,28 +3166,104 @@ export default function BookingTrackingPage() {
             )}
 
             {isProvider && (
-              <Card className="border-2 border-gray-200 shadow-lg">
-                <CardHeader>
-                  <CardTitle>Customer</CardTitle>
+              <Card className="border-2 border-gray-200 shadow-lg bg-gradient-to-br from-white to-gray-50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <User className="w-5 h-5 text-orange-600" />
+                    Customer
+                  </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {booking.customer_phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-muted-foreground" />
-                      <a href={`tel:${booking.customer_phone}`} className="text-sm hover:underline">
-                        {booking.customer_phone}
-                      </a>
+                  {/* Customer Avatar and Name */}
+                  <div className="flex items-center gap-3 pb-4 border-b border-gray-200">
+                    {booking.customer?.avatar_url ? (
+                      <div className="relative">
+                        <img 
+                          src={booking.customer.avatar_url} 
+                          alt={booking.customer.full_name || 'Customer'} 
+                          className="w-16 h-16 rounded-full object-cover border-2 border-orange-200 shadow-md"
+                        />
+                        <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 rounded-full bg-gradient-to-br from-orange-400 to-orange-600 flex items-center justify-center border-2 border-orange-200 shadow-md">
+                        <User className="w-8 h-8 text-white" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <h3 className="font-bold text-gray-900 text-lg truncate">
+                        {booking.customer?.full_name || 'Customer'}
+                      </h3>
+                      {booking.customer_email && (
+                        <p className="text-sm text-gray-600 truncate">{booking.customer_email}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Buttons - Unified Color Scheme */}
+                  {(booking.customer_phone || booking.customer_id) && (
+                    <div className={`grid gap-2.5 ${booking.customer_phone ? 'grid-cols-3' : 'grid-cols-1'}`}>
+                      {booking.customer_phone && (
+                        <>
+                          <Button
+                            variant="default"
+                            className="bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 text-white shadow-md hover:shadow-lg transition-all font-medium"
+                            onClick={() => {
+                              window.location.href = `tel:${booking.customer_phone}`
+                            }}
+                          >
+                            <PhoneCall className="w-4 h-4 mr-2" />
+                            Call
+                          </Button>
+                          <Button
+                            variant="outline"
+                            className="border-gray-300 text-gray-700 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900 font-medium transition-all"
+                            onClick={() => {
+                              window.location.href = `sms:${booking.customer_phone}`
+                            }}
+                          >
+                            <MessageCircle className="w-4 h-4 mr-2" />
+                            SMS
+                          </Button>
+                        </>
+                      )}
+                      <Button
+                        variant="default"
+                        className="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white shadow-md hover:shadow-lg transition-all font-medium"
+                        onClick={() => {
+                          setShowChatModal(true)
+                        }}
+                      >
+                        <MessageSquare className="w-4 h-4 mr-2" />
+                        Chat
+                      </Button>
                     </div>
                   )}
-                  
-                  {booking.customer_email && (
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-muted-foreground" />
-                      <a href={`mailto:${booking.customer_email}`} className="text-sm hover:underline">
-                        {booking.customer_email}
-                      </a>
-                    </div>
-                  )}
+
+                  {/* Contact Information */}
+                  <div className="space-y-2.5 pt-2 border-t border-gray-100">
+                    {booking.customer_phone && (
+                      <div className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-orange-100 flex items-center justify-center">
+                          <Phone className="h-4 w-4 text-orange-600" />
+                        </div>
+                        <a href={`tel:${booking.customer_phone}`} className="text-sm hover:text-orange-600 text-gray-700 font-medium transition-colors flex-1">
+                          {booking.customer_phone}
+                        </a>
+                      </div>
+                    )}
+                    
+                    {booking.customer_email && (
+                      <div className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 transition-colors">
+                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                          <Mail className="h-4 w-4 text-blue-600" />
+                        </div>
+                        <a href={`mailto:${booking.customer_email}`} className="text-sm hover:text-blue-600 text-gray-700 font-medium transition-colors flex-1 truncate">
+                          {booking.customer_email}
+                        </a>
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -2742,12 +3324,17 @@ export default function BookingTrackingPage() {
                     return defaultValue
                   }
                   
-                  // Calculate breakdown from quote if available - check multiple key formats
-                  const baseHourly = getBreakdownValue(['base_hourly', 'baseHourly', 'base_hourly_cents', 'basePrice', 'base_price_cents']) || booking.base_price_cents || 0
-                  
-                  // Extract service details for breakdown display
+                  // Extract service details for breakdown display FIRST
                   const hourlyRateCents = booking.hourly_rate_cents || serviceDetails.hourly_rate_cents || (serviceDetails.hourly_rate ? Math.round(parseFloat(String(serviceDetails.hourly_rate)) * 100) : 0)
-                  const moverTeam = serviceDetails.mover_team || serviceDetails.crew_size || quoteBreakdown.mover_team || quoteBreakdown.crew_size || 2
+                  // CRITICAL: Prioritize serviceDetails (current saved data) over quoteBreakdown (old quote data)
+                  // Check multiple places to ensure we get the updated team size
+                  const moverTeam = serviceDetails.mover_team || 
+                                  serviceDetails.crew_size || 
+                                  serviceDetails.breakdown?.mover_team || 
+                                  serviceDetails.breakdown?.crew_size ||
+                                  quoteBreakdown.mover_team || 
+                                  quoteBreakdown.crew_size || 
+                                  2
                   const estimatedDuration = booking.estimated_duration_hours || serviceDetails.estimated_duration_hours || 3
                   const baseHours = 3 // Standard minimum hours
                   const moveSize = serviceDetails.move_size || quoteBreakdown.move_size || ''
@@ -2761,14 +3348,37 @@ export default function BookingTrackingPage() {
                   const packingRooms = (packingHelp === 'none') ? 0 : (serviceDetails.packing_rooms !== undefined ? serviceDetails.packing_rooms : (quoteBreakdown.packing_rooms || 0))
                   const stairsFlights = serviceDetails.stairs_flights !== undefined ? serviceDetails.stairs_flights : (quoteBreakdown.stairs_flights || 0)
                   
-                  // Calculate team hourly rate: baseHourly / baseHours
-                  // hourly_rate from quoteCalculator is per hour for the entire team
-                  const teamHourlyRateCents = baseHourly > 0 && baseHours > 0
-                    ? Math.round(baseHourly / baseHours)
-                    : hourlyRateCents
+                  // CRITICAL: Calculate team hourly rate FIRST
+                  // Priority: 1) booking.hourly_rate_cents (updated from API), 2) breakdown values, 3) calculated from baseHourly
+                  // Check if hourly_rate_cents is a team rate (from updated booking)
+                  const isTeamRate = serviceDetails.hourly_rate_is_team_rate === true || 
+                                     (hourlyRateCents && moverTeam > 0 && (hourlyRateCents / moverTeam) < 2000)
+                  
+                  let teamHourlyRateCents = 0
+                  if (hourlyRateCents && moverTeam > 0) {
+                    if (isTeamRate) {
+                      // hourly_rate_cents is already the TEAM rate
+                      teamHourlyRateCents = hourlyRateCents
+                    } else {
+                      // hourly_rate_cents is PER-MOVER rate, multiply by movers
+                      teamHourlyRateCents = hourlyRateCents * moverTeam
+                    }
+                  }
+                  
+                  // Calculate baseHourly from breakdown first (fallback)
+                  let baseHourly = getBreakdownValue(['base_hourly', 'baseHourly', 'base_hourly_cents', 'basePrice', 'base_price_cents']) || booking.base_price_cents || 0
+                  
+                  // CRITICAL: If we have an updated team rate, recalculate baseHourly from it
+                  // This ensures baseHourly reflects the current team size and rate
+                  if (teamHourlyRateCents > 0) {
+                    baseHourly = Math.round(teamHourlyRateCents * baseHours)
+                  } else if (baseHourly > 0 && baseHours > 0) {
+                    // Fallback: calculate team rate from baseHourly
+                    teamHourlyRateCents = Math.round(baseHourly / baseHours)
+                  }
                   
                   // Calculate per-mover hourly rate (for display)
-                  const hourlyRatePerMoverCents = moverTeam > 0 
+                  const hourlyRatePerMoverCents = moverTeam > 0 && teamHourlyRateCents > 0
                     ? Math.round(teamHourlyRateCents / moverTeam)
                     : teamHourlyRateCents
                   
@@ -2808,12 +3418,42 @@ export default function BookingTrackingPage() {
                             // If heavyItemsArray is empty, that means items were removed - leave it as empty array
                   
                   // CRITICAL: Prioritize serviceDetails (current saved data) over quoteBreakdown (old quote data)
-                  // Packing cost - check serviceDetails first
+                  // Packing cost - check serviceDetails first, then recalculate if needed
                   let packingCost = 0
                   if (serviceDetails.packing_help === 'none' || serviceDetails.packing === 'none') {
                     packingCost = 0 // Explicitly set to 0 if packing was removed
+                  } else if (packingHelp === 'kit' && packingRooms > 0) {
+                    // CRITICAL: For Full Packing Kit with rooms, read from breakdown or recalculate
+                    if (quoteBreakdown.packing_cost_cents && typeof quoteBreakdown.packing_cost_cents === 'number' && quoteBreakdown.packing_cost_cents > 0) {
+                      packingCost = Math.round(quoteBreakdown.packing_cost_cents)
+                      // Validate: if cost seems too low for the number of rooms, recalculate
+                      const perRoomCents = Math.round(packingCost / packingRooms)
+                      // If per-room cost is less than $50, it's probably wrong (should be at least $50-99 per room)
+                      if (perRoomCents < 50 * 100 && packingRooms > 1) {
+                        // Recalculate: assume $99 per room (fallback since we don't have provider config here)
+                        packingCost = Math.round(99 * 100 * packingRooms)
+                      }
+                    } else {
+                      // No breakdown value or invalid - calculate from rooms (fallback)
+                      // Assume $99 per room (this should match provider config, but we don't have it here)
+                      packingCost = Math.round(99 * 100 * packingRooms)
+                    }
+                  } else if (packingHelp === 'paygo') {
+                    // CRITICAL: Pay as You Go - calculate from packing_materials only
+                    const packingMaterials = serviceDetails.packing_materials || []
+                    if (Array.isArray(packingMaterials) && packingMaterials.length > 0) {
+                      packingCost = packingMaterials.reduce((sum: number, mat: any) => {
+                        const quantity = mat.quantity || 1
+                        const priceCents = mat.price_cents || 0
+                        return sum + (priceCents * quantity)
+                      }, 0)
+                    } else {
+                      // No materials selected - cost is $0
+                      packingCost = 0
+                    }
                   } else {
-                    packingCost = getBreakdownValue(['packing', 'packingCost', 'packing_cost', 'packing_cost_cents'])
+                    // For other packing types, use breakdown value
+                    packingCost = getBreakdownValue(['packing_cost_cents', 'packing_cost', 'packing', 'packingCost'])
                   }
                   
                   // Stairs cost - check serviceDetails first
@@ -2841,6 +3481,30 @@ export default function BookingTrackingPage() {
                     }
                   }
                   if (!destinationFee) destinationFee = 0
+                  
+                  // Calculate distance from base for display
+                  // Destination fee formula: furthestFromBase > 25 ? Math.round(furthestFromBase * destinationFeePerMile) : 0
+                  // destinationFee is in cents, so: distanceFromBase = (destinationFee / 100) / destinationFeePerMile
+                  let distanceFromBase = 0
+                  if (destinationFee > 0) {
+                    // Try to get distance from breakdown or calculate from fee
+                    const destinationFeePerMile = quoteBreakdown.destination_fee_per_mile_cents 
+                      ? quoteBreakdown.destination_fee_per_mile_cents / 100 
+                      : 2.3 // Default $2.30/mile
+                    // destinationFee is in cents, convert to dollars, then divide by per-mile rate
+                    distanceFromBase = (destinationFee / 100) / destinationFeePerMile
+                  }
+                  // Also check if we have stored distance from base in service details
+                  const storedDistanceFromBase = serviceDetails.distance_from_base || 
+                                                 serviceDetails.furthest_from_base || 
+                                                 quoteBreakdown.distance_from_base ||
+                                                 quoteBreakdown.furthest_from_base
+                  if (storedDistanceFromBase) {
+                    distanceFromBase = typeof storedDistanceFromBase === 'number' 
+                      ? storedDistanceFromBase 
+                      : parseFloat(String(storedDistanceFromBase)) || distanceFromBase
+                  }
+                  
                   const insuranceCost = getBreakdownValue(['insurance', 'insuranceCost', 'insurance_cost', 'insurance_cost_cents'])
                   const storageCost = getBreakdownValue(['storage', 'storageCost', 'storage_cost', 'storage_cost_cents'])
                   
@@ -2939,8 +3603,9 @@ export default function BookingTrackingPage() {
                                     <div className="text-xs text-gray-600 mt-1">
                                       {moverTeam} {moverTeam === 1 ? 'mover' : 'movers'} @ {formatPrice(hourlyRatePerMoverCents)} per mover/hour
                                     </div>
+                                    <div className="text-xs text-orange-600 mt-1">Not billed until provider confirms at job completion</div>
                                   </div>
-                                  <span className="font-bold text-base text-gray-900 ml-6">{formatPrice(teamHourlyRateCents * (estimatedDuration - baseHours))}</span>
+                                  <span className="font-bold text-base text-gray-400 ml-6 line-through">{formatPrice(teamHourlyRateCents * (estimatedDuration - baseHours))}</span>
                                 </div>
                               </div>
                             )}
@@ -2959,8 +3624,8 @@ export default function BookingTrackingPage() {
                           <div className="flex justify-between items-center py-2">
                             <div className="flex-1">
                               <span className="text-sm font-medium text-gray-700">Destination Fee</span>
-                              {tripDistance > 0 && (
-                                <span className="text-xs text-gray-500 ml-2">• {tripDistance.toFixed(1)} miles from base</span>
+                              {distanceFromBase > 0 && (
+                                <span className="text-xs text-gray-500 ml-2">• {distanceFromBase.toFixed(1)} miles from base</span>
                               )}
                             </div>
                             <span className="font-semibold text-sm text-gray-900 ml-6">{formatPrice(destinationFee)}</span>
@@ -3028,16 +3693,28 @@ export default function BookingTrackingPage() {
                             </div>
                           </div>
                         )}
-                        {/* Show Packing section - check if it was explicitly set to 'none' (removed) */}
-                        {(packingCost > 0 || serviceDetails.packing_help === 'none' || serviceDetails.packing === 'none') && (
+                        {/* Show Packing section - always show if packing type is set */}
+                        {(packingCost > 0 || serviceDetails.packing_help || serviceDetails.packing || serviceDetails.packing_help === 'none' || serviceDetails.packing === 'none') && (
                           <div className="flex justify-between items-center py-2">
                             <div className="flex-1">
                               <span className="text-sm font-medium text-gray-700">Packing</span>
-                              {packingCost > 0 ? (
+                              {packingCost > 0 || serviceDetails.packing_help === 'paygo' ? (
                                 <div className="text-xs text-gray-600 mt-1">
                                   Type: {serviceDetails.packing_help === 'kit' ? 'Full Packing Kit' : serviceDetails.packing_help === 'paygo' ? 'Pay as You Go' : serviceDetails.packing_help}
                                   {packingRooms > 0 && (
                                     <span> • {packingRooms} {packingRooms === 1 ? 'room' : 'rooms'} to pack</span>
+                                  )}
+                                  {packingHelp === 'paygo' && serviceDetails.packing_materials && Array.isArray(serviceDetails.packing_materials) && serviceDetails.packing_materials.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                      {serviceDetails.packing_materials.map((mat: any, idx: number) => (
+                                        <div key={idx} className="text-xs text-gray-600">
+                                          • {mat.name}: {mat.quantity || 1} × {formatPrice(mat.price_cents || 0)} = {formatPrice((mat.price_cents || 0) * (mat.quantity || 1))}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {packingHelp === 'paygo' && (!serviceDetails.packing_materials || !Array.isArray(serviceDetails.packing_materials) || serviceDetails.packing_materials.length === 0) && (
+                                    <div className="text-xs text-gray-500 mt-1 italic">No materials selected</div>
                                   )}
                                 </div>
                               ) : (
@@ -3078,9 +3755,13 @@ export default function BookingTrackingPage() {
                         {(() => {
                           // CRITICAL: Only include items that are actually displayed in the breakdown above
                           // Sum up all the displayed breakdown items
+                          // Do NOT bill additional hours until provider confirms
+                          const billedAdditionalHours = (serviceDetails?.bill_additional === true && estimatedDuration > baseHours)
+                            ? (teamHourlyRateCents * (estimatedDuration - baseHours))
+                            : 0
                           const breakdownSubtotal = 
                             (baseHourly > 0 ? baseHourly : 0) +
-                            (estimatedDuration > baseHours ? (teamHourlyRateCents * (estimatedDuration - baseHours)) : 0) +
+                            billedAdditionalHours +
                             (destinationFee || 0) +
                             (finalHeavyItemsCost || 0) +
                             (packingCost || 0) +
@@ -3244,6 +3925,18 @@ export default function BookingTrackingPage() {
                     Create Invoice
                   </Button>
                 )}
+                {/* Open in Calendar */}
+                <Button 
+                  variant="outline"
+                  className="w-full mt-2 border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                  onClick={() => {
+                    const d = booking.requested_date || (booking.service_details?.scheduled_date) || ''
+                    const dateOnly = typeof d === 'string' ? d.split('T')[0] : ''
+                    router.push(`/dashboard/bookings?date=${encodeURIComponent(dateOnly)}&open=${booking.id}`)
+                  }}
+                >
+                  Open in Calendar
+                </Button>
                 {invoices.length > 0 && invoices.some(inv => inv.balance_cents > 0 && inv.status !== 'draft') && isCustomer && (
                   <Button 
                     className="w-full bg-orange-600 hover:bg-orange-700 mt-4"
@@ -3316,6 +4009,25 @@ export default function BookingTrackingPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Chat Modal */}
+      {isProvider && booking.customer_id && (
+        <MessageModal
+          isOpen={showChatModal}
+          onClose={() => setShowChatModal(false)}
+          recipientId={booking.customer_id}
+          recipientName={booking.customer?.full_name || 'Customer'}
+          recipientAvatar={booking.customer?.avatar_url ?? undefined}
+          onMessageSent={() => {
+            // Refresh messages or show success
+            setToast({
+              show: true,
+              message: 'Message sent successfully!',
+              type: 'success'
+            })
+          }}
+        />
+      )}
     </div>
   )
 }

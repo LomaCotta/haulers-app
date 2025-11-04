@@ -1143,12 +1143,38 @@ function WizardInner() {
   const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<{ pickup: any[]; delivery: any[] }>({ pickup: [], delivery: [] })
   const [autocompleteQuery, setAutocompleteQuery] = useState<{ pickup: string; delivery: string; activeField: string | null }>({ pickup: '', delivery: '', activeField: null })
   const [showAutocomplete, setShowAutocomplete] = useState<{ pickup: number | null; delivery: number | null }>({ pickup: null, delivery: null })
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const search = useSearchParams()
   const providerIdParam = search.get('providerId') || undefined
   const businessIdParam = search.get('businessId') || undefined
   const [providerName, setProviderName] = useState<string>("")
   const [businessInfo, setBusinessInfo] = useState<{ id: string; name: string; city?: string | null; state?: string | null; description?: string | null } | null>(null)
   const supabase = createClient()
+
+  // CRITICAL: Check authentication before allowing booking
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { user }, error } = await supabase.auth.getUser()
+        if (error || !user) {
+          setIsAuthenticated(false)
+          // Redirect to sign in with return URL
+          const returnUrl = encodeURIComponent(window.location.href)
+          window.location.href = `/auth/signin?returnUrl=${returnUrl}`
+        } else {
+          setIsAuthenticated(true)
+        }
+      } catch (err) {
+        console.error('Auth check error:', err)
+        setIsAuthenticated(false)
+        window.location.href = `/auth/signin?returnUrl=${encodeURIComponent(window.location.href)}`
+      } finally {
+        setAuthLoading(false)
+      }
+    }
+    checkAuth()
+  }, [])
 
   useEffect(() => {
     (async () => {
@@ -1690,6 +1716,34 @@ function WizardInner() {
       setLoadingDistance(false)
       return false
     }
+  }
+
+  // Show loading while checking authentication
+  if (authLoading || isAuthenticated === null) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Verifying authentication...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Redirect if not authenticated (handled by useEffect, but show message just in case)
+  if (isAuthenticated === false) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <p className="text-gray-600">Please log in to continue...</p>
+            <p className="text-sm text-gray-500 mt-2">Redirecting to sign in...</p>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

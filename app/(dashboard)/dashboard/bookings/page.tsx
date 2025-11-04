@@ -1,14 +1,16 @@
 'use client'
 
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useSearchParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
+import { computeTotalDue } from '@/lib/booking/computeTotalDue'
 import { ModernCalendar, CalendarEvent } from '@/components/calendar/ModernCalendar'
-import { EventModal } from '@/components/calendar/EventModal'
+// import { EventModal } from '@/components/calendar/EventModal'
 import { 
   Calendar, 
   Building, 
@@ -123,6 +125,62 @@ export default function BookingsPage() {
   const lastEventsRef = useRef<string>('')
   const [userId, setUserId] = useState<string | null>(null)
   const supabase = createClient()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+
+  // Safely format addresses that may be strings or objects
+  const formatAddress = (addr: any): string => {
+    if (!addr) return ''
+    if (typeof addr === 'string') return addr
+    if (typeof addr === 'object') {
+      const street = addr.address || addr.street || ''
+      const apt = addr.aptSuite || addr.apt_suite || ''
+      const city = addr.city || addr.city_name || ''
+      const state = addr.state || addr.state_name || ''
+      const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+      const parts = [street, apt, city, state, zip].filter(Boolean)
+      return parts.join(', ').replace(/,\s*,/g, ', ')
+    }
+    return String(addr)
+  }
+
+  // Compute Total Due from booking.service_details (fallback when DB total is missing/outdated)
+  const computeTotalDueCents = (booking: any): number => {
+    try {
+      return computeTotalDue(booking).totalDueCents
+    } catch {
+      return 0
+    }
+  }
+
+  // Live updates: keep calendar in sync when bookings change (price, date, details)
+  useEffect(() => {
+    const channel = supabase
+      .channel('bookings-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, async (payload: any) => {
+        try {
+          const changed = payload.new || payload.old
+          if (!changed?.id) return
+          
+          // If provider view and this booking belongs to provider business, refresh provider bookings
+          if (isProvider) {
+            if (changed.business_id && (changed.business_id === businessId)) {
+              await fetchProviderBookings()
+            }
+          } else {
+            // Consumer view - refresh own bookings
+            await fetchBookings()
+          }
+        } catch (e) {
+          console.error('Realtime bookings sync error:', e)
+        }
+      })
+      .subscribe()
+    
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [isProvider, businessId])
 
   // Get user ID on mount
   useEffect(() => {
@@ -422,12 +480,12 @@ export default function BookingsPage() {
           
           // Get address from service_address or service_details JSONB
           const serviceDetails = booking.service_details || {}
-          const pickupAddress = booking.service_address || 
+          const pickupAddress = formatAddress(booking.service_address || 
                                 serviceDetails.from_address || 
                                 serviceDetails.to_address || 
                                 serviceDetails.address || 
                                 serviceDetails.addresses || 
-                                ''
+                                '')
           
           return {
             id: `booking-${booking.id}`,
@@ -439,8 +497,10 @@ export default function BookingsPage() {
             crew_size: 2,
             quote: {
               full_name: customerName,
-              pickup_address: pickupAddress,
-              price_total_cents: booking.total_price_cents || booking.base_price_cents || (booking as any).quote_cents || 0
+              pickup_address: pickupAddress
+            },
+            metadata: {
+              booking
             }
           }
         }))
@@ -448,176 +508,18 @@ export default function BookingsPage() {
         console.log('Converted bookings to jobs:', bookingsAsJobs.length)
         console.log('Sample converted job:', bookingsAsJobs[0])
         // Merge with existing scheduled jobs (avoid duplicates)
-        setScheduledJobs(prev => {
-          const existingIds = new Set((prev || []).map(j => j.id))
-          const newJobs = bookingsAsJobs.filter(j => !existingIds.has(j.id))
-          const merged = [...(prev || []), ...newJobs]
-          console.log('Merged scheduled jobs. Total:', merged.length)
-          return merged
-        })
+        // Deprecated: do not merge or display scheduled jobs
+        setScheduledJobs(() => [])
       }
     } catch (error) {
       console.error('Error in fetchProviderBookings:', error)
     }
   }
 
-  // Convert scheduledJobs AND providerBookings to calendar events for providers
-  useEffect(() => {
-    if (!isProvider) {
-      console.log('Not a provider, skipping event conversion')
-      return
-    }
-    
-    console.log('🔄 Event conversion useEffect triggered', {
-      loading,
-      eventsInitialized,
-      scheduledJobsCount: scheduledJobs?.length || 0,
-      providerBookingsCount: providerBookings?.length || 0,
-      currentEventsCount: calendarEvents.length
-    })
-    
-    // ONLY skip if we're still loading AND have existing events (don't clear what's already there)
-    // If loading but no events yet, still proceed (might get initial data)
-    if (loading && eventsInitialized && calendarEvents.length > 0) {
-      console.log('⏸️ Skipping - still loading but have existing events (preserving)')
-      return
-    }
-    
-    const convertToEvents = async () => {
-      console.log('🔄 Starting event conversion...')
-      const allEvents: CalendarEvent[] = []
-      
-      // Convert scheduledJobs to calendar events
-      if (scheduledJobs && scheduledJobs.length > 0) {
-        const jobEvents: CalendarEvent[] = scheduledJobs
-          .filter(job => job.scheduled_date)
-          .map((job) => {
-            let date: string = job.scheduled_date
-            if (typeof date === 'string') {
-              const dateObj = new Date(date)
-              if (!isNaN(dateObj.getTime())) {
-                date = dateObj.toISOString().split('T')[0]
-              }
-            } else {
-              date = String(date)
-            }
-            
-            let status: 'scheduled' | 'completed' | 'confirmed' | 'in_progress' | 'cancelled' | undefined = 'scheduled'
-            if (job.status === 'completed') status = 'completed'
-            else if (job.status === 'confirmed') status = 'confirmed'
-            else if (job.status === 'in_progress') status = 'in_progress'
-            else if (job.status === 'cancelled') status = 'cancelled'
-            
-            return {
-              id: job.id,
-              date: date,
-              title: job.quote?.full_name || 'Scheduled Job',
-              time: `${job.scheduled_start_time} - ${job.scheduled_end_time}`,
-              type: 'reservation' as const,
-              status: status,
-              metadata: {
-                customer: job.quote?.full_name,
-                address: job.quote?.pickup_address,
-                price: job.quote?.price_total_cents || 0,
-                crewSize: job.crew_size,
-                timeSlot: job.time_slot,
-              },
-            }
-          })
-        allEvents.push(...jobEvents)
-      }
-      
-      // Convert providerBookings to calendar events
-      if (providerBookings && providerBookings.length > 0) {
-        const { data: { user } } = await supabase.auth.getUser()
-        const userId = user?.id
-        
-        const bookingEvents: CalendarEvent[] = providerBookings
-          .filter(booking => booking.requested_date || (booking as any).move_date)
-          .map((booking: any) => {
-            let date = booking.requested_date || (booking as any).move_date
-            if (date && typeof date === 'object' && date instanceof Date) {
-              date = date.toISOString().split('T')[0]
-            } else if (typeof date === 'string') {
-              const dateObj = new Date(date)
-              if (!isNaN(dateObj.getTime())) {
-                date = dateObj.toISOString().split('T')[0]
-              }
-            }
-            
-            const bookingStatus = booking.booking_status || (booking as any).status || 'pending'
-            let status: 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | undefined
-            if (bookingStatus === 'confirmed' || bookingStatus === 'accepted') status = 'confirmed'
-            else if (bookingStatus === 'in_progress') status = 'in_progress'
-            else if (bookingStatus === 'completed') status = 'completed'
-            else if (bookingStatus === 'cancelled' || bookingStatus === 'canceled') status = 'cancelled'
-            else if (bookingStatus === 'pending' || bookingStatus === 'requested') status = 'scheduled'
-            else status = 'scheduled'
-            
-            const address = booking.service_address || 
-                          (booking.service_details?.from_address) ||
-                          (booking.service_details?.address) ||
-                          ''
-            
-            const isCustomerBooking = booking.customer_id === userId
-            
-            let title = ''
-            if (isCustomerBooking) {
-              title = booking.business?.name || 'Booking with Provider'
-            } else {
-              title = booking.customer?.full_name || 
-                      booking.customer_email || 
-                      booking.customer_phone ||
-                      'Customer'
-            }
-            
-            return {
-              id: `provider-booking-${booking.id}`,
-              date: date,
-              title: title,
-              time: booking.requested_time || '',
-              type: 'booking' as const,
-              status: status,
-              metadata: {
-                customer: booking.customer?.full_name,
-                address: address,
-                city: booking.service_city || '',
-                state: booking.service_state || '',
-                price: booking.total_price_cents || booking.base_price_cents || 0,
-                serviceType: booking.service_type || '',
-                business: booking.business?.name,
-                isCustomerBooking: isCustomerBooking,
-                bookingId: booking.id, // Add booking ID for navigation
-                serviceDetails: booking.service_details || {}, // Add full service details
-                booking: booking, // Add full booking object
-              },
-            }
-          })
-        
-        // Merge with existing events, avoiding duplicates
-        const existingIds = new Set(allEvents.map(e => e.id))
-        const newBookingEvents = bookingEvents.filter(e => !existingIds.has(e.id))
-        allEvents.push(...newBookingEvents)
-      }
-      
-      // ALWAYS set events if we have any - never skip or compare
-      console.log('✅ Converting to events complete:', allEvents.length, 'events')
-      if (allEvents.length > 0) {
-        console.log('📅 Events being set:', allEvents.map(e => `${e.title} on ${e.date}`))
-        setCalendarEvents(allEvents)
-        setEventsInitialized(true)
-        lastEventsRef.current = JSON.stringify(allEvents.map(e => ({ id: e.id, date: e.date })).sort())
-      } else {
-        // Only mark as initialized if no events - don't clear existing events
-        if (!eventsInitialized) {
-          console.log('⏸️ No events yet - marking as initialized')
-          setEventsInitialized(true)
-        }
-      }
-    }
-    
-    convertToEvents()
-  }, [isProvider, scheduledJobs, providerBookings, loading])
+// Convert scheduledJobs AND providerBookings to calendar events for providers (disabled)
+useEffect(() => {
+  return
+}, [isProvider, scheduledJobs, providerBookings, loading])
 
       // Convert bookings to calendar events for consumers
   useEffect(() => {
@@ -656,10 +558,7 @@ export default function BookingsPage() {
           else status = 'scheduled'
           
           // Get address from service_address or service_details
-          const address = booking.service_address || 
-                          (booking.service_details?.from_address) ||
-                          (booking.service_details?.address) ||
-                          ''
+          const address = formatAddress(booking.service_address || (booking.service_details?.from_address) || (booking.service_details?.address) || '')
           
           console.log('Converting booking:', booking.id, 'date:', date, 'status:', status, 'address:', address)
           
@@ -675,7 +574,7 @@ export default function BookingsPage() {
               address: address,
               city: booking.service_city || booking.business?.city || '',
               state: booking.service_state || booking.business?.state || '',
-              price: booking.total_price_cents || booking.base_price_cents || 0,
+              price: (booking.total_price_cents && booking.total_price_cents > 0) ? booking.total_price_cents : (computeTotalDueCents(booking) || booking.base_price_cents || 0),
               serviceType: booking.service_type || '',
               bookingId: booking.id, // Add booking ID for navigation
               serviceDetails: booking.service_details || {}, // Add full service details
@@ -695,6 +594,33 @@ export default function BookingsPage() {
       setCalendarEvents([])
     }
   }, [isProvider, bookings])
+
+  // Deep-link: open calendar with a specific booking
+  useEffect(() => {
+    const openId = searchParams?.get('open')
+    const dateStr = searchParams?.get('date')
+    if (!openId || !dateStr) return
+    // Switch to calendar view and navigate to month
+    setViewMode('calendar')
+    const dt = new Date(dateStr)
+    if (!isNaN(dt.getTime())) {
+      setCurrentMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+    }
+    // Try to open the event when events are ready
+    let tries = 0
+    const maxTries = 25
+    const timer = setInterval(() => {
+      tries++
+      const ev = calendarEvents.find(e => (e.metadata?.bookingId === openId) || e.id === `provider-booking-${openId}` || e.id === openId)
+      if (ev) {
+        setSelectedEvent(ev)
+        clearInterval(timer)
+      } else if (tries >= maxTries) {
+        clearInterval(timer)
+      }
+    }, 200)
+    return () => clearInterval(timer)
+  }, [searchParams, calendarEvents])
 
   const checkUserType = async () => {
     try {
@@ -885,47 +811,9 @@ export default function BookingsPage() {
   }
 
   const fetchScheduledJobs = async () => {
-    if (!providerId && !businessId) {
-      console.log('No providerId or businessId for fetchScheduledJobs')
-      return
-    }
-
-    try {
-      const startOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).toISOString().split('T')[0]
-      const endOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).toISOString().split('T')[0]
-
-      console.log('Fetching scheduled jobs for provider:', providerId || businessId, 'from', startOfMonth, 'to', endOfMonth)
-
-      const params = new URLSearchParams()
-      if (providerId) params.set('providerId', providerId)
-      if (businessId) params.set('businessId', businessId)
-      params.set('startDate', startOfMonth)
-      params.set('endDate', endOfMonth)
-      if (showArchived) params.set('showArchived', 'true')
-
-      const res = await fetch(`/api/movers/availability/scheduled?${params}`)
-      const data = await res.json()
-
-      console.log('Scheduled jobs API response:', data)
-
-      if (data.error) {
-        console.error('Error from scheduled jobs API:', data.error)
-        setScheduledJobs([])
-        return
-      }
-
-      if (data.scheduled) {
-        console.log('Loaded scheduled jobs:', data.scheduled.length)
-        console.log('Sample scheduled job:', data.scheduled[0])
-        setScheduledJobs(data.scheduled)
-      } else {
-        console.log('No scheduled jobs in response')
-        setScheduledJobs([])
-      }
-    } catch (error) {
-      console.error('Error fetching scheduled jobs:', error)
-      setScheduledJobs([])
-    }
+    // Scheduled jobs removed: ensure none are shown
+    setScheduledJobs([])
+    return
   }
 
   const saveAvailabilityRules = async () => {
@@ -1000,34 +888,7 @@ export default function BookingsPage() {
             <h1 className="text-3xl font-bold text-gray-900">Manage Calendar</h1>
             <p className="text-gray-600">Set your availability and view scheduled jobs</p>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
-              <Button
-                size="sm"
-                onClick={() => setViewMode('calendar')}
-                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
-                  viewMode === 'calendar'
-                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
-                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
-                }`}
-              >
-                <Calendar className="w-4 h-4 mr-2" />
-                Calendar
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => setViewMode('list')}
-                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
-                  viewMode === 'list'
-                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
-                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
-                }`}
-              >
-                <Filter className="w-4 h-4 mr-2" />
-                List
-              </Button>
-            </div>
-          </div>
+          {/* View toggle removed; list view only */}
         </div>
 
         {viewMode === 'calendar' ? (
@@ -1052,37 +913,22 @@ export default function BookingsPage() {
                 <ModernCalendar
                   events={calendarEvents}
                   onDateClick={(date) => {
-                    const dateStr = date.toISOString().split('T')[0]
-                    const dayEvents = calendarEvents.filter(e => e.date === dateStr)
-                    console.log('Date clicked:', dateStr, 'Events for date:', dayEvents.length, dayEvents.map(e => e.title))
-                    if (dayEvents.length > 0) {
-                      // Show first event (user can click on individual events for others)
-                      setSelectedEvent(dayEvents[0])
-                    } else {
-                      // Show empty state modal so user can see the date was clicked
-                      setSelectedEvent({
-                        id: `date-${dateStr}`,
-                        date: dateStr,
-                        title: `No events scheduled for ${new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
-                        type: 'custom',
-                        metadata: {}
-                      })
-                    }
+                    // Do nothing on date click to avoid opening modal
                   }}
                   onEventClick={(event) => {
                     console.log('onEventClick called with event:', event.id, event.title)
-                    setSelectedEvent(event)
+                    const bookingId = event?.metadata?.bookingId
+                    if (bookingId) {
+                      router.push(`/dashboard/bookings/${bookingId}`)
+                      return
+                    }
+                    // Fallback: no modal
                   }}
                 />
               </CardContent>
             </Card>
 
-            {selectedEvent && (
-              <EventModal
-                event={selectedEvent}
-                onClose={() => setSelectedEvent(null)}
-              />
-            )}
+            {/* Popups disabled: open Track Order instead */}
 
             {/* Availability Rules Editor - Moved Below Calendar */}
             <Card className="border border-gray-200 shadow-sm">
@@ -1173,41 +1019,22 @@ export default function BookingsPage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            {/* Quick Stats (bookings only) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Total Jobs</CardTitle>
+                  <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{scheduledJobs.length + providerBookings.length}</div>
+                  <div className="text-2xl font-bold">{providerBookings.length}</div>
                 </CardContent>
               </Card>
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Scheduled</CardTitle>
+                  <CardTitle className="text-sm font-medium text-gray-600">Active</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-blue-600">
-                    {scheduledJobs.filter(j => j.status === 'scheduled' || j.status === 'confirmed').length + 
-                     providerBookings.filter(b => {
-                       const status = b.booking_status || (b as any).status
-                       return status === 'confirmed' || status === 'in_progress'
-                     }).length}
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-600">Pending</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-yellow-600">
-                    {providerBookings.filter(b => {
-                      const status = b.booking_status || (b as any).status
-                      return status === 'pending' || status === 'requested'
-                    }).length}
-                  </div>
+                  <div className="text-2xl font-bold text-blue-600">{providerBookings.filter(b => ['confirmed','in_progress'].includes(b.booking_status)).length}</div>
                 </CardContent>
               </Card>
               <Card>
@@ -1215,19 +1042,13 @@ export default function BookingsPage() {
                   <CardTitle className="text-sm font-medium text-gray-600">Completed</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold text-green-600">
-                    {scheduledJobs.filter(j => j.status === 'completed').length + 
-                     providerBookings.filter(b => {
-                       const status = b.booking_status || (b as any).status
-                       return status === 'completed'
-                     }).length}
-                  </div>
+                  <div className="text-2xl font-bold text-green-600">{providerBookings.filter(b => b.booking_status === 'completed').length}</div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Jobs List - Scheduled Jobs from movers_scheduled_jobs */}
-            {scheduledJobs.length > 0 && (
+            {/* Scheduled Jobs removed */}
+            {false && (
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-semibold">
@@ -1253,7 +1074,9 @@ export default function BookingsPage() {
                   </Button>
                 </div>
                 <div className="space-y-4">
-                  {scheduledJobs.map((job) => (
+                  {scheduledJobs
+                    .filter(job => showArchived ? job.is_archived : !job.is_archived)
+                    .map((job) => (
                     <Card 
                       key={job.id} 
                       className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all duration-200 cursor-pointer"
@@ -1326,7 +1149,10 @@ export default function BookingsPage() {
                                     <span><strong>Address:</strong> {job.quote.pickup_address}</span>
                                   </div>
                                 )}
-                                <div><strong>Price:</strong> ${((job.quote.price_total_cents || 0) / 100).toFixed(2)}</div>
+                                <div><strong>Total Due:</strong> {(() => {
+                                  const cents = job.quote?.price_total_cents || 0
+                                  return `$${(cents / 100).toFixed(2)}`
+                                })()}</div>
                               </div>
                             )}
                           </div>
@@ -1352,7 +1178,7 @@ export default function BookingsPage() {
                                       // Show job details modal or navigate to quote details
                                       // For now, show quote info
                                       const quoteDetails = job.quote ? 
-                                        `Customer: ${job.quote.full_name}\nAddress: ${job.quote.pickup_address}\nPrice: $${((job.quote.price_total_cents || 0) / 100).toFixed(2)}` :
+                                        `Customer: ${job.quote.full_name}\nAddress: ${job.quote.pickup_address}` :
                                         'No booking record found for this scheduled job.'
                                       alert(quoteDetails)
                                     }
@@ -1379,24 +1205,14 @@ export default function BookingsPage() {
                                   e.stopPropagation()
                                   setArchivingJob(job.id)
                                   try {
-                                    const response = await fetch('/api/bookings/archive', {
-                                      method: job.is_archived ? 'DELETE' : 'POST',
+                                    // Optimistic archive toggle
+                                    setScheduledJobs(prev => prev.map(j => j.id === job.id ? { ...j, is_archived: !job.is_archived } : j))
+                                    // Try backend (best-effort)
+                                    fetch('/api/movers/availability/scheduled', {
+                                      method: 'PATCH',
                                       headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        scheduledJobId: job.id,
-                                        providerId: job.provider_id
-                                      })
-                                    })
-
-                                    const data = await response.json()
-                                    if (response.ok) {
-                                      // Refresh scheduled jobs
-                                      if (isProvider && providerId) {
-                                        fetchScheduledJobs()
-                                      }
-                                    } else {
-                                      alert(data.error || 'Failed to update archive status')
-                                    }
+                                      body: JSON.stringify({ id: job.id, is_archived: !job.is_archived })
+                                    }).catch(() => {})
                                   } catch (error) {
                                     console.error('Error archiving job:', error)
                                     alert('Failed to update archive status')
@@ -1418,6 +1234,24 @@ export default function BookingsPage() {
                                 )}
                               </Button>
                             )}
+                            {/* Delete */}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-2 border-red-500 text-red-700 hover:bg-red-50"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (!confirm('Delete this scheduled job? This cannot be undone.')) return
+                                // Optimistic remove
+                                setScheduledJobs(prev => prev.filter(j => j.id !== job.id))
+                                // Best-effort backend delete
+                                fetch(`/api/movers/availability/scheduled?id=${encodeURIComponent(job.id)}`, {
+                                  method: 'DELETE'
+                                }).catch(() => {})
+                              }}
+                            >
+                              Delete
+                            </Button>
                           </div>
                         </div>
                       </CardContent>
@@ -1443,7 +1277,7 @@ export default function BookingsPage() {
                         {bookingRequests.map((booking) => {
                           // Use actual schema columns
                           const serviceDetails = booking.service_details || {}
-                          const fromAddress = serviceDetails.from_address || booking.service_address || ''
+                          const fromAddress = formatAddress(serviceDetails.from_address || booking.service_address || '')
                           const notes = booking.customer_notes || booking.business_notes || ''
                           
                           // Get customer name from booking relations
@@ -1523,9 +1357,10 @@ export default function BookingsPage() {
                                       {booking.service_type && (
                                         <div><strong>Service Type:</strong> {booking.service_type}</div>
                                       )}
-                                      {booking.total_price_cents && booking.total_price_cents > 0 && (
-                                        <div><strong>Price:</strong> ${(booking.total_price_cents / 100).toFixed(2)}</div>
-                                      )}
+                                      <div><strong>Total Due:</strong> {(() => {
+                                        const cents = computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0
+                                        return `$${(cents / 100).toFixed(2)}`
+                                      })()}</div>
                                       {notes && (
                                         <div className="mt-2 p-2 bg-gray-50 rounded">
                                           <strong>Notes:</strong> {notes}
@@ -1591,7 +1426,7 @@ export default function BookingsPage() {
                         {myOrders.map((booking) => {
                           // Use actual schema columns
                           const serviceDetails = booking.service_details || {}
-                          const fromAddress = serviceDetails.from_address || booking.service_address || ''
+                          const fromAddress = formatAddress(serviceDetails.from_address || booking.service_address || '')
                           const notes = booking.customer_notes || booking.business_notes || ''
                           
                           // Get business name from booking relations
@@ -1665,9 +1500,10 @@ export default function BookingsPage() {
                                       {booking.service_type && (
                                         <div><strong>Service Type:</strong> {booking.service_type}</div>
                                       )}
-                                      {booking.total_price_cents && booking.total_price_cents > 0 && (
-                                        <div><strong>Price:</strong> ${(booking.total_price_cents / 100).toFixed(2)}</div>
-                                      )}
+                                      <div><strong>Total Due:</strong> {(() => {
+                                        const cents = computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0
+                                        return `$${(cents / 100).toFixed(2)}`
+                                      })()}</div>
                                       {notes && (
                                         <div className="mt-2 p-2 bg-gray-50 rounded">
                                           <strong>Notes:</strong> {notes}
@@ -1774,52 +1610,7 @@ export default function BookingsPage() {
         </div>
       </div>
 
-      {/* Calendar View */}
-      {viewMode === 'calendar' && (
-        <div className="space-y-6">
-          {/* Modern Calendar with Events - Same Design as Providers */}
-          <Card className="border border-gray-200 shadow-sm overflow-hidden">
-            <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-              <CardTitle className="text-2xl font-semibold text-gray-900">My Bookings Calendar</CardTitle>
-              <CardDescription>Click on any date or event to view full details</CardDescription>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ModernCalendar
-                events={calendarEvents}
-                onDateClick={(date) => {
-                  const dateStr = date.toISOString().split('T')[0]
-                  const dayEvents = calendarEvents.filter(e => e.date === dateStr)
-                  console.log('Date clicked:', dateStr, 'Events for date:', dayEvents.length, dayEvents.map(e => e.title))
-                  if (dayEvents.length > 0) {
-                    // Show first event (user can click on individual events for others)
-                    setSelectedEvent(dayEvents[0])
-                  } else {
-                    // Show empty state modal so user can see the date was clicked
-                    setSelectedEvent({
-                      id: `date-${dateStr}`,
-                      date: dateStr,
-                      title: `No events scheduled for ${new Date(dateStr).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
-                      type: 'custom',
-                      metadata: {}
-                    })
-                  }
-                }}
-                onEventClick={(event) => {
-                  console.log('onEventClick called with event:', event.id, event.title)
-                  setSelectedEvent(event)
-                }}
-              />
-            </CardContent>
-          </Card>
-
-          {selectedEvent && (
-            <EventModal
-              event={selectedEvent}
-              onClose={() => setSelectedEvent(null)}
-            />
-          )}
-        </div>
-      )}
+      {/* Calendar removed - list view only */}
 
       {/* List View */}
       {viewMode === 'list' && (
@@ -1951,13 +1742,11 @@ export default function BookingsPage() {
                           <span className="text-gray-600">Location:</span>
                           <span className="font-semibold text-gray-900">{booking.service_city || booking.business?.city || ''}, {booking.service_state || booking.business?.state || ''}</span>
                         </div>
-                        {(booking.total_price_cents || booking.base_price_cents) && (
-                          <div className="flex items-center gap-2">
-                            <DollarSign className="w-4 h-4 text-gray-500" />
-                            <span className="text-gray-600">Total:</span>
-                            <span className="font-bold text-lg text-gray-900">{formatPrice(booking.total_price_cents || booking.base_price_cents || 0)}</span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="w-4 h-4 text-gray-500" />
+                          <span className="text-gray-600">Total Due:</span>
+                          <span className="font-bold text-lg text-gray-900">{formatPrice((computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0))}</span>
+                        </div>
                         {booking.business && (
                           <div className="flex items-center gap-2">
                             <Star className="w-4 h-4 fill-gray-400 text-gray-400" />
@@ -2001,7 +1790,7 @@ export default function BookingsPage() {
                   <div className="mb-8 pb-8 border-b border-gray-200">
                     <div className="mb-3">
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Service Address</h4>
-                      <p className="text-base text-gray-900 leading-relaxed break-words">{booking.service_address}</p>
+                      <p className="text-base text-gray-900 leading-relaxed break-words">{formatAddress(booking.service_address)}</p>
                     </div>
                   </div>
                 )}
@@ -2011,6 +1800,24 @@ export default function BookingsPage() {
                   <div className="mb-8 pb-8 border-b border-gray-200">
                     <h4 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-6">Order Details</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6">
+                      {(() => {
+                        // Helper to safely format addresses that may be strings or objects
+                        const formatAddress = (addr: any): string => {
+                          if (!addr) return ''
+                          if (typeof addr === 'string') return addr
+                          if (typeof addr === 'object') {
+                            const street = addr.address || addr.street || ''
+                            const apt = addr.aptSuite || addr.apt_suite || ''
+                            const city = addr.city || addr.city_name || ''
+                            const state = addr.state || addr.state_name || ''
+                            const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+                            const parts = [street, apt, city, state, zip].filter(Boolean)
+                            return parts.join(', ').replace(/,\s*,/g, ', ')
+                          }
+                          return String(addr)
+                        }
+                        return null
+                      })()}
                       {/* Pickup Addresses */}
                       {(serviceDetails.pickup_addresses || serviceDetails.pickup_address || serviceDetails.from_address) && (
                         <div className="space-y-2">
@@ -2020,8 +1827,8 @@ export default function BookingsPage() {
                           </div>
                           {Array.isArray(serviceDetails.pickup_addresses) ? (
                             <div className="space-y-2 pl-6">
-                              {serviceDetails.pickup_addresses.slice(0, 2).map((addr: string, idx: number) => (
-                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {addr}</p>
+                              {serviceDetails.pickup_addresses.slice(0, 2).map((addr: any, idx: number) => (
+                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {formatAddress(addr)}</p>
                               ))}
                               {serviceDetails.pickup_addresses.length > 2 && (
                                 <p className="text-sm text-gray-500 italic">+{serviceDetails.pickup_addresses.length - 2} more</p>
@@ -2029,7 +1836,7 @@ export default function BookingsPage() {
                             </div>
                           ) : (
                             <p className="text-base text-gray-900 leading-relaxed break-words pl-6">
-                              {serviceDetails.pickup_addresses || serviceDetails.pickup_address || serviceDetails.from_address}
+                              {formatAddress(serviceDetails.pickup_addresses || serviceDetails.pickup_address || serviceDetails.from_address)}
                             </p>
                           )}
                         </div>
@@ -2044,8 +1851,8 @@ export default function BookingsPage() {
                           </div>
                           {Array.isArray(serviceDetails.delivery_addresses) ? (
                             <div className="space-y-2 pl-6">
-                              {serviceDetails.delivery_addresses.slice(0, 2).map((addr: string, idx: number) => (
-                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {addr}</p>
+                                {serviceDetails.delivery_addresses.slice(0, 2).map((addr: any, idx: number) => (
+                                <p key={idx} className="text-base text-gray-900 leading-relaxed break-words">{idx + 1}. {formatAddress(addr)}</p>
                               ))}
                               {serviceDetails.delivery_addresses.length > 2 && (
                                 <p className="text-sm text-gray-500 italic">+{serviceDetails.delivery_addresses.length - 2} more</p>
@@ -2053,7 +1860,7 @@ export default function BookingsPage() {
                             </div>
                           ) : (
                             <p className="text-base text-gray-900 leading-relaxed break-words pl-6">
-                              {serviceDetails.delivery_addresses || serviceDetails.dropoff_address || serviceDetails.to_address}
+                              {formatAddress(serviceDetails.delivery_addresses || serviceDetails.dropoff_address || serviceDetails.to_address)}
                             </p>
                           )}
                         </div>

@@ -40,6 +40,9 @@ export async function loadProviderConfig(providerId: string): Promise<ProviderCo
     .maybeSingle()
 
   if (consolidated) {
+    const packingRaw = (consolidated.packing as any) || {}
+    const packingMaterials = packingRaw.materials || []
+    
     return {
       policies: {
         base_zip: (consolidated.policies as any)?.base_zip ?? null,
@@ -50,7 +53,12 @@ export async function loadProviderConfig(providerId: string): Promise<ProviderCo
       },
       tiers: (consolidated.tiers as any[]) || [],
       heavy_item_tiers: (consolidated.heavy_item_tiers as any[]) || [],
-      packing: (consolidated.packing as any) || { enabled: false, per_room_cents: 0, materials_included: false, materials: [] },
+      packing: {
+        enabled: Boolean(packingRaw.enabled),
+        per_room_cents: packingRaw.per_room_cents || 0,
+        materials_included: Boolean(packingRaw.materials_included),
+        materials: Array.isArray(packingMaterials) ? packingMaterials : [],
+      },
       stairs: ((consolidated.policies as any)?.stairs as any) || { included: true, per_flight_cents: 0 }
     }
   }

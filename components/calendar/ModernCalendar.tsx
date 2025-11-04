@@ -301,7 +301,7 @@ export function ModernCalendar({
                           flex flex-col justify-center
                           ${getStatusColor(event.status)}
                         `}
-                        title={`${event.title}${event.time ? ' - ' + event.time : ''}${event.metadata?.price ? ' - ' + formatPrice(event.metadata.price) : ''}`}
+                        title={`${event.title}${event.time ? ' - ' + event.time : ''}${((event.metadata?.booking?.total_price_cents ?? event.metadata?.price) ? ' - ' + formatPrice((event.metadata?.booking?.total_price_cents ?? event.metadata?.price)) : '')}${event.metadata?.address ? ' - ' + event.metadata.address : ''}`}
                         style={{
                           display: 'flex',
                           opacity: 1,
@@ -319,13 +319,25 @@ export function ModernCalendar({
                               {event.time.split(' - ')[0]}
                             </div>
                           )}
-                          {event.metadata?.price && event.metadata.price > 0 && (
+                          {(event.metadata?.booking?.total_price_cents ?? event.metadata?.price) > 0 && (
                             <div className="text-[10px] sm:text-[11px] md:text-xs text-white/95 truncate font-bold flex items-center gap-1">
                               <DollarSign className="w-3 h-3" />
-                              {formatPrice(event.metadata.price)}
+                              {formatPrice((event.metadata?.booking?.total_price_cents ?? event.metadata?.price) as number)}
+                            </div>
+                          )}
+                          {event.metadata?.crewSize && (
+                            <div className="text-[10px] sm:text-[11px] md:text-xs text-white/90 truncate font-semibold flex items-center gap-1">
+                              <Users className="w-3 h-3" />
+                              {event.metadata.crewSize}
                             </div>
                           )}
                         </div>
+                        {event.metadata?.address && (
+                          <div className="mt-0.5 text-[10px] sm:text-[11px] md:text-xs text-white/85 truncate font-medium flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            <span className="truncate">{event.metadata.address}</span>
+                          </div>
+                        )}
                       </button>
                     ))}
                     {dayEvents.length > 2 && (
