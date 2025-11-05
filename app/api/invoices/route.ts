@@ -273,6 +273,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 })
     }
 
+    // Send notification to customer about new invoice
+    if (invoice?.customer_id) {
+      try {
+        const { sendNotification } = await import('@/lib/notifications')
+        await sendNotification(
+          invoice.customer_id,
+          'invoice_created',
+          'email',
+          {
+            invoice_id: invoice.id,
+            booking_id: bookingId || undefined,
+            message: 'A new invoice has been created for you'
+          }
+        )
+      } catch (notifError) {
+        console.error('Error sending invoice notification:', notifError)
+        // Don't fail invoice creation if notification fails
+      }
+    }
+
     // Create invoice items
     if (items.length > 0) {
       const invoiceItems = items.map((item: any, index: number) => ({

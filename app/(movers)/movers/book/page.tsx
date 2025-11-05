@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { Suspense, useEffect, useMemo, useState } from "react"
+import { Suspense, useEffect, useMemo, useState, useCallback } from "react"
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
@@ -25,8 +25,33 @@ type MoveDetails = {
   moveDate: string
 }
 
-// Modern Calendar Component
-function ModernCalendar({ selectedDate, onDateSelect, minDate }: { selectedDate?: Date | string; onDateSelect: (date: Date) => void; minDate: Date }) {
+// Modern Calendar Component with Availability
+function ModernCalendar({ 
+  selectedDate, 
+  onDateSelect, 
+  minDate,
+  businessId,
+  providerId,
+  calendarId,
+  availabilitySlots = [],
+  onMonthChange,
+  businessInfo
+}: { 
+  selectedDate?: Date | string
+  onDateSelect: (date: Date) => void
+  minDate: Date
+  businessId?: string
+  providerId?: string
+  calendarId?: string
+  availabilitySlots?: Array<{
+    date: string
+    timeSlot: 'morning' | 'afternoon'
+    status: 'available' | 'busy' | 'unavailable'
+    available: boolean
+  }>
+  onMonthChange?: (month: Date) => void
+  businessInfo?: { min_booking_notice_hours?: number | null } | null
+}) {
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -60,7 +85,12 @@ function ModernCalendar({ selectedDate, onDateSelect, minDate }: { selectedDate?
   const days = getDaysInMonth(currentMonth)
 
   const navigateMonth = (direction: number) => {
-    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + direction, 1))
+    const newMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + direction, 1)
+    setCurrentMonth(newMonth)
+    // Notify parent to fetch availability for new month
+    if (onMonthChange) {
+      onMonthChange(newMonth)
+    }
   }
 
   const isDateDisabled = (date: Date) => {
@@ -68,6 +98,31 @@ function ModernCalendar({ selectedDate, onDateSelect, minDate }: { selectedDate?
     dateOnly.setHours(0, 0, 0, 0)
     const minDateOnly = new Date(minDate)
     minDateOnly.setHours(0, 0, 0, 0)
+    
+    // Also check advance notice requirement
+    if (businessInfo?.min_booking_notice_hours) {
+      const now = new Date()
+      const minBookableTime = new Date(now.getTime() + (businessInfo.min_booking_notice_hours * 60 * 60 * 1000))
+      const minBookableDate = new Date(minBookableTime)
+      minBookableDate.setHours(0, 0, 0, 0)
+      
+      // If same day, check if the slot time has passed
+      if (dateOnly.getTime() === minBookableDate.getTime()) {
+        // Same day - check if morning (8am) or afternoon (12pm) slot is still available
+        const morningSlotTime = new Date(dateOnly)
+        morningSlotTime.setHours(8, 0, 0, 0)
+        const afternoonSlotTime = new Date(dateOnly)
+        afternoonSlotTime.setHours(12, 0, 0, 0)
+        
+        // If both slots have passed the advance notice time, disable the date
+        if (morningSlotTime < minBookableTime && afternoonSlotTime < minBookableTime) {
+          return true
+        }
+      } else if (dateOnly < minBookableDate) {
+        return true
+      }
+    }
+    
     return dateOnly < minDateOnly
   }
 
@@ -142,23 +197,44 @@ function ModernCalendar({ selectedDate, onDateSelect, minDate }: { selectedDate?
         <div className="grid grid-cols-7 gap-1.5">
           {days.map((date, idx) => {
             if (!date) {
-              return <div key={`empty-${idx}`} className="h-12" />
+              return <div key={`empty-${idx}`} className="h-16" />
             }
 
             const disabled = isDateDisabled(date)
             const selected = isSelected(date)
             const todayDate = isToday(date)
+            // Format date as YYYY-MM-DD in UTC to match API dates (API uses Date.UTC)
+            const dateStr = date.toISOString().split('T')[0]
+            
+            // Get availability for this date (new API returns status instead of counts)
+            const morningSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'morning')
+            const afternoonSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'afternoon')
+            
+            // Debug: Log when we find blocked dates
+            if ((morningSlot?.status === 'unavailable' || afternoonSlot?.status === 'unavailable')) {
+              console.log(`[Calendar] Date ${dateStr}: M=${morningSlot?.status || 'missing'}, A=${afternoonSlot?.status || 'missing'}`)
+            }
+            
+            // Check status: available, busy, or unavailable
+            // Default to available if no data (optimistic - let user try to book)
+            const morningStatus = morningSlot?.status || 'available'
+            const afternoonStatus = afternoonSlot?.status || 'available'
+            const morningUnavailable = morningStatus === 'unavailable'
+            const afternoonUnavailable = afternoonStatus === 'unavailable'
+            
+            // Only disable if BOTH slots are unavailable (user can still book if at least one slot is available)
+            const isUnavailable = morningUnavailable && afternoonUnavailable
 
             return (
               <button
                 key={date.toISOString()}
                 type="button"
-                onClick={() => !disabled && onDateSelect(date)}
-                disabled={disabled}
+                onClick={() => !disabled && !isUnavailable && onDateSelect(date)}
+                disabled={disabled || isUnavailable}
                 className={`
-                  h-12 w-full rounded-lg text-sm font-bold transition-all duration-150 flex items-center justify-center
-                  ${disabled 
-                    ? 'text-gray-300 cursor-not-allowed font-normal' 
+                  relative h-16 w-full rounded-lg text-sm font-bold transition-all duration-150 flex flex-col items-center justify-center
+                  ${disabled || isUnavailable
+                    ? 'text-gray-300 cursor-not-allowed font-normal bg-gray-50' 
                     : selected
                       ? 'bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg shadow-orange-500/30 scale-105 font-bold'
                       : todayDate
@@ -167,7 +243,7 @@ function ModernCalendar({ selectedDate, onDateSelect, minDate }: { selectedDate?
                   }
                 `}
               >
-                {date.getDate()}
+                <span className="text-sm">{date.getDate()}</span>
               </button>
             )
           })}
@@ -699,6 +775,7 @@ function ReservationSubmissionStep({
   quote,
   providerId,
   businessId,
+  calendarId,
   timeSlot,
   onBack,
   // CRITICAL: Pass service details from step 3
@@ -707,12 +784,14 @@ function ReservationSubmissionStep({
   stairFlights,
   needsPacking,
   packingChoice,
-  packingRooms
+  packingRooms,
+  availabilitySlots
 }: {
   details: MoveDetails
   quote: any
   providerId?: string
   businessId?: string
+  calendarId?: string
   timeSlot?: string
   onBack: () => void
   heavySelections?: Array<{ key: string; min: number; max: number; price_cents: number; count: number }>
@@ -721,6 +800,12 @@ function ReservationSubmissionStep({
   needsPacking?: boolean
   packingChoice?: 'kit' | 'paygo' | 'none'
   packingRooms?: number
+  availabilitySlots?: Array<{
+    date: string
+    timeSlot: 'morning' | 'afternoon'
+    status: 'available' | 'busy' | 'unavailable'
+    available: boolean
+  }>
 }) {
   const [submitting, setSubmitting] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -762,6 +847,22 @@ function ReservationSubmissionStep({
       return
     }
 
+    // Validate that the selected date/time slot is still available (not blocked or fully booked)
+    if (details.moveDate && timeSlot && availabilitySlots && availabilitySlots.length > 0) {
+      const dateStr = details.moveDate
+      const selectedSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === timeSlot)
+      
+      if (selectedSlot) {
+        // Only block if status is 'unavailable'
+        // 'available' and 'busy' both allow booking
+        if (selectedSlot.status === 'unavailable') {
+          setError(`This ${timeSlot} time slot is not available. Please select another date or time.`)
+          setSubmitting(false)
+          return
+        }
+      }
+    }
+    
     setSubmitting(true)
     setError(null)
 
@@ -813,8 +914,9 @@ function ReservationSubmissionStep({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          providerId,
-          businessId,
+          calendarId: calendarId, // Use calendarId if available (secure)
+          providerId: calendarId ? undefined : providerId, // Legacy support
+          businessId: calendarId ? undefined : businessId, // Legacy support
           quoteId: quote?.quote?.id || quote?.id,  // Handle different quote structures
           moveDate: details.moveDate,
           timeSlot,
@@ -1146,10 +1248,20 @@ function WizardInner() {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const search = useSearchParams()
-  const providerIdParam = search.get('providerId') || undefined
-  const businessIdParam = search.get('businessId') || undefined
+  const calendarIdParam = search.get('calendarId') || undefined
+  const providerIdParam = search.get('providerId') || undefined // Legacy support
+  const businessIdParam = search.get('businessId') || undefined // Legacy support
+  const [resolvedCalendarId, setResolvedCalendarId] = useState<string | undefined>(calendarIdParam) // Resolved calendarId
   const [providerName, setProviderName] = useState<string>("")
-  const [businessInfo, setBusinessInfo] = useState<{ id: string; name: string; city?: string | null; state?: string | null; description?: string | null } | null>(null)
+  const [businessInfo, setBusinessInfo] = useState<{ id: string; name: string; city?: string | null; state?: string | null; description?: string | null; min_booking_notice_hours?: number | null } | null>(null)
+  const [availabilitySlots, setAvailabilitySlots] = useState<Array<{
+    date: string
+    timeSlot: 'morning' | 'afternoon'
+    status: 'available' | 'busy' | 'unavailable'
+    available: boolean
+  }>>([])
+  const [fetchingAvailability, setFetchingAvailability] = useState(false)
+  const [fetchingDateAvailability, setFetchingDateAvailability] = useState<string | null>(null) // Track which date is being fetched
   const supabase = createClient()
 
   // CRITICAL: Check authentication before allowing booking
@@ -1176,37 +1288,58 @@ function WizardInner() {
     checkAuth()
   }, [])
 
+  // CRITICAL: Resolve calendarId from businessId or providerId if not provided
+  // This ensures we always use the calendar API when possible
   useEffect(() => {
-    (async () => {
-      if (businessIdParam) {
-        const { data } = await supabase
-          .from('businesses')
-          .select('id,name,city,state,description')
-          .eq('id', businessIdParam)
-          .maybeSingle()
-        if (data?.name) setProviderName(data.name)
-        if (data) setBusinessInfo(data as any)
+    const resolveCalendarId = async () => {
+      // If calendarId is already provided, use it
+      if (calendarIdParam) {
+        setResolvedCalendarId(calendarIdParam)
         return
       }
-      if (providerIdParam) {
-        // Resolve via provider -> business
-        const { data: prov } = await supabase
-          .from('movers_providers')
-          .select('business_id')
-          .eq('id', providerIdParam)
-          .maybeSingle()
-        if (prov?.business_id) {
-          const { data } = await supabase
-            .from('businesses')
-            .select('id,name,city,state,description')
-            .eq('id', prov.business_id)
+
+      // Try to resolve from businessId
+      if (businessIdParam && !resolvedCalendarId) {
+        try {
+          const { data: provider } = await supabase
+            .from('movers_providers')
+            .select('calendar_id')
+            .eq('business_id', businessIdParam)
             .maybeSingle()
-          if (data?.name) setProviderName(data.name)
-          if (data) setBusinessInfo(data as any)
+          
+          if (provider?.calendar_id) {
+            console.log(`[Booking Page] Resolved calendarId ${provider.calendar_id} from businessId ${businessIdParam}`)
+            setResolvedCalendarId(provider.calendar_id)
+            // Update URL to use calendarId (but don't reload - just update state)
+            return
+          }
+        } catch (error) {
+          console.error('Error resolving calendarId from businessId:', error)
         }
       }
-    })()
-  }, [providerIdParam, businessIdParam, supabase])
+
+      // Try to resolve from providerId
+      if (providerIdParam && !resolvedCalendarId) {
+        try {
+          const { data: provider } = await supabase
+            .from('movers_providers')
+            .select('calendar_id')
+            .eq('id', providerIdParam)
+            .maybeSingle()
+          
+          if (provider?.calendar_id) {
+            console.log(`[Booking Page] Resolved calendarId ${provider.calendar_id} from providerId ${providerIdParam}`)
+            setResolvedCalendarId(provider.calendar_id)
+            return
+          }
+        } catch (error) {
+          console.error('Error resolving calendarId from providerId:', error)
+        }
+      }
+    }
+
+    resolveCalendarId()
+  }, [calendarIdParam, businessIdParam, providerIdParam, supabase])
 
   const [tiers, setTiers] = useState<Array<{ crew_size: number; hourly_rate_cents: number; min_hours: number }>>([])
   const [packingCfg, setPackingCfg] = useState<{ enabled: boolean; per_room_cents: number; materials_included: boolean; materials: Array<{ name: string; price_cents: number; included: boolean }> } | null>(null)
@@ -1220,8 +1353,15 @@ function WizardInner() {
 
   useEffect(() => {
     (async () => {
-      if (!providerIdParam && !businessIdParam) return
-      const q = providerIdParam ? `providerId=${providerIdParam}` : `businessId=${businessIdParam}`
+      // Always prefer resolvedCalendarId (auto-resolved from businessId/providerId)
+      const activeCalendarId = resolvedCalendarId || calendarIdParam
+      if (!activeCalendarId && !providerIdParam && !businessIdParam) return
+      
+      // For calendarId, we'll need to fetch provider config differently
+      // For now, use legacy method if calendarId is not available
+      const q = activeCalendarId 
+        ? `calendarId=${activeCalendarId}` 
+        : (providerIdParam ? `providerId=${providerIdParam}` : `businessId=${businessIdParam}`)
       try {
         const res = await fetch(`/api/movers/provider-config?${q}`, { cache: 'no-store' })
         if (!res.ok) {
@@ -1368,6 +1508,200 @@ function WizardInner() {
       } catch {}
     })()
   }, [providerIdParam, businessIdParam])
+
+  // Fetch availability slots for the current month and when month changes
+  useEffect(() => {
+    const fetchAvailability = async (targetMonth?: Date) => {
+      // ALWAYS prefer resolvedCalendarId (auto-resolved from businessId/providerId)
+      const activeCalendarId = resolvedCalendarId || calendarIdParam
+      if (!activeCalendarId && !providerIdParam && !businessIdParam) return
+      
+      // Don't fetch if we're still resolving calendarId (wait for it to be set)
+      if (!resolvedCalendarId && !calendarIdParam && (businessIdParam || providerIdParam)) {
+        console.log('[Public Booking] Waiting for calendarId resolution...')
+        return
+      }
+      
+      setFetchingAvailability(true)
+      try {
+        const monthToFetch = targetMonth || new Date()
+        const year = monthToFetch.getFullYear()
+        const month = monthToFetch.getMonth()
+        
+        // Fetch for the specified month + next month (pre-fetch for instant UX)
+        const startDate = new Date(Date.UTC(year, month, 1))
+        const endDate = new Date(Date.UTC(year, month + 2, 0)) // Next month end
+        const startDateStr = startDate.toISOString().split('T')[0]
+        const endDateStr = endDate.toISOString().split('T')[0]
+
+        let res: Response
+        // ALWAYS use calendarId if available (secure method with cache table)
+        if (activeCalendarId) {
+          console.log(`[Public Booking] Using CALENDAR API with calendarId: ${activeCalendarId}`)
+          res = await fetch(`/api/calendar/${activeCalendarId}/availability?startDate=${startDateStr}&endDate=${endDateStr}`, {
+            cache: 'no-store', // Ensure fresh data
+          })
+        } else {
+          // Fallback: Legacy support (not recommended - doesn't use cache)
+          console.warn(`[Public Booking] Falling back to LEGACY API - calendarId not available`)
+          const params = new URLSearchParams()
+          if (providerIdParam) params.set('providerId', providerIdParam)
+          if (businessIdParam) params.set('businessId', businessIdParam)
+          params.set('startDate', startDateStr)
+          params.set('endDate', endDateStr)
+          res = await fetch(`/api/movers/availability/slots?${params}`, {
+            cache: 'no-store',
+          })
+        }
+        
+        const data = await res.json()
+        if (data.slots) {
+          console.log(`[Public Booking] Fetched ${data.slots.length} availability slots for ${startDateStr} to ${endDateStr}`)
+          console.log(`[Public Booking] Using API: ${activeCalendarId ? 'CALENDAR API (cache table)' : 'LEGACY API (on-the-fly)'}`)
+          // Debug: Log blocked dates
+          const blockedSlots = data.slots.filter((s: any) => s.status === 'unavailable')
+          if (blockedSlots.length > 0) {
+            console.log(`[Public Booking] Found ${blockedSlots.length} unavailable slots:`, 
+              blockedSlots.map((s: any) => `${s.date} ${s.timeSlot}`).join(', ')
+            )
+          } else {
+            console.log(`[Public Booking] No unavailable slots found in response`)
+          }
+          setAvailabilitySlots(prev => {
+            // Merge new slots, keeping existing ones outside the fetched range
+            const slotMap = new Map<string, typeof data.slots[0]>()
+            // Keep existing slots outside the fetched range
+            prev.forEach(slot => {
+              if (slot.date < startDateStr || slot.date > endDateStr) {
+                slotMap.set(`${slot.date}:${slot.timeSlot}`, slot)
+              }
+            })
+            // Add new slots (overwrites existing ones in the fetched range)
+            // IMPORTANT: Always prefer 'unavailable' status if either old or new has it
+            data.slots.forEach((slot: typeof data.slots[0]) => {
+              const key = `${slot.date}:${slot.timeSlot}`
+              const existing = prev.find(s => `${s.date}:${s.timeSlot}` === key)
+              if (existing && existing.status === 'unavailable' && slot.status !== 'unavailable') {
+                // Keep the unavailable status - don't overwrite with available
+                slotMap.set(key, existing)
+              } else {
+                // Use new slot data
+                slotMap.set(key, slot)
+              }
+            })
+            const merged = Array.from(slotMap.values())
+            console.log(`[Public Booking] Merged slots: ${merged.length} total (kept ${prev.length - data.slots.length} existing, added ${data.slots.length} new)`)
+            const blockedCount = merged.filter(s => s.status === 'unavailable').length
+            console.log(`[Public Booking] Blocked dates in merged data: ${blockedCount}`)
+            return merged
+          })
+        }
+      } catch (error) {
+        console.error('Error fetching availability slots:', error)
+      } finally {
+        setFetchingAvailability(false)
+      }
+    }
+
+    fetchAvailability()
+  }, [resolvedCalendarId, calendarIdParam, providerIdParam, businessIdParam])
+  
+  // Handler for when calendar month changes - pre-fetch availability
+  const handleCalendarMonthChange = useCallback((newMonth: Date) => {
+    const year = newMonth.getFullYear()
+    const month = newMonth.getMonth()
+    const startDate = new Date(Date.UTC(year, month, 1))
+    const endDate = new Date(Date.UTC(year, month + 2, 0)) // Pre-fetch next month too
+    const startDateStr = startDate.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+
+    // Check if we already have data for this month range
+    const hasDataForMonth = availabilitySlots.some(s => 
+      s.date >= startDateStr && s.date <= endDateStr
+    )
+    
+    // If we don't have data, fetch it immediately
+    const activeCalendarId = resolvedCalendarId || calendarIdParam
+    if (!hasDataForMonth && (activeCalendarId || providerIdParam || businessIdParam)) {
+      setFetchingAvailability(true)
+      
+      let fetchUrl: string
+      if (activeCalendarId) {
+        console.log(`[Public Booking] Month change - Using CALENDAR API with calendarId: ${activeCalendarId}`)
+        fetchUrl = `/api/calendar/${activeCalendarId}/availability?startDate=${startDateStr}&endDate=${endDateStr}`
+      } else {
+        console.warn(`[Public Booking] Month change - Falling back to LEGACY API`)
+        const params = new URLSearchParams()
+        if (providerIdParam) params.set('providerId', providerIdParam)
+        if (businessIdParam) params.set('businessId', businessIdParam)
+        params.set('startDate', startDateStr)
+        params.set('endDate', endDateStr)
+        fetchUrl = `/api/movers/availability/slots?${params}`
+      }
+
+      fetch(fetchUrl, { cache: 'no-store' })
+        .then(res => res.json())
+        .then(data => {
+          if (data.slots) {
+            console.log(`[Public Booking] Fetched ${data.slots.length} availability slots for month ${month + 1}/${year}`)
+            const blockedSlots = data.slots.filter((s: any) => s.status === 'unavailable')
+            if (blockedSlots.length > 0) {
+              console.log(`[Public Booking] Found ${blockedSlots.length} unavailable slots:`, 
+                blockedSlots.map((s: any) => `${s.date} ${s.timeSlot}`).join(', ')
+              )
+            }
+            setAvailabilitySlots(prev => {
+              // Merge slots efficiently
+              const slotMap = new Map<string, typeof data.slots[0]>()
+              prev.forEach(slot => {
+                slotMap.set(`${slot.date}:${slot.timeSlot}`, slot)
+              })
+              // IMPORTANT: Always prefer 'unavailable' status if either old or new has it
+              data.slots.forEach((slot: typeof data.slots[0]) => {
+                const key = `${slot.date}:${slot.timeSlot}`
+                const existing = slotMap.get(key)
+                if (existing && existing.status === 'unavailable' && slot.status !== 'unavailable') {
+                  // Keep the unavailable status - don't overwrite with available
+                  // Don't update this slot
+                } else {
+                  // Use new slot data
+                  slotMap.set(key, slot)
+                }
+              })
+              const merged = Array.from(slotMap.values())
+              const blockedCount = merged.filter(s => s.status === 'unavailable').length
+              console.log(`[Public Booking] Month change merged: ${merged.length} slots, ${blockedCount} blocked`)
+              return merged
+            })
+          }
+        })
+        .catch(error => {
+          console.error('Error fetching availability slots:', error)
+        })
+        .finally(() => {
+          setFetchingAvailability(false)
+        })
+    }
+  }, [resolvedCalendarId, calendarIdParam, providerIdParam, businessIdParam, availabilitySlots])
+
+  // Clear selected timeSlot if it becomes unavailable when date changes
+  useEffect(() => {
+    if (!details.moveDate) return
+    
+    const dateStr = details.moveDate
+    const morningSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'morning')
+    const afternoonSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'afternoon')
+    
+    // Only clear if we have availability data
+    if (morningSlot !== undefined || afternoonSlot !== undefined) {
+      const currentTimeSlot = (details as any).timeSlot
+      if (currentTimeSlot === 'morning' && morningSlot && !morningSlot.available) {
+        setDetails(d => ({ ...d, timeSlot: undefined } as any))
+      } else if (currentTimeSlot === 'afternoon' && afternoonSlot && !afternoonSlot.available) {
+        setDetails(d => ({ ...d, timeSlot: undefined } as any))
+      }
+    }
+  }, [details.moveDate, availabilitySlots])
 
   // Keep heavy selections in sync if provider tiers update later
   // But preserve existing counts to avoid resetting user selections
@@ -1668,7 +2002,8 @@ function WizardInner() {
     })
     
     try {
-      const res = await fetch('/api/movers/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, providerId: providerIdParam, businessId: businessIdParam }) })
+      const activeCalendarId = resolvedCalendarId || calendarIdParam
+      const res = await fetch('/api/movers/quotes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, calendarId: activeCalendarId, providerId: activeCalendarId ? undefined : providerIdParam, businessId: activeCalendarId ? undefined : businessIdParam }) })
       const data = await res.json()
       setLoadingDistance(false)
       
@@ -2714,7 +3049,14 @@ function WizardInner() {
             {/* Modern Calendar */}
             <div className="mb-6 w-full">
               <label className="block text-xs font-semibold mb-3 text-gray-700 uppercase tracking-wide text-center">Select Date</label>
-              <ModernCalendar 
+              {/* Only render calendar if we have resolved calendarId or confirmed no calendarId exists */}
+              {(!resolvedCalendarId && !calendarIdParam && (businessIdParam || providerIdParam) && fetchingAvailability) ? (
+                <div className="text-center py-8 text-gray-500">
+                  <div className="w-8 h-8 border-2 border-gray-400 border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                  <p className="text-sm">Loading calendar...</p>
+                </div>
+              ) : (
+                <ModernCalendar 
                 selectedDate={details.moveDate || undefined}
                 onDateSelect={(date) => {
                   // Format date in local timezone to avoid timezone shift issues
@@ -2722,11 +3064,65 @@ function WizardInner() {
                   const month = String(date.getMonth() + 1).padStart(2, '0')
                   const day = String(date.getDate()).padStart(2, '0')
                   const dateString = `${year}-${month}-${day}`
-                  console.log('[Date Select]', { selected: date, formatted: dateString, dateString })
+                  console.log('[Date Select]', { selected: date, formatted: dateString })
+                  
+                  // Immediately check availability for this date if not already loaded
+                  const morningSlot = availabilitySlots.find(s => s.date === dateString && s.timeSlot === 'morning')
+                  const afternoonSlot = availabilitySlots.find(s => s.date === dateString && s.timeSlot === 'afternoon')
+                  
+                  // If we don't have availability data for this date, fetch it instantly
+                  const activeCalendarId = resolvedCalendarId || calendarIdParam
+                  if ((morningSlot === undefined || afternoonSlot === undefined) && (activeCalendarId || providerIdParam || businessIdParam)) {
+                    // Mark that we're fetching this date
+                    setFetchingDateAvailability(dateString)
+                    
+                    // Fetch just this date's availability immediately
+                    const fetchUrl = activeCalendarId
+                      ? `/api/calendar/${activeCalendarId}/availability?startDate=${dateString}&endDate=${dateString}`
+                      : `/api/movers/availability/slots?${providerIdParam ? `providerId=${providerIdParam}` : `businessId=${businessIdParam}`}&startDate=${dateString}&endDate=${dateString}`
+                    
+                    fetch(fetchUrl, { cache: 'no-store' })
+                      .then(res => res.json())
+                      .then(data => {
+                        if (data.slots) {
+                          setAvailabilitySlots(prev => {
+                            // Merge slots efficiently using Map
+                            const slotMap = new Map<string, typeof data.slots[0]>()
+                            prev.forEach(slot => {
+                              slotMap.set(`${slot.date}:${slot.timeSlot}`, slot)
+                            })
+                            data.slots.forEach((slot: typeof data.slots[0]) => {
+                              slotMap.set(`${slot.date}:${slot.timeSlot}`, slot)
+                            })
+                            return Array.from(slotMap.values())
+                          })
+                        }
+                      })
+                      .catch(err => console.error('Error fetching date availability:', err))
+                      .finally(() => {
+                        setFetchingDateAvailability(null)
+                      })
+                  }
+                  
                   setDetails(d=>({...d,moveDate:dateString}))
                 }}
-                minDate={new Date()}
+                minDate={(() => {
+                  // Calculate minimum date based on advance notice
+                  const now = new Date()
+                  if (businessInfo?.min_booking_notice_hours) {
+                    const minBookableTime = new Date(now.getTime() + (businessInfo.min_booking_notice_hours * 60 * 60 * 1000))
+                    return minBookableTime
+                  }
+                  return new Date()
+                })()}
+                businessId={resolvedCalendarId ? undefined : businessIdParam}
+                providerId={resolvedCalendarId ? undefined : providerIdParam}
+                calendarId={resolvedCalendarId || calendarIdParam}
+                availabilitySlots={availabilitySlots}
+                onMonthChange={handleCalendarMonthChange}
+                businessInfo={businessInfo}
               />
+              )}
               {details.moveDate && (() => {
                 // Parse date string in local timezone to avoid UTC shift
                 const [year, month, day] = details.moveDate.split('-').map(Number)
@@ -2754,75 +3150,166 @@ function WizardInner() {
               const today = new Date()
               today.setHours(0, 0, 0, 0)
               return selectedDate < today
-            })() && (
-              <div className="mb-6 w-full animate-in fade-in slide-in-from-bottom-2 duration-200">
-                <label className="block text-xs font-semibold mb-3 text-gray-700 uppercase tracking-wide text-center">Preferred Time</label>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <button
-                    type="button"
-                    onClick={() => setDetails(d=>({...d,timeSlot:'morning'} as any))}
-                    className={`group relative p-4 rounded-xl border transition-all duration-200 ${
-                      (details as any).timeSlot === 'morning'
-                        ? 'border-orange-500 bg-orange-50 shadow-sm shadow-orange-500/10'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 text-left">
-                        <div className={`text-sm font-semibold mb-0.5 ${
-                          (details as any).timeSlot === 'morning' ? 'text-orange-700' : 'text-gray-900'
-                        }`}>
-                          Morning
-                        </div>
-                        <div className="text-xs text-gray-600">8:00 AM - 12:00 PM</div>
-                      </div>
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ml-3 transition-all ${
-                        (details as any).timeSlot === 'morning'
-                          ? 'border-orange-500 bg-orange-500'
-                          : 'border-gray-300 bg-white group-hover:border-gray-400'
-                      }`}>
-                        {(details as any).timeSlot === 'morning' && (
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
+            })() && (() => {
+              // Check availability for selected date
+              const dateStr = details.moveDate
+              const morningSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'morning')
+              const afternoonSlot = availabilitySlots.find(s => s.date === dateStr && s.timeSlot === 'afternoon')
+              
+              // If we're fetching availability for this date, show loading state
+              const isFetching = fetchingDateAvailability === dateStr
+              
+              // If we have availability data, check if slots are available
+              // If no data yet and not fetching, wait (don't show error yet)
+              const hasAvailabilityData = morningSlot !== undefined || afternoonSlot !== undefined
+              
+              if (isFetching) {
+                return (
+                  <div className="mb-6 w-full">
+                    <div className="text-sm text-gray-600 text-center py-4 border border-gray-200 rounded-lg bg-gray-50">
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span>Checking availability...</span>
                       </div>
                     </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetails(d=>({...d,timeSlot:'afternoon'} as any))}
-                    className={`group relative p-4 rounded-xl border transition-all duration-200 ${
-                      (details as any).timeSlot === 'afternoon'
-                        ? 'border-orange-500 bg-orange-50 shadow-sm shadow-orange-500/10'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 text-left">
-                        <div className={`text-sm font-semibold mb-0.5 ${
-                          (details as any).timeSlot === 'afternoon' ? 'text-orange-700' : 'text-gray-900'
-                        }`}>
-                          Afternoon
+                  </div>
+                )
+              }
+              
+              if (!hasAvailabilityData) {
+                // No data yet - don't show error, just wait
+                return null
+              }
+              
+              // 'available' and 'busy' both allow booking - only 'unavailable' is blocked
+              // If no data exists, default to available (optimistic)
+              const morningAvailable = !morningSlot || (morningSlot.status !== 'unavailable')
+              const afternoonAvailable = !afternoonSlot || (afternoonSlot.status !== 'unavailable')
+              
+              // Only show error if both slots are explicitly unavailable
+              // If status is 'busy', still allow booking (it means partially booked)
+              if (morningSlot && afternoonSlot && morningSlot.status === 'unavailable' && afternoonSlot.status === 'unavailable') {
+                return (
+                  <div className="mb-6 w-full">
+                    <p className="text-sm text-red-600 text-center py-4 border border-red-200 rounded-lg bg-red-50">
+                      No available time slots for this date. Please select another date.
+                    </p>
+                  </div>
+                )
+              }
+              
+              return (
+                <div className="mb-6 w-full animate-in fade-in slide-in-from-bottom-2 duration-200">
+                  <label className="block text-xs font-semibold mb-3 text-gray-700 uppercase tracking-wide text-center">Preferred Time</label>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (morningAvailable) {
+                          setDetails(d=>({...d,timeSlot:'morning'} as any))
+                        }
+                      }}
+                      disabled={morningSlot?.status === 'unavailable'}
+                      className={`group relative p-4 rounded-xl border transition-all duration-200 ${
+                        morningSlot?.status === 'unavailable'
+                          ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-50'
+                          : (details as any).timeSlot === 'morning'
+                            ? 'border-orange-500 bg-orange-50 shadow-sm shadow-orange-500/10'
+                            : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 text-left">
+                          <div className={`text-sm font-semibold mb-0.5 ${
+                            (details as any).timeSlot === 'morning' ? 'text-orange-700' : morningAvailable ? 'text-gray-900' : 'text-gray-400'
+                          }`}>
+                            Morning
+                          </div>
+                          <div className={`text-xs ${morningAvailable ? 'text-gray-600' : 'text-gray-400'}`}>
+                            8:00 AM - 12:00 PM
+                            {morningSlot?.status === 'unavailable' && (
+                              <span className="block mt-0.5 text-red-600 font-medium">
+                                Not Available
+                              </span>
+                            )}
+                            {morningSlot?.status === 'busy' && (
+                              <span className="block mt-0.5 text-orange-600 font-medium">
+                                Busy (Limited Availability)
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-600">12:00 PM - 5:00 PM</div>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ml-3 transition-all ${
+                          (details as any).timeSlot === 'morning'
+                            ? 'border-orange-500 bg-orange-500'
+                            : morningAvailable
+                              ? 'border-gray-300 bg-white group-hover:border-gray-400'
+                              : 'border-gray-200 bg-gray-100'
+                        }`}>
+                          {(details as any).timeSlot === 'morning' && morningAvailable && (
+                            <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
                       </div>
-                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ml-3 transition-all ${
-                        (details as any).timeSlot === 'afternoon'
-                          ? 'border-orange-500 bg-orange-500'
-                          : 'border-gray-300 bg-white group-hover:border-gray-400'
-                      }`}>
-                        {(details as any).timeSlot === 'afternoon' && (
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                          </svg>
-                        )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (afternoonAvailable) {
+                          setDetails(d=>({...d,timeSlot:'afternoon'} as any))
+                        }
+                      }}
+                      disabled={afternoonSlot?.status === 'unavailable'}
+                      className={`group relative p-4 rounded-xl border transition-all duration-200 ${
+                        afternoonSlot?.status === 'unavailable'
+                          ? 'border-gray-200 bg-gray-50 cursor-not-allowed opacity-50'
+                          : (details as any).timeSlot === 'afternoon'
+                            ? 'border-orange-500 bg-orange-50 shadow-sm shadow-orange-500/10'
+                            : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 text-left">
+                          <div className={`text-sm font-semibold mb-0.5 ${
+                            (details as any).timeSlot === 'afternoon' ? 'text-orange-700' : afternoonAvailable ? 'text-gray-900' : 'text-gray-400'
+                          }`}>
+                            Afternoon
+                          </div>
+                          <div className={`text-xs ${afternoonAvailable ? 'text-gray-600' : 'text-gray-400'}`}>
+                            12:00 PM - 5:00 PM
+                            {afternoonSlot?.status === 'unavailable' && (
+                              <span className="block mt-0.5 text-red-600 font-medium">
+                                Not Available
+                              </span>
+                            )}
+                            {afternoonSlot?.status === 'busy' && (
+                              <span className="block mt-0.5 text-orange-600 font-medium">
+                                Busy (Limited Availability)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ml-3 transition-all ${
+                          (details as any).timeSlot === 'afternoon'
+                            ? 'border-orange-500 bg-orange-500'
+                            : afternoonAvailable
+                              ? 'border-gray-300 bg-white group-hover:border-gray-400'
+                              : 'border-gray-200 bg-gray-100'
+                        }`}>
+                          {(details as any).timeSlot === 'afternoon' && afternoonAvailable && (
+                            <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
 
           <div className="mt-8 pt-6 border-t border-gray-200">
@@ -2854,6 +3341,7 @@ function WizardInner() {
           quote={quote}
           providerId={providerIdParam}
           businessId={businessIdParam}
+          calendarId={resolvedCalendarId || calendarIdParam}
           timeSlot={(details as any).timeSlot}
           onBack={() => setStep(6)}
           heavySelections={heavySelections}
@@ -2862,6 +3350,7 @@ function WizardInner() {
           needsPacking={needsPacking}
           packingChoice={packingChoice}
           packingRooms={packingRooms}
+          availabilitySlots={availabilitySlots}
         />
       )}
 

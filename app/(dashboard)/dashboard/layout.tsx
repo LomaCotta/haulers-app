@@ -9,12 +9,14 @@ import {
   Home, 
   Building, 
   Calendar, 
+  CalendarDays,
   MessageSquare, 
   Star, 
   Settings, 
   LogOut,
   User,
-  Globe
+  Globe,
+  Users
 } from 'lucide-react'
 import { Avatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
@@ -163,10 +165,13 @@ export default function DashboardLayout({
     ...(profile.role === 'provider' ? [
       { name: 'My Businesses', href: '/dashboard/businesses', icon: Building },
       { name: 'Bookings', href: '/dashboard/bookings', icon: Calendar },
+      { name: 'Calendar', href: '/dashboard/bookings?view=calendar', icon: CalendarDays },
+      { name: 'Clients', href: '/dashboard/clients', icon: Users },
       { name: 'Reviews', href: '/dashboard/reviews', icon: Star },
     ] : []),
     ...(profile.role === 'consumer' ? [
       { name: 'My Bookings', href: '/dashboard/bookings', icon: Calendar },
+      { name: 'Calendar', href: '/dashboard/bookings?view=calendar', icon: CalendarDays },
       { name: 'Reviews', href: '/dashboard/reviews', icon: Star },
     ] : []),
     ...(profile.role === 'admin' ? [

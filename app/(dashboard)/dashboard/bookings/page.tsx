@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
 import { computeTotalDue } from '@/lib/booking/computeTotalDue'
 import { ModernCalendar, CalendarEvent } from '@/components/calendar/ModernCalendar'
+import { DateAvailabilityModal } from '@/components/calendar/DateAvailabilityModal'
 // import { EventModal } from '@/components/calendar/EventModal'
 import { 
   Calendar, 
@@ -124,6 +125,20 @@ export default function BookingsPage() {
   const [eventsInitialized, setEventsInitialized] = useState(false)
   const lastEventsRef = useRef<string>('')
   const [userId, setUserId] = useState<string | null>(null)
+  const fetchingRef = useRef(false) // Track if we're currently fetching to prevent duplicate fetches
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null)
+  const [showDateModal, setShowDateModal] = useState(false)
+  const [selectedSlot, setSelectedSlot] = useState<'morning' | 'afternoon' | null>(null)
+  const [availabilitySlots, setAvailabilitySlots] = useState<Array<{
+    date: string
+    timeSlot: 'morning' | 'afternoon'
+    available: boolean
+    maxJobs: number
+    currentBookings: number
+  }>>([])
+  const [fetchingAvailability, setFetchingAvailability] = useState(false)
+  const [showDebugInfo, setShowDebugInfo] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
   const supabase = createClient()
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -147,9 +162,35 @@ export default function BookingsPage() {
   // Compute Total Due from booking.service_details (fallback when DB total is missing/outdated)
   const computeTotalDueCents = (booking: any): number => {
     try {
-      return computeTotalDue(booking).totalDueCents
-    } catch {
-      return 0
+      console.log('💰 Computing total due for booking:', booking.id, {
+        total_price_cents: booking.total_price_cents,
+        base_price_cents: booking.base_price_cents,
+        hourly_rate_cents: booking.hourly_rate_cents,
+        service_details: booking.service_details,
+        breakdown: booking.service_details?.breakdown
+      })
+      
+      const result = computeTotalDue(booking)
+      
+      console.log('💰 Computation result:', {
+        bookingId: booking.id,
+        computed: result.totalDueCents,
+        breakdown: result,
+        serviceDetails: booking.service_details
+      })
+      
+      // If computed total is valid (> 0), use it; otherwise fall back to DB value
+      if (result.totalDueCents > 0) {
+        return result.totalDueCents
+      }
+      
+      // Fall back to DB value if computation fails or returns 0
+      console.warn('⚠️ Computed total is 0 or invalid, using DB value:', booking.total_price_cents || booking.base_price_cents || 0)
+      return booking.total_price_cents || booking.base_price_cents || 0
+    } catch (error) {
+      console.error('❌ Error computing total due:', error, booking)
+      // Fall back to DB value on error
+      return booking.total_price_cents || booking.base_price_cents || 0
     }
   }
 
@@ -162,10 +203,17 @@ export default function BookingsPage() {
           const changed = payload.new || payload.old
           if (!changed?.id) return
           
-          // If provider view and this booking belongs to provider business, refresh provider bookings
+          // If provider view, refresh both business bookings and customer bookings
           if (isProvider) {
+            // Check if this booking is for the provider's business
             if (changed.business_id && (changed.business_id === businessId)) {
+              console.log('Realtime: Booking changed for provider business, refreshing...')
               await fetchProviderBookings()
+            }
+            // Also check if this is a booking where the provider is the customer
+            if (changed.customer_id && changed.customer_id === userId) {
+              console.log('Realtime: Booking changed where provider is customer, refreshing...')
+              await fetchProviderCustomerBookings()
             }
           } else {
             // Consumer view - refresh own bookings
@@ -180,7 +228,7 @@ export default function BookingsPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [isProvider, businessId])
+  }, [isProvider, businessId, userId])
 
   // Get user ID on mount
   useEffect(() => {
@@ -196,45 +244,109 @@ export default function BookingsPage() {
   }, [])
 
   useEffect(() => {
-    console.log('useEffect triggered - isProvider:', isProvider, 'providerId:', providerId, 'businessId:', businessId)
+    console.log('🔵 useEffect triggered - isProvider:', isProvider, 'providerId:', providerId, 'businessId:', businessId, 'userId:', userId, 'fetching:', fetchingRef.current)
     if (isProvider && (providerId || businessId)) {
+      // Wait for userId to be set before fetching
+      if (!userId) {
+        console.log('⏳ Waiting for userId to be set...')
+        return
+      }
+      
+      // Prevent duplicate fetches
+      if (fetchingRef.current) {
+        console.log('⏭️ Already fetching, skipping...')
+        return
+      }
+      
       fetchAvailabilityRules()
       fetchScheduledJobs()
-      // Also fetch bookings for this provider's business
-      if (businessId) {
-        console.log('Calling fetchProviderBookings for businessId:', businessId)
-        fetchProviderBookings()
-      } else {
-        console.warn('isProvider is true but businessId is not set!')
+      
+      // Fetch both types of bookings sequentially to avoid race conditions
+      const fetchAllBookings = async () => {
+        // Set fetching flag
+        fetchingRef.current = true
+        
+        try {
+          // Reset state only at the start to prevent stale data
+          console.log('🔄 Starting fetchAllBookings - resetting providerBookings')
+          setProviderBookings([])
+          setLoading(true)
+          
+          // First fetch bookings for provider's business
+          if (businessId) {
+            console.log('📞 Calling fetchProviderBookings for businessId:', businessId)
+            await fetchProviderBookings()
+          } else {
+            console.warn('⚠️ isProvider is true but businessId is not set!')
+          }
+          // Then fetch bookings where provider is the customer (they ordered from other providers)
+          console.log('👤 Calling fetchProviderCustomerBookings for userId:', userId)
+          await fetchProviderCustomerBookings()
+          
+          // Final loading state update
+          console.log('✅ Completed fetchAllBookings')
+          setLoading(false)
+        } finally {
+          // Always clear fetching flag
+          fetchingRef.current = false
+        }
       }
-      // ALSO fetch bookings where provider is the customer (they ordered from other providers)
-      fetchProviderCustomerBookings()
+      
+      fetchAllBookings()
     } else {
-      console.log('User is not a provider, fetching consumer bookings')
+      console.log('👥 User is not a provider, fetching consumer bookings')
       fetchBookings()
     }
-  }, [isProvider, providerId, businessId, currentMonth, showArchived])
+  }, [isProvider, providerId, businessId, userId, currentMonth, showArchived])
 
   // Fetch bookings where the provider is the customer (bookings they made to other providers)
   const fetchProviderCustomerBookings = async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      // Use userId from state or fetch it
+      let currentUserId = userId
+      if (!currentUserId) {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          console.log('No user found for fetchProviderCustomerBookings')
+          return
+        }
+        currentUserId = user.id
+        setUserId(user.id) // Update state for future use
+      }
 
-      console.log('Fetching bookings where provider is the customer:', user.id)
+      console.log('Fetching bookings where provider is the customer:', currentUserId)
       
       const { data, error } = await supabase
         .from('bookings')
-        .select('*')
-        .eq('customer_id', user.id)
+        .select('*, business:businesses(id, name, city, state, rating_avg, rating_count)')
+        .eq('customer_id', currentUserId)
         .order('created_at', { ascending: false })
 
       if (error) {
         console.error('Error fetching provider customer bookings:', error)
+        console.error('Error details:', JSON.stringify(error, null, 2))
         return
       }
 
-      console.log('Loaded provider customer bookings:', data?.length || 0)
+      console.log('📥 Loaded provider customer bookings:', data?.length || 0, 'bookings')
+      
+      if (data && data.length > 0) {
+        console.log('✅ Sample provider customer booking:', data[0])
+        console.log('📋 All provider customer booking IDs:', data.map(b => b.id))
+      } else {
+        console.log('❌ No bookings found where provider is customer. Query was: customer_id =', currentUserId)
+        // Try to verify the user exists and check what bookings exist
+        const { data: userCheck } = await supabase.auth.getUser()
+        console.log('👤 Current authenticated user ID:', userCheck?.user?.id)
+        console.log('🔍 Checking if any bookings exist with this customer_id...')
+        
+        // Try a broader query to see if there are ANY bookings
+        const { data: anyBookings } = await supabase
+          .from('bookings')
+          .select('id, customer_id, business_id, booking_status')
+          .limit(5)
+        console.log('📊 Sample of all bookings (first 5):', anyBookings)
+      }
       
       // Fetch business data for these bookings
       const bookingsWithBusiness = await Promise.all((data || []).map(async (booking: any) => {
@@ -256,18 +368,23 @@ export default function BookingsPage() {
         }
       }))
 
-      // Add these to the bookings state (they'll show up in calendar)
+      console.log('Provider customer bookings with business data:', bookingsWithBusiness.length)
+
+      // Add these to the bookings state (they'll show up in calendar and list)
       setProviderBookings(prev => {
         // Avoid duplicates
         const existingIds = new Set(prev.map(b => b.id))
         const newBookings = bookingsWithBusiness.filter(b => !existingIds.has(b.id))
         const updated = [...prev, ...newBookings]
-        // Only mark as not loading if we have data or if this was the last fetch
-        if (updated.length > 0) {
-          setLoading(false)
-        }
+        
+        console.log(`Merged provider customer bookings: ${prev.length} existing + ${newBookings.length} new = ${updated.length} total`)
+        console.log('Bookings after merge:', updated.map(b => ({ id: b.id, customer_id: b.customer_id, business_id: b.business_id })))
+        console.log('Provider as customer bookings:', updated.filter(b => currentUserId && b.customer_id === currentUserId).map(b => b.id))
+        console.log('Provider customer bookings state updated at:', new Date().toISOString())
+        
         return updated
       })
+      // Don't set loading to false here - let fetchAllBookings handle it
     } catch (error) {
       console.error('Error in fetchProviderCustomerBookings:', error)
       setLoading(false)
@@ -461,8 +578,19 @@ export default function BookingsPage() {
         }
       }))
       
-      setProviderBookings(bookingsWithRelations)
-      setLoading(false) // Mark as loaded after fetching bookings
+      setProviderBookings(prev => {
+        // Merge with existing bookings, avoiding duplicates
+        const existingIds = new Set(prev.map(b => b.id))
+        const newBookings = bookingsWithRelations.filter(b => !existingIds.has(b.id))
+        const updated = [...prev, ...newBookings]
+        
+        console.log(`Merged provider business bookings: ${prev.length} existing + ${newBookings.length} new = ${updated.length} total`)
+        console.log('Bookings after merge:', updated.map(b => ({ id: b.id, customer_id: b.customer_id, business_id: b.business_id })))
+        console.log('Provider business bookings state updated at:', new Date().toISOString())
+        
+        return updated
+      })
+      // Don't set loading to false here - let fetchAllBookings handle it
       
       // Also convert bookings to scheduled jobs format for calendar display
       if (data && data.length > 0) {
@@ -516,10 +644,79 @@ export default function BookingsPage() {
     }
   }
 
-// Convert scheduledJobs AND providerBookings to calendar events for providers (disabled)
+// Convert providerBookings to calendar events for providers
 useEffect(() => {
-  return
-}, [isProvider, scheduledJobs, providerBookings, loading])
+  if (isProvider && providerBookings && providerBookings.length > 0) {
+    console.log('Converting providerBookings to calendar events:', providerBookings.length, 'bookings')
+    const events: CalendarEvent[] = providerBookings
+      .filter(booking => {
+        const hasDate = booking.requested_date || (booking as any).move_date
+        if (!hasDate) {
+          console.warn('Provider booking missing requested_date:', booking.id)
+        }
+        return hasDate
+      })
+      .map((booking: any) => {
+        // Ensure date is in YYYY-MM-DD format
+        let date = booking.requested_date || (booking as any).move_date
+        if (date && typeof date === 'object' && date instanceof Date) {
+          date = date.toISOString().split('T')[0]
+        } else if (typeof date === 'string') {
+          const dateObj = new Date(date)
+          if (!isNaN(dateObj.getTime())) {
+            date = dateObj.toISOString().split('T')[0]
+          }
+        }
+        
+        // Map booking_status to CalendarEvent status type
+        const bookingStatus = booking.booking_status || (booking as any).status || 'pending'
+        let status: 'scheduled' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | undefined
+        if (bookingStatus === 'confirmed' || bookingStatus === 'accepted') status = 'confirmed'
+        else if (bookingStatus === 'in_progress') status = 'in_progress'
+        else if (bookingStatus === 'completed') status = 'completed'
+        else if (bookingStatus === 'cancelled' || bookingStatus === 'canceled') status = 'cancelled'
+        else if (bookingStatus === 'pending' || bookingStatus === 'requested') status = 'scheduled'
+        else status = 'scheduled'
+        
+        // Get address from service_address or service_details
+        const address = formatAddress(booking.service_address || (booking.service_details?.from_address) || (booking.service_details?.address) || '')
+        
+        // Determine if this is a booking where provider is the customer (they ordered from another provider)
+        const isProviderAsCustomer = userId && booking.customer_id === userId
+        
+        return {
+          id: booking.id,
+          date: date,
+          title: isProviderAsCustomer 
+            ? `Order from ${booking.business?.name || 'Provider'}` 
+            : booking.business?.name || 'Booking',
+          time: booking.requested_time || '',
+          type: 'booking' as const,
+          status: status,
+          metadata: {
+            business: booking.business?.name,
+            address: address,
+            city: booking.service_city || booking.business?.city || '',
+            state: booking.service_state || booking.business?.state || '',
+            price: (booking.total_price_cents && booking.total_price_cents > 0) ? booking.total_price_cents : (computeTotalDueCents(booking) || booking.base_price_cents || 0),
+            serviceType: booking.service_type || '',
+            bookingId: booking.id,
+            serviceDetails: booking.service_details || {},
+            booking: booking,
+            isProviderAsCustomer: isProviderAsCustomer, // Flag to distinguish booking type
+          },
+        }
+      })
+    
+    console.log('Created calendar events from providerBookings:', events.length, 'events')
+    setCalendarEvents(events)
+    setEventsInitialized(true)
+  } else if (isProvider && (!providerBookings || providerBookings.length === 0)) {
+    console.log('No providerBookings to convert to calendar events')
+    setCalendarEvents([])
+    setEventsInitialized(true)
+  }
+}, [isProvider, providerBookings, userId, loading])
 
       // Convert bookings to calendar events for consumers
   useEffect(() => {
@@ -595,32 +792,166 @@ useEffect(() => {
     }
   }, [isProvider, bookings])
 
-  // Deep-link: open calendar with a specific booking
+  // Fetch availability slots for the current month
+  const fetchAvailabilityForMonth = useCallback(async () => {
+    if (!providerId && !businessId) return
+
+    setFetchingAvailability(true)
+    try {
+      // Calculate start and end of current month (use UTC to avoid timezone issues)
+      const year = currentMonth.getFullYear()
+      const month = currentMonth.getMonth()
+      const startDate = new Date(Date.UTC(year, month, 1))
+      const endDate = new Date(Date.UTC(year, month + 1, 0))
+
+      const startDateStr = startDate.toISOString().split('T')[0]
+      const endDateStr = endDate.toISOString().split('T')[0]
+
+      console.log(`[Availability] Fetching for month: ${startDateStr} to ${endDateStr}`)
+
+      const params = new URLSearchParams()
+      if (providerId) params.set('providerId', providerId)
+      if (businessId) params.set('businessId', businessId)
+      params.set('startDate', startDateStr)
+      params.set('endDate', endDateStr)
+
+      const res = await fetch(`/api/movers/availability/slots?${params}`)
+      const data = await res.json()
+      if (data.slots) {
+        console.log(`[Availability] Received ${data.slots.length} slots, dates range:`, 
+          data.slots.length > 0 ? `${data.slots[0].date} to ${data.slots[data.slots.length - 1].date}` : 'none')
+        setAvailabilitySlots(data.slots)
+      }
+    } catch (error) {
+      console.error('Error fetching availability slots:', error)
+    } finally {
+      setFetchingAvailability(false)
+    }
+  }, [providerId, businessId, currentMonth])
+
+  // Listen for availability updates from modal
+  useEffect(() => {
+    const handleAvailabilityUpdate = () => {
+      console.log('[Bookings] Availability update event received, refreshing calendar...')
+      if (isProvider && viewMode === 'calendar') {
+        // Force immediate refresh
+        fetchAvailabilityForMonth()
+      }
+    }
+    window.addEventListener('availabilityUpdated', handleAvailabilityUpdate)
+    return () => window.removeEventListener('availabilityUpdated', handleAvailabilityUpdate)
+  }, [isProvider, viewMode, currentMonth, providerId, businessId, fetchAvailabilityForMonth])
+
+  // Fetch availability slots for the current month
+  useEffect(() => {
+    if (isProvider && viewMode === 'calendar' && (providerId || businessId)) {
+      fetchAvailabilityForMonth()
+    }
+  }, [isProvider, viewMode, currentMonth, providerId, businessId, fetchAvailabilityForMonth])
+
+  // Handle URL view parameter and deep-link parameters
+  useEffect(() => {
+    const viewParam = searchParams?.get('view')
+    const openId = searchParams?.get('open')
+    const dateStr = searchParams?.get('date')
+    
+    // Set view mode from URL parameter - default to 'list' if no parameter
+    if (viewParam === 'calendar') {
+      console.log('[View] Setting view mode to calendar from URL')
+      setViewMode('calendar')
+    } else {
+      // Default to list view if no parameter or parameter is 'list'
+      console.log('[View] Setting view mode to list (default or from URL)')
+      setViewMode('list')
+    }
+    
+    // Handle deep-link to open specific booking
+    if (openId && dateStr) {
+      console.log('[Deep-link] Opening booking:', openId, 'on date:', dateStr)
+      setViewMode('calendar')
+      const dt = new Date(dateStr)
+      if (!isNaN(dt.getTime())) {
+        setCurrentMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+      }
+    }
+  }, [searchParams])
+  
+  // Deep-link: open calendar with a specific booking (after events are loaded)
   useEffect(() => {
     const openId = searchParams?.get('open')
     const dateStr = searchParams?.get('date')
+    
     if (!openId || !dateStr) return
-    // Switch to calendar view and navigate to month
-    setViewMode('calendar')
-    const dt = new Date(dateStr)
-    if (!isNaN(dt.getTime())) {
-      setCurrentMonth(new Date(dt.getFullYear(), dt.getMonth(), 1))
+    
+    // Don't proceed if still loading
+    if (loading) {
+      console.log('[Deep-link] Waiting for data to load...')
+      return
     }
-    // Try to open the event when events are ready
+    
+    // Switch to calendar view if not already
+    if (viewMode !== 'calendar') {
+      setViewMode('calendar')
+    }
+    
+    console.log('[Deep-link] Searching for event:', openId, 'events:', calendarEvents.length)
+    
+    // Try to find and navigate to the booking when events are ready
     let tries = 0
-    const maxTries = 25
+    const maxTries = 50 // Increased max tries to wait longer (10 seconds)
     const timer = setInterval(() => {
       tries++
-      const ev = calendarEvents.find(e => (e.metadata?.bookingId === openId) || e.id === `provider-booking-${openId}` || e.id === openId)
+      
+      // Try multiple ways to find the event
+      const ev = calendarEvents.find(e => 
+        e.id === openId || 
+        e.id === `provider-booking-${openId}` || 
+        e.id === `scheduled-job-${openId}` ||
+        e.metadata?.bookingId === openId ||
+        e.metadata?.jobId === openId ||
+        e.metadata?.scheduledJobId === openId
+      )
+      
       if (ev) {
-        setSelectedEvent(ev)
-        clearInterval(timer)
+        console.log('[Deep-link] ✅ Found event:', ev.id, ev.title)
+        const bookingId = ev.metadata?.bookingId || ev.id
+        if (bookingId) {
+          // Navigate directly to booking details page
+          clearInterval(timer)
+          const newUrl = new URL(window.location.href)
+          newUrl.searchParams.delete('open')
+          newUrl.searchParams.delete('date')
+          router.replace(`/dashboard/bookings/${bookingId}`)
+        } else {
+          // Fallback: set selected event (though modal is commented out)
+          setSelectedEvent(ev)
+          clearInterval(timer)
+          const newUrl = new URL(window.location.href)
+          newUrl.searchParams.delete('open')
+          router.replace(newUrl.pathname + newUrl.search)
+        }
       } else if (tries >= maxTries) {
+        console.warn('[Deep-link] ❌ Could not find event for booking:', openId, 'after', maxTries, 'tries')
+        console.log('[Deep-link] Available events:', calendarEvents.map(e => ({ 
+          id: e.id, 
+          date: e.date,
+          bookingId: e.metadata?.bookingId,
+          jobId: e.metadata?.jobId,
+          scheduledJobId: e.metadata?.scheduledJobId,
+          title: e.title
+        })))
+        console.log('[Deep-link] Looking for booking ID:', openId)
+        // Try direct navigation as fallback
+        router.replace(`/dashboard/bookings/${openId}`)
         clearInterval(timer)
+      } else if (tries % 10 === 0) {
+        // Log progress every 2 seconds
+        console.log('[Deep-link] Still searching for event... tries:', tries, '/', maxTries, 'events:', calendarEvents.length)
       }
     }, 200)
+    
     return () => clearInterval(timer)
-  }, [searchParams, calendarEvents])
+  }, [searchParams, calendarEvents, loading, isProvider, router, viewMode])
 
   const checkUserType = async () => {
     try {
@@ -634,15 +965,45 @@ useEffect(() => {
       console.log('Checking user type for user:', user.id)
 
       // Check if user is a movers provider
-      const { data: provider, error: providerError } = await supabase
+      // Use limit(1) instead of maybeSingle() to handle cases where user has multiple provider records
+      const { data: providers, error: providerError } = await supabase
         .from('movers_providers')
         .select('id, business_id')
         .eq('owner_user_id', user.id)
-        .maybeSingle()
+        .limit(1)
 
-      if (providerError) {
-        console.error('Error fetching provider:', providerError)
+      // Only log if there's a real error with actual content
+      // Supabase's maybeSingle() returns null data and no error (or empty error object) if no rows found, which is fine
+      // We should NEVER log empty error objects {} as they're not real errors
+      if (providerError && typeof providerError === 'object') {
+        const errorKeys = Object.keys(providerError)
+        const isEmptyObject = errorKeys.length === 0
+        
+        // If it's an empty object {}, don't log (this is normal for "no rows found" with maybeSingle)
+        if (!isEmptyObject) {
+          // Check if any meaningful error properties exist and have truthy values
+          const hasErrorContent = Boolean(
+            (providerError.message && String(providerError.message).trim()) || 
+            (providerError.code && String(providerError.code).trim()) || 
+            (providerError.details && (typeof providerError.details === 'string' ? providerError.details.trim() : providerError.details)) ||
+            (providerError.hint && String(providerError.hint).trim())
+          )
+          
+          // Only log if it's a real error with meaningful content
+          if (hasErrorContent) {
+            console.error('Error fetching provider:', {
+              message: providerError.message,
+              code: providerError.code,
+              details: providerError.details,
+              hint: providerError.hint
+            })
+          }
+        }
+        // If providerError is empty {} or has no meaningful content, silently ignore it
       }
+
+      // Use first provider if multiple exist
+      const provider = providers && providers.length > 0 ? providers[0] : null
 
       if (provider) {
         console.log('User is a provider:', provider.id, 'Business ID:', provider.business_id)
@@ -762,10 +1123,7 @@ useEffect(() => {
       console.log('Sample booking with business:', bookingsWithBusiness[0])
       setBookings(bookingsWithBusiness)
       
-      // If consumer has bookings, default to list view
-      if (bookingsWithBusiness.length > 0 && !isProvider) {
-        setViewMode('list')
-      }
+      // Don't override view mode - let URL parameter and user choice control it
     } catch (error) {
       console.error('Unexpected error:', error)
       setBookings([])
@@ -888,38 +1246,75 @@ useEffect(() => {
             <h1 className="text-3xl font-bold text-gray-900">Manage Calendar</h1>
             <p className="text-gray-600">Set your availability and view scheduled jobs</p>
           </div>
-          {/* View toggle removed; list view only */}
+          <div className="flex items-center gap-3">
+            <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <Button
+                size="sm"
+                onClick={() => {
+                  setViewMode('list')
+                  router.push('/dashboard/bookings?view=list')
+                }}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'list'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Filter className="w-4 h-4 mr-2" />
+                List
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setViewMode('calendar')
+                  router.push('/dashboard/bookings?view=calendar')
+                }}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'calendar'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                Calendar
+              </Button>
+            </div>
+          </div>
         </div>
 
         {viewMode === 'calendar' ? (
           <div className="space-y-6">
             {/* Modern Calendar with Events */}
             <Card className="border border-gray-200 shadow-sm overflow-hidden">
-              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                <CardTitle className="text-2xl font-semibold text-gray-900">Calendar</CardTitle>
-                <CardDescription>Click on any date or event to view full details</CardDescription>
-              </CardHeader>
               <CardContent className="p-0">
-                {/* Debug: Show events count */}
-                {process.env.NODE_ENV === 'development' && (
-                  <div className="p-2 bg-yellow-100 text-xs">
-                    Events in state: {calendarEvents.length} | 
-                    Scheduled Jobs: {scheduledJobs?.length || 0} | 
-                    Provider Bookings: {providerBookings?.length || 0} |
-                    Loading: {loading ? 'yes' : 'no'} |
-                    Initialized: {eventsInitialized ? 'yes' : 'no'}
-                  </div>
-                )}
                 <ModernCalendar
                   events={calendarEvents}
+                  availabilitySlots={availabilitySlots}
+                  showAvailability={isProvider}
+                  providerId={providerId}
+                  businessId={businessId}
+                  onSlotClick={(date, timeSlot) => {
+                    // For providers: open availability modal with specific slot selected
+                    if (isProvider) {
+                      setSelectedDate(date)
+                      setSelectedSlot(timeSlot)
+                      setShowDateModal(true)
+                    }
+                  }}
                   onDateClick={(date) => {
-                    // Do nothing on date click to avoid opening modal
+                    // For providers: open availability modal
+                    if (isProvider) {
+                      setSelectedDate(date)
+                      setSelectedSlot(null) // No specific slot selected
+                      setShowDateModal(true)
+                    }
                   }}
                   onEventClick={(event) => {
                     console.log('onEventClick called with event:', event.id, event.title)
                     const bookingId = event?.metadata?.bookingId
                     if (bookingId) {
-                      router.push(`/dashboard/bookings/${bookingId}`)
+                      const eventDate = event.date
+                      router.push(`/dashboard/bookings/${bookingId}?from=calendar&date=${encodeURIComponent(eventDate)}`)
                       return
                     }
                     // Fallback: no modal
@@ -931,16 +1326,16 @@ useEffect(() => {
             {/* Popups disabled: open Track Order instead */}
 
             {/* Availability Rules Editor - Moved Below Calendar */}
-            <Card className="border border-gray-200 shadow-sm">
-              <CardHeader className="bg-gradient-to-r from-gray-50 to-white border-b border-gray-200">
-                <CardTitle className="flex items-center gap-2 text-xl font-semibold">
-                  <Settings className="w-5 h-5 text-orange-600" />
+            <Card className="border border-gray-200 shadow-sm bg-white">
+              <CardHeader className="border-b border-gray-200 bg-white px-6 py-4">
+                <CardTitle className="flex items-center gap-2 text-xl font-semibold text-gray-900">
+                  <Settings className="w-5 h-5 text-orange-500" />
                   Weekly Availability Settings
                 </CardTitle>
-                <CardDescription>Set how many jobs you can take per day for morning and afternoon slots</CardDescription>
+                <CardDescription className="text-sm text-gray-600 mt-1">Set how many jobs you can take per day for morning and afternoon slots</CardDescription>
               </CardHeader>
-              <CardContent className="pt-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <CardContent className="p-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {[0, 1, 2, 3, 4, 5, 6].map((weekday) => {
                     const rule = availabilityRules.find(r => r.weekday === weekday) || {
                       weekday,
@@ -956,13 +1351,17 @@ useEffect(() => {
                     const ruleIndex = availabilityRules.findIndex(r => r.weekday === weekday)
 
                     return (
-                      <div key={weekday} className="p-4 border-2 border-gray-200 rounded-xl bg-white hover:border-orange-300 transition-all duration-200">
-                        <div className="flex items-center justify-between mb-4">
-                          <h3 className="font-semibold text-gray-900">{fullDayNames[weekday]}</h3>
-                        </div>
-                        <div className="space-y-4">
+                      <div key={weekday} className="p-5 border border-gray-200 rounded-lg bg-white hover:border-orange-300 hover:shadow-sm transition-all duration-200">
+                        <h3 className="text-base font-semibold text-gray-900 mb-4 pb-3 border-b border-gray-100">
+                          {fullDayNames[weekday]}
+                        </h3>
+                        <div className="space-y-5">
+                          {/* Morning Slot */}
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-gray-700">Morning Jobs</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-sm font-medium text-gray-700">Morning Jobs</label>
+                              <span className="text-xs text-gray-500 font-medium">8:00 AM - 12:00 PM</span>
+                            </div>
                             <Input
                               type="number"
                               min="0"
@@ -976,12 +1375,16 @@ useEffect(() => {
                                 }
                                 setAvailabilityRules(newRules)
                               }}
-                              className="border-gray-200 focus:border-orange-500 focus:ring-orange-500"
+                              className="h-10 border-gray-200 focus:border-orange-500 focus:ring-orange-500 bg-white text-gray-900 font-medium"
                             />
-                            <p className="text-xs text-gray-500">Max jobs: 8:00 AM - 12:00 PM</p>
                           </div>
+                          
+                          {/* Afternoon Slot */}
                           <div className="space-y-2">
-                            <label className="text-sm font-medium text-gray-700">Afternoon Jobs</label>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-sm font-medium text-gray-700">Afternoon Jobs</label>
+                              <span className="text-xs text-gray-500 font-medium">12:00 PM - 5:00 PM</span>
+                            </div>
                             <Input
                               type="number"
                               min="0"
@@ -995,27 +1398,41 @@ useEffect(() => {
                                 }
                                 setAvailabilityRules(newRules)
                               }}
-                              className="border-gray-200 focus:border-orange-500 focus:ring-orange-500"
+                              className="h-10 border-gray-200 focus:border-orange-500 focus:ring-orange-500 bg-white text-gray-900 font-medium"
                             />
-                            <p className="text-xs text-gray-500">Max jobs: 12:00 PM - 5:00 PM</p>
                           </div>
                         </div>
                       </div>
                     )
                   })}
                 </div>
-                <div className="mt-6 flex justify-end">
+                <div className="mt-8 pt-6 border-t border-gray-200 flex justify-end">
                   <Button 
                     onClick={saveAvailabilityRules} 
                     disabled={saving}
-                    className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white h-11 px-6 rounded-lg font-semibold shadow-md hover:shadow-lg transition-all duration-200"
+                    className="bg-orange-500 hover:bg-orange-600 text-white h-11 px-8 rounded-lg font-semibold shadow-sm hover:shadow-md transition-all duration-200"
                   >
                     <Save className="w-4 h-4 mr-2" />
-                    {saving ? 'Saving...' : 'Save Availability Settings'}
+                    {saving ? 'Saving...' : 'Save Settings'}
                   </Button>
                 </div>
               </CardContent>
             </Card>
+
+            {/* Date Availability Modal */}
+            <DateAvailabilityModal
+              isOpen={showDateModal}
+              onClose={() => {
+                setShowDateModal(false)
+                setSelectedDate(null)
+                setSelectedSlot(null)
+              }}
+              date={selectedDate}
+              providerId={providerId}
+              businessId={businessId}
+              availabilityRules={availabilityRules}
+              selectedSlot={selectedSlot}
+            />
           </div>
         ) : (
           <div className="space-y-6">
@@ -1261,20 +1678,97 @@ useEffect(() => {
               </div>
             )}
 
+            {/* Debug Info Panel - Toggleable */}
+            {process.env.NODE_ENV === 'development' && (
+              <Card className="mb-6 border border-gray-200 bg-white shadow-sm">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm font-semibold text-gray-700">Debug Info</CardTitle>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowDebugInfo(!showDebugInfo)}
+                      className="h-7 px-2 text-xs text-gray-600 hover:text-gray-900"
+                    >
+                      {showDebugInfo ? 'Hide' : 'Show'}
+                    </Button>
+                  </div>
+                </CardHeader>
+                {showDebugInfo && (
+                  <CardContent className="pt-0 text-xs text-gray-600 space-y-1 font-mono">
+                    <div><strong>isProvider:</strong> {String(isProvider)}</div>
+                    <div><strong>userId:</strong> {userId || 'NOT SET'}</div>
+                    <div><strong>businessId:</strong> {businessId || 'NOT SET'}</div>
+                    <div><strong>providerBookings.length:</strong> {providerBookings.length}</div>
+                    <div><strong>Total Bookings:</strong> {providerBookings.map(b => b.id).join(', ') || 'NONE'}</div>
+                    <div><strong>Booking Requests:</strong> {providerBookings.filter(b => userId && b.customer_id !== userId).length}</div>
+                    <div><strong>My Orders:</strong> {providerBookings.filter(b => userId && b.customer_id === userId).length}</div>
+                    <div><strong>My Orders IDs:</strong> {providerBookings.filter(b => userId && b.customer_id === userId).map(b => b.id).join(', ') || 'NONE'}</div>
+                    <div><strong>loading:</strong> {String(loading)}</div>
+                    <div><strong>fetchingRef.current:</strong> {String(fetchingRef.current)}</div>
+                  </CardContent>
+                )}
+              </Card>
+            )}
+
             {/* Separate Bookings: Booking Requests (for their business) vs My Orders (orders they made) */}
-            {providerBookings.length > 0 && (() => {
+            {(() => {
               // Separate bookings into two categories
-              const bookingRequests = userId ? providerBookings.filter(b => b.customer_id !== userId) : providerBookings // Bookings FOR their business
-              const myOrders = userId ? providerBookings.filter(b => b.customer_id === userId) : [] // Bookings they MADE to other providers
+              // Use a stable userId check - if userId is not set yet, we'll show all bookings
+              const currentUserId = userId
+              const bookingRequests = currentUserId ? providerBookings.filter(b => b.customer_id !== currentUserId) : providerBookings // Bookings FOR their business
+              const myOrders = currentUserId ? providerBookings.filter(b => b.customer_id === currentUserId) : [] // Bookings they MADE to other providers
+              
+              // Apply search filter to booking requests
+              let filteredBookingRequests = bookingRequests
+              if (searchTerm) {
+                const searchLower = searchTerm.trim().toLowerCase()
+                filteredBookingRequests = bookingRequests.filter((booking: any) => {
+                  const customerName = (booking.customer?.full_name || booking.customer_phone || booking.customer_email || '').toLowerCase()
+                  const customerEmail = (booking.customer_email || '').toLowerCase()
+                  const customerPhone = (booking.customer_phone || '').toLowerCase()
+                  const serviceAddress = (booking.service_address || '').toLowerCase()
+                  const requestedDate = (booking.requested_date || '').toLowerCase()
+                  const notes = ((booking.customer_notes || '') + ' ' + (booking.business_notes || '')).toLowerCase()
+                  
+                  return customerName.includes(searchLower) ||
+                         customerEmail.includes(searchLower) ||
+                         customerPhone.includes(searchLower) ||
+                         serviceAddress.includes(searchLower) ||
+                         requestedDate.includes(searchLower) ||
+                         notes.includes(searchLower)
+                })
+              }
+              
+              console.log('🎨 Rendering bookings - Total:', providerBookings.length, 'Requests:', bookingRequests.length, 'My Orders:', myOrders.length, 'userId:', currentUserId)
+              console.log('📋 All bookings IDs:', providerBookings.map(b => ({ id: b.id, customer_id: b.customer_id, business_id: b.business_id })))
+              console.log('🛒 My Orders IDs:', myOrders.map(b => b.id))
+              
+              // Always show sections if we have bookings or are loading
+              // Don't return null here - let empty state show below if needed
               
               return (
                 <>
                   {/* Booking Requests - bookings customers made to their business */}
-                  {bookingRequests.length > 0 && (
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">Booking Requests</h2>
+                  {(filteredBookingRequests.length > 0 || bookingRequests.length > 0) && (
+                    <div className="mb-8">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h2 className="text-2xl font-bold mb-2">Booking Requests</h2>
+                          <p className="text-sm text-gray-600">Bookings customers have made to your business</p>
+                        </div>
+                        <div className="w-full md:w-64">
+                          <Input
+                            placeholder="Search by client name, email, date..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full"
+                          />
+                        </div>
+                      </div>
+                      {filteredBookingRequests.length > 0 ? (
                       <div className="space-y-4">
-                        {bookingRequests.map((booking) => {
+                        {filteredBookingRequests.map((booking) => {
                           // Use actual schema columns
                           const serviceDetails = booking.service_details || {}
                           const fromAddress = formatAddress(serviceDetails.from_address || booking.service_address || '')
@@ -1297,10 +1791,10 @@ useEffect(() => {
                                 window.location.href = `/dashboard/bookings/${booking.id}`
                               }}
                             >
-                              <CardContent className="p-6">
-                                <div className="flex items-start justify-between">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-3 mb-2">
+                              <CardContent className="p-4 sm:p-6">
+                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-3 mb-3">
                                       <Badge className={
                                         bookingStatus === 'pending' || bookingStatus === 'requested'
                                           ? 'bg-yellow-100 text-yellow-800'
@@ -1326,7 +1820,7 @@ useEffect(() => {
                                         <div><strong>Email:</strong> {booking.customer_email}</div>
                                       )}
                                     </div>
-                                    <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
+                                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-3">
                                       <div className="flex items-center gap-1">
                                         <Calendar className="w-4 h-4" />
                                         {booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}
@@ -1348,7 +1842,7 @@ useEffect(() => {
                                       {fromAddress && (
                                         <div className="flex items-start gap-1">
                                           <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-600" />
-                                          <span><strong>Address:</strong> {fromAddress}</span>
+                                          <span className="break-words"><strong>Address:</strong> {fromAddress}</span>
                                         </div>
                                       )}
                                       {booking.service_city && (
@@ -1358,7 +1852,16 @@ useEffect(() => {
                                         <div><strong>Service Type:</strong> {booking.service_type}</div>
                                       )}
                                       <div><strong>Total Due:</strong> {(() => {
-                                        const cents = computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0
+                                        // Always compute from service_details first, then fall back to DB value
+                                        const computed = computeTotalDueCents(booking)
+                                        const dbValue = booking.total_price_cents || booking.base_price_cents || 0
+                                        
+                                        // Use computed if it's valid and greater than DB value OR if DB value is suspiciously low (< $100)
+                                        // The booking details page shows $958.00, so if DB value is $232.00, we should use computed
+                                        const cents = (computed > 0 && computed >= dbValue) || (dbValue < 10000 && computed > 0) 
+                                          ? computed 
+                                          : (dbValue > 0 ? dbValue : computed)
+                                        
                                         return `$${(cents / 100).toFixed(2)}`
                                       })()}</div>
                                       {notes && (
@@ -1368,11 +1871,11 @@ useEffect(() => {
                                       )}
                                     </div>
                                   </div>
-                                  <div className="flex flex-col gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex flex-row sm:flex-col gap-2 flex-shrink-0 sm:ml-4" onClick={(e) => e.stopPropagation()}>
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                                      className="flex-1 sm:flex-none border-2 border-gray-800 hover:bg-gray-900 hover:text-white font-medium whitespace-nowrap"
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         window.location.href = `/dashboard/bookings/${booking.id}`
@@ -1384,7 +1887,7 @@ useEffect(() => {
                                     {bookingStatus === 'pending' || bookingStatus === 'requested' ? (
                                       <Button
                                         size="sm"
-                                        className="bg-orange-600 hover:bg-orange-700 text-white"
+                                        className="flex-1 sm:flex-none bg-orange-600 hover:bg-orange-700 text-white font-medium whitespace-nowrap"
                                         onClick={async (e) => {
                                           e.stopPropagation()
                                           try {
@@ -1415,15 +1918,34 @@ useEffect(() => {
                           )
                         })}
                       </div>
+                      ) : searchTerm ? (
+                        <Card>
+                          <CardContent className="text-center py-8">
+                            <p className="text-gray-600">No bookings match your search.</p>
+                          </CardContent>
+                        </Card>
+                      ) : null}
                     </div>
                   )}
 
                   {/* My Orders - bookings they made to other providers */}
-                  {myOrders.length > 0 && (
-                    <div>
-                      <h2 className="text-xl font-semibold mb-4">My Orders</h2>
-                      <div className="space-y-4">
-                        {myOrders.map((booking) => {
+                  {/* Always show this section if there are any bookings OR if we're loading */}
+                  {(myOrders.length > 0 || (providerBookings.length > 0 && bookingRequests.length === 0)) && (
+                    <div className="mb-8 mt-8 border-t-2 border-gray-200 pt-8">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <h2 className="text-2xl font-bold mb-2 flex items-center gap-3">
+                            <span>My Orders</span>
+                            {myOrders.length > 0 && (
+                              <Badge className="bg-blue-600 text-white text-sm px-3 py-1">{myOrders.length}</Badge>
+                            )}
+                          </h2>
+                          <p className="text-sm text-gray-600">Bookings you've placed with other providers</p>
+                        </div>
+                      </div>
+                      {myOrders.length > 0 ? (
+                        <div className="space-y-4">
+                          {myOrders.map((booking) => {
                           // Use actual schema columns
                           const serviceDetails = booking.service_details || {}
                           const fromAddress = formatAddress(serviceDetails.from_address || booking.service_address || '')
@@ -1443,10 +1965,10 @@ useEffect(() => {
                                 window.location.href = `/dashboard/bookings/${booking.id}`
                               }}
                             >
-                              <CardContent className="p-6">
-                                <div className="flex items-start justify-between">
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-3 mb-2">
+                              <CardContent className="p-4 sm:p-6">
+                                <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-3 mb-3">
                                       <Badge className={
                                         bookingStatus === 'pending' || bookingStatus === 'requested'
                                           ? 'bg-yellow-100 text-yellow-800'
@@ -1469,7 +1991,7 @@ useEffect(() => {
                                         <div><strong>Location:</strong> {booking.business.city}, {booking.business.state}</div>
                                       )}
                                     </div>
-                                    <div className="flex items-center gap-4 text-sm text-gray-600 mb-2">
+                                    <div className="flex flex-wrap items-center gap-3 sm:gap-4 text-sm text-gray-600 mb-3">
                                       <div className="flex items-center gap-1">
                                         <Calendar className="w-4 h-4" />
                                         {booking.requested_date ? new Date(booking.requested_date).toLocaleDateString() : 'Date TBD'}
@@ -1491,7 +2013,7 @@ useEffect(() => {
                                       {fromAddress && (
                                         <div className="flex items-start gap-1">
                                           <MapPin className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-600" />
-                                          <span><strong>Service Address:</strong> {fromAddress}</span>
+                                          <span className="break-words"><strong>Service Address:</strong> {fromAddress}</span>
                                         </div>
                                       )}
                                       {booking.service_city && (
@@ -1501,7 +2023,16 @@ useEffect(() => {
                                         <div><strong>Service Type:</strong> {booking.service_type}</div>
                                       )}
                                       <div><strong>Total Due:</strong> {(() => {
-                                        const cents = computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0
+                                        // Always compute from service_details first, then fall back to DB value
+                                        const computed = computeTotalDueCents(booking)
+                                        const dbValue = booking.total_price_cents || booking.base_price_cents || 0
+                                        
+                                        // Use computed if it's valid and greater than DB value OR if DB value is suspiciously low (< $100)
+                                        // The booking details page shows $958.00, so if DB value is $232.00, we should use computed
+                                        const cents = (computed > 0 && computed >= dbValue) || (dbValue < 10000 && computed > 0) 
+                                          ? computed 
+                                          : (dbValue > 0 ? dbValue : computed)
+                                        
                                         return `$${(cents / 100).toFixed(2)}`
                                       })()}</div>
                                       {notes && (
@@ -1511,26 +2042,34 @@ useEffect(() => {
                                       )}
                                     </div>
                                   </div>
-                                  <div className="flex flex-col gap-2 ml-4" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex-shrink-0 sm:ml-4" onClick={(e) => e.stopPropagation()}>
                                     <Button
                                       size="sm"
                                       variant="outline"
-                                      className="border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
+                                      className="w-full sm:w-auto border-2 border-gray-800 hover:bg-gray-900 hover:text-white font-medium whitespace-nowrap"
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         window.location.href = `/dashboard/bookings/${booking.id}`
                                       }}
                                     >
                                       <PackageSearch className="w-4 h-4 mr-2" />
-                                      Track Order
+                                      <span className="hidden sm:inline">Track Order</span>
+                                      <span className="sm:hidden">Track</span>
                                     </Button>
                                   </div>
                                 </div>
                               </CardContent>
                             </Card>
                           )
-                        })}
-                      </div>
+                          })}
+                        </div>
+                      ) : (
+                        <Card className="border-2 border-gray-200 bg-gray-50">
+                          <CardContent className="text-center py-8">
+                            <p className="text-gray-600">No orders yet. When you place an order with another provider, it will appear here.</p>
+                          </CardContent>
+                        </Card>
+                      )}
                     </div>
                   )}
                 </>
@@ -1569,35 +2108,40 @@ useEffect(() => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">My Bookings</h1>
-          <p className="text-gray-600">Track your service requests and bookings</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
-            <Button
-              size="sm"
-              onClick={() => setViewMode('calendar')}
-              className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
-                viewMode === 'calendar'
-                  ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
-                  : 'bg-transparent hover:bg-gray-100 text-gray-700'
-              }`}
-            >
-              <Calendar className="w-4 h-4 mr-2" />
-              Calendar
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => setViewMode('list')}
-              className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
-                viewMode === 'list'
-                  ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
-                  : 'bg-transparent hover:bg-gray-100 text-gray-700'
-              }`}
-            >
-              <Filter className="w-4 h-4 mr-2" />
-              List
-            </Button>
-          </div>
+            <div className="flex gap-1 rounded-lg border border-gray-200 p-1 bg-gray-50">
+              <Button
+                size="sm"
+                onClick={() => {
+                  setViewMode('list')
+                  router.push('/dashboard/bookings?view=list')
+                }}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'list'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Filter className="w-4 h-4 mr-2" />
+                List
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => {
+                  setViewMode('calendar')
+                  router.push('/dashboard/bookings?view=calendar')
+                }}
+                className={`h-9 px-4 rounded-md font-medium transition-all duration-200 ${
+                  viewMode === 'calendar'
+                    ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-sm'
+                    : 'bg-transparent hover:bg-gray-100 text-gray-700'
+                }`}
+              >
+                <Calendar className="w-4 h-4 mr-2" />
+                Calendar
+              </Button>
+            </div>
           <Button 
             asChild
             className="h-9 px-4 bg-orange-500 hover:bg-orange-600 text-white font-medium shadow-sm hover:shadow-md transition-all duration-200"
@@ -1610,7 +2154,37 @@ useEffect(() => {
         </div>
       </div>
 
-      {/* Calendar removed - list view only */}
+      {/* Calendar View */}
+      {viewMode === 'calendar' && (
+        <div className="space-y-6">
+          {/* Modern Calendar with Events */}
+          <Card className="border border-gray-200 shadow-sm overflow-hidden">
+            <CardContent className="p-0">
+              <ModernCalendar
+                events={calendarEvents}
+                showAvailability={false}
+                onEventClick={(event) => {
+                  console.log('onEventClick called with event:', event.id, event.title)
+                  const bookingId = event?.metadata?.bookingId || event?.id
+                  if (bookingId) {
+                    const eventDate = event.date
+                    router.push(`/dashboard/bookings/${bookingId}?from=calendar&date=${encodeURIComponent(eventDate)}`)
+                  }
+                }}
+                onDateClick={(date) => {
+                  // For consumers, clicking a date with events shows the first event
+                  const dateStr = date.toISOString().split('T')[0]
+                  const dayEvents = calendarEvents.filter(e => e.date === dateStr)
+                  if (dayEvents.length > 0) {
+                    const bookingId = dayEvents[0].metadata?.bookingId || dayEvents[0].id
+                    router.push(`/dashboard/bookings/${bookingId}?from=calendar&date=${encodeURIComponent(dateStr)}`)
+                  }
+                }}
+              />
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* List View */}
       {viewMode === 'list' && (
@@ -1745,7 +2319,14 @@ useEffect(() => {
                         <div className="flex items-center gap-2">
                           <DollarSign className="w-4 h-4 text-gray-500" />
                           <span className="text-gray-600">Total Due:</span>
-                          <span className="font-bold text-lg text-gray-900">{formatPrice((computeTotalDueCents(booking) || booking.total_price_cents || booking.base_price_cents || 0))}</span>
+                          <span className="font-bold text-lg text-gray-900">{(() => {
+                            // Always compute from service_details first, then fall back to DB value
+                            const computed = computeTotalDueCents(booking)
+                            const dbValue = booking.total_price_cents || booking.base_price_cents || 0
+                            // Use computed if valid, otherwise use DB value
+                            const cents = computed > 0 ? computed : dbValue
+                            return formatPrice(cents)
+                          })()}</span>
                         </div>
                         {booking.business && (
                           <div className="flex items-center gap-2">

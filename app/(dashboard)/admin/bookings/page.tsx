@@ -145,11 +145,8 @@ export default function AdminBookingsPage() {
         query = query.eq('booking_status', actualStatus)
       }
       
-      // Search filter - search in service_details JSONB and customer info
-      if (filters.search) {
-        // Search in multiple fields
-        query = query.or(`service_details.ilike.%${filters.search}%,customer_notes.ilike.%${filters.search}%`)
-      }
+      // Search filter - handled client-side to allow searching joined fields (business name, customer name)
+      // Server-side search is skipped here and done client-side for better control
 
       const { data, error } = await query
 
@@ -245,8 +242,65 @@ export default function AdminBookingsPage() {
 
       console.log('Loaded bookings:', data?.length || 0, 'bookings')
       
+      // Apply client-side filtering for all search fields (date, vendor, client name, email)
+      // This is necessary because Supabase OR queries with joins are limited
+      let filteredBookings = data || []
+      
+      if (filters.search) {
+        const searchTerm = filters.search.trim().toLowerCase()
+        const isDateSearch = searchTerm.match(/(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})|(\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})/)
+        
+        // Filter by all searchable fields: date, business name (vendor), customer name (client), email, etc.
+        filteredBookings = filteredBookings.filter((booking: any) => {
+          const businessName = booking.business?.name?.toLowerCase() || ''
+          const customerName = booking.customer?.full_name?.toLowerCase() || ''
+          const customerEmail = (booking.customer_email || '').toLowerCase()
+          const customerPhone = (booking.customer_phone || '').toLowerCase()
+          const serviceAddress = (booking.service_address || '').toLowerCase()
+          const serviceCity = (booking.service_city || '').toLowerCase()
+          const requestedDate = (booking.requested_date || '').toLowerCase()
+          const customerNotes = (booking.customer_notes || '').toLowerCase()
+          const businessNotes = (booking.business_notes || '').toLowerCase()
+          
+          // Search in service_details JSONB
+          let serviceDetailsStr = ''
+          if (booking.service_details && typeof booking.service_details === 'object') {
+            serviceDetailsStr = JSON.stringify(booking.service_details).toLowerCase()
+          }
+          
+          // If it's a date search, check if date matches (format: YYYY-MM-DD)
+          if (isDateSearch) {
+            try {
+              // Try to parse the date search term
+              const dateStr = searchTerm.replace(/\//g, '-')
+              const dateObj = new Date(dateStr)
+              if (!isNaN(dateObj.getTime())) {
+                const dateFormatted = dateObj.toISOString().split('T')[0]
+                if (requestedDate.includes(dateFormatted) || requestedDate.includes(searchTerm)) {
+                  return true
+                }
+              }
+            } catch (e) {
+              // Fall through to general search
+            }
+          }
+          
+          // Check if search matches business name (vendor), customer name (client), email, phone, address, date, notes, or service_details
+          return businessName.includes(searchTerm) || 
+                 customerName.includes(searchTerm) || 
+                 customerEmail.includes(searchTerm) ||
+                 customerPhone.includes(searchTerm) ||
+                 serviceAddress.includes(searchTerm) ||
+                 serviceCity.includes(searchTerm) ||
+                 requestedDate.includes(searchTerm) ||
+                 customerNotes.includes(searchTerm) ||
+                 businessNotes.includes(searchTerm) ||
+                 serviceDetailsStr.includes(searchTerm)
+        })
+      }
+      
       // Priority filter doesn't exist in schema - skip it
-      setBookings(data || [])
+      setBookings(filteredBookings)
     } catch (error) {
       console.error('Unexpected error:', error)
       setBookings([])
@@ -417,6 +471,22 @@ export default function AdminBookingsPage() {
     })
   }
 
+  // Safely format addresses that may be strings or objects
+  const formatAddress = (addr: any): string => {
+    if (!addr) return ''
+    if (typeof addr === 'string') return addr
+    if (typeof addr === 'object') {
+      const street = addr.address || addr.street || ''
+      const apt = addr.aptSuite || addr.apt_suite || ''
+      const city = addr.city || addr.city_name || ''
+      const state = addr.state || addr.state_name || ''
+      const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+      const parts = [street, apt, city, state, zip].filter(Boolean)
+      return parts.join(', ').replace(/,\s*,/g, ', ')
+    }
+    return String(addr)
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -501,10 +571,11 @@ export default function AdminBookingsPage() {
             <div>
               <label className="text-sm font-medium text-gray-700 mb-2 block">Search</label>
               <Input
-                placeholder="Search bookings..."
+                placeholder="Search by date, vendor, client name, or email..."
                 value={filters.search}
                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
               />
+              <p className="text-xs text-gray-500 mt-1">Search by booking date, business name, customer name, or email address</p>
             </div>
             <div>
               <label className="text-sm font-medium text-gray-700 mb-2 block">Status</label>
@@ -615,10 +686,16 @@ export default function AdminBookingsPage() {
                             <p><strong>Team Size:</strong> {booking.service_details.crew_size} movers</p>
                           )}
                           {booking.service_details.from_address && (
-                            <p><strong>From:</strong> {booking.service_details.from_address}</p>
+                            <p><strong>From:</strong> {formatAddress(booking.service_details.from_address)}</p>
                           )}
                           {booking.service_details.to_address && (
-                            <p><strong>To:</strong> {booking.service_details.to_address}</p>
+                            <p><strong>To:</strong> {formatAddress(booking.service_details.to_address)}</p>
+                          )}
+                          {booking.service_details.pickup_address && (
+                            <p><strong>Pickup:</strong> {formatAddress(booking.service_details.pickup_address)}</p>
+                          )}
+                          {booking.service_details.delivery_address && (
+                            <p><strong>Delivery:</strong> {formatAddress(booking.service_details.delivery_address)}</p>
                           )}
                         </div>
                       </div>
@@ -706,7 +783,7 @@ export default function AdminBookingsPage() {
                   <h4 className="font-semibold text-gray-900 mb-2">Service Address</h4>
                   <div className="space-y-1 text-sm text-gray-700 bg-gray-50 p-3 rounded-lg">
                     <p>
-                      {selectedBooking.service_address || selectedBooking.service_details?.pickup_address || selectedBooking.service_details?.from_address}
+                      {formatAddress(selectedBooking.service_address || selectedBooking.service_details?.pickup_address || selectedBooking.service_details?.from_address)}
                     </p>
                     {(selectedBooking.service_city || selectedBooking.service_details?.pickup_city) && (
                       <p>
@@ -718,7 +795,7 @@ export default function AdminBookingsPage() {
                       </p>
                     )}
                     {selectedBooking.service_details?.delivery_address && (
-                      <p className="pt-2"><strong>Delivery:</strong> {selectedBooking.service_details.delivery_address}</p>
+                      <p className="pt-2"><strong>Delivery:</strong> {formatAddress(selectedBooking.service_details.delivery_address)}</p>
                     )}
                   </div>
                 </div>

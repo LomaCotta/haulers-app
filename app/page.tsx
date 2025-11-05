@@ -171,13 +171,13 @@ export default function HomePage() {
                 </div>
                 
                 <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                  Having Issues? Let's Fix It Together
+                  Need Help? We're Here For You
                 </h2>
                 
                 <p className="text-lg text-gray-600 mb-8 leading-relaxed max-w-3xl mx-auto">
-                  Whether it's a problem with a service provider, website glitch, booking issue, or anything else - 
+                  Whether you need help with a service provider, have questions about your booking, want to learn more about our platform, or anything else - 
                   <br />
-                  <span className="text-orange-600 font-semibold">I'm personally committed to resolving every concern quickly and fairly.</span>
+                  <span className="text-orange-600 font-semibold">Our team is committed to helping you get the support you need quickly and effectively.</span>
                 </p>
                 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -189,7 +189,7 @@ export default function HomePage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
                         </svg>
                       </div>
-                      <h3 className="text-xl font-semibold text-gray-800">Call Me Directly</h3>
+                      <h3 className="text-xl font-semibold text-gray-800">Call Us</h3>
                     </div>
                     <a 
                       href="tel:+13102954181" 
@@ -198,7 +198,7 @@ export default function HomePage() {
                       (310) 295-4181
                     </a>
                     <p className="text-sm text-gray-600">
-                      Available for immediate assistance and quick problem resolution
+                      Available for immediate assistance and personalized support
                     </p>
                   </div>
                   
@@ -210,46 +210,46 @@ export default function HomePage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
                         </svg>
                       </div>
-                      <h3 className="text-xl font-semibold text-gray-800">Email Me</h3>
+                      <h3 className="text-xl font-semibold text-gray-800">Email Us</h3>
                     </div>
                     <a 
-                      href="mailto:contact.haulers@gmail.com" 
+                      href="mailto:support@haulers.app" 
                       className="text-lg font-semibold text-blue-600 hover:text-indigo-600 transition-colors break-all block mb-2"
                     >
-                      contact.haulers@gmail.com
+                      support@haulers.app
                     </a>
                     <p className="text-sm text-gray-600">
-                      Perfect for detailed issues or if you prefer written communication
+                      Perfect for detailed questions or if you prefer written communication
                     </p>
                   </div>
                 </div>
                 
                 <div className="mt-8 p-6 bg-gradient-to-r from-gray-50 to-gray-100 rounded-xl border border-gray-200">
-                  <h4 className="text-lg font-semibold text-gray-800 mb-3">What I Can Help With:</h4>
+                  <h4 className="text-lg font-semibold text-gray-800 mb-3">How We Can Help:</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm text-gray-600">
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Service provider disputes or quality issues
+                      Service provider questions and support
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Website bugs or technical problems
+                      Platform features and navigation help
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Booking or scheduling conflicts
+                      Booking and scheduling assistance
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Payment or billing questions
+                      Payment and billing support
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Account or profile issues
+                      Account and profile management
                     </div>
                     <div className="flex items-center">
                       <CheckCircle className="w-4 h-4 text-green-500 mr-2 flex-shrink-0" />
-                      Any other platform concerns
+                      General questions about our platform
                     </div>
                   </div>
                 </div>
@@ -321,12 +321,10 @@ export default function HomePage() {
             <div className="mt-16 text-center">
               <div className="bg-white/90 backdrop-blur-sm rounded-2xl p-8 shadow-lg border border-gray-200 max-w-4xl mx-auto">
                 <h3 className="text-2xl font-bold text-gray-900 mb-4">
-                  Ready to Be Part of Something Better?
+                  Be Part of Something Better
                 </h3>
                 <p className="text-lg text-gray-600 mb-6">
-                  We're just getting started, but we're committed to building a platform 
-                  that actually serves our community. Your feedback and participation 
-                  help shape what we become.
+                  We're building a platform that truly serves our community. Your feedback and participation help shape what we become—join us in creating something better together.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                   <Link href="/auth/signup?role=provider">

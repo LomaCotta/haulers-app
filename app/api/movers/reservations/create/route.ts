@@ -7,6 +7,7 @@ export async function POST(request: NextRequest) {
     const {
       providerId,
       businessId,
+      calendarId, // NEW: Accept calendarId for secure booking
       quoteId,
       moveDate,
       timeSlot,
@@ -48,17 +49,38 @@ export async function POST(request: NextRequest) {
 
     console.log('[Reservations API] ✅ Authenticated user:', user.id, user.email)
 
-    // Resolve provider_id from business_id if needed
+    // Resolve provider_id and business_id from calendarId if provided (secure method)
     let resolvedProviderId = providerId
-    if (!resolvedProviderId && businessId) {
-      const { data: provider } = await supabase
+    let resolvedBusinessId = businessId
+    
+    if (calendarId) {
+      const { data: providerData, error: calendarError } = await supabase
         .from('movers_providers')
-        .select('id')
-        .eq('business_id', businessId)
+        .select('id, business_id')
+        .eq('calendar_id', calendarId)
         .maybeSingle()
       
-      if (provider) {
-        resolvedProviderId = provider.id
+      if (calendarError || !providerData) {
+        return NextResponse.json({ 
+          error: 'Invalid calendar ID',
+          code: 'INVALID_CALENDAR_ID'
+        }, { status: 400 })
+      }
+      
+      resolvedProviderId = providerData.id
+      resolvedBusinessId = providerData.business_id
+    } else {
+      // Legacy support: Resolve provider_id from business_id if needed
+      if (!resolvedProviderId && businessId) {
+        const { data: provider } = await supabase
+          .from('movers_providers')
+          .select('id')
+          .eq('business_id', businessId)
+          .maybeSingle()
+        
+        if (provider) {
+          resolvedProviderId = provider.id
+        }
       }
     }
 
@@ -67,7 +89,7 @@ export async function POST(request: NextRequest) {
     }
 
     // CRITICAL: Require businessId for booking creation
-    if (!businessId) {
+    if (!resolvedBusinessId) {
       return NextResponse.json({ 
         error: 'Missing business_id. Cannot create booking without business reference.',
         code: 'MISSING_BUSINESS_ID'
@@ -141,20 +163,45 @@ export async function POST(request: NextRequest) {
             .eq('time_slot', timeSlot)
             .in('status', ['scheduled', 'in_progress'])
           
-          // Check if date is blocked
-          const { data: blocked } = await supabase
+          // Check if date is blocked (full-day or slot-specific)
+          // Query for full_day first
+          const { data: fullDayBlock1 } = await supabase
             .from('movers_availability_overrides')
             .select('id')
             .eq('provider_id', resolvedProviderId)
             .eq('date', moveDate)
             .eq('kind', 'block')
+            .eq('time_slot', 'full_day')
             .maybeSingle()
           
-          console.log('Availability check failed after creating rule:', { bookedCount, blocked, timeSlot })
+          // Query for null
+          const { data: fullDayBlock2 } = await supabase
+            .from('movers_availability_overrides')
+            .select('id')
+            .eq('provider_id', resolvedProviderId)
+            .eq('date', moveDate)
+            .eq('kind', 'block')
+            .is('time_slot', null)
+            .maybeSingle()
           
-          if (blocked) {
+          const fullDayBlock = fullDayBlock1 || fullDayBlock2
+          
+          const { data: slotBlock } = await supabase
+            .from('movers_availability_overrides')
+            .select('id')
+            .eq('provider_id', resolvedProviderId)
+            .eq('date', moveDate)
+            .eq('kind', 'block')
+            .eq('time_slot', timeSlot)
+            .maybeSingle()
+          
+          const isBlocked = fullDayBlock || slotBlock
+          
+          console.log('Availability check failed after creating rule:', { bookedCount, fullDayBlock: !!fullDayBlock, slotBlock: !!slotBlock, timeSlot, isBlocked })
+          
+          if (isBlocked) {
             return NextResponse.json({ 
-              error: `This date has been blocked by the provider. Please select another date.`,
+              error: `This time slot has been blocked by the provider. Please select another date or time.`,
               blocked: true
             }, { status: 400 })
           }
@@ -176,7 +223,7 @@ export async function POST(request: NextRequest) {
           
           // If there are no bookings and it's not blocked, but still not available,
           // there might be an issue with the rule or the SQL function
-          if ((bookedCount || 0) === 0 && !blocked) {
+          if ((bookedCount || 0) === 0 && !isBlocked) {
             console.warn('Rule created but availability still false with no bookings - possible SQL function issue')
             // Proceed anyway - the rule was created and there are no bookings
             available = true
@@ -201,18 +248,43 @@ export async function POST(request: NextRequest) {
           .eq('time_slot', timeSlot)
           .in('status', ['scheduled', 'in_progress'])
         
-        // Check if date is blocked
-        const { data: blocked } = await supabase
+        // Check if date is blocked (full-day or slot-specific)
+        // Query for full_day first
+        const { data: fullDayBlock1 } = await supabase
           .from('movers_availability_overrides')
           .select('id')
           .eq('provider_id', resolvedProviderId)
           .eq('date', moveDate)
           .eq('kind', 'block')
+          .eq('time_slot', 'full_day')
           .maybeSingle()
         
-        if (blocked) {
+        // Query for null
+        const { data: fullDayBlock2 } = await supabase
+          .from('movers_availability_overrides')
+          .select('id')
+          .eq('provider_id', resolvedProviderId)
+          .eq('date', moveDate)
+          .eq('kind', 'block')
+          .is('time_slot', null)
+          .maybeSingle()
+        
+        const fullDayBlock = fullDayBlock1 || fullDayBlock2
+        
+        const { data: slotBlock } = await supabase
+          .from('movers_availability_overrides')
+          .select('id')
+          .eq('provider_id', resolvedProviderId)
+          .eq('date', moveDate)
+          .eq('kind', 'block')
+          .eq('time_slot', timeSlot)
+          .maybeSingle()
+        
+        const isBlocked = fullDayBlock || slotBlock
+        
+        if (isBlocked) {
           return NextResponse.json({ 
-            error: `This date has been blocked by the provider. Please select another date.`,
+            error: `This time slot has been blocked by the provider. Please select another date or time.`,
             blocked: true
           }, { status: 400 })
         }
@@ -509,6 +581,33 @@ export async function POST(request: NextRequest) {
       // Continue anyway - the job was created, we just can't return it
     }
 
+    // Send job creation notification to provider (if not already sent via booking_request)
+    // Get provider owner user_id for notifications
+    const { data: providerForNotification } = await supabase
+      .from('movers_providers')
+      .select('owner_user_id')
+      .eq('id', resolvedProviderId)
+      .maybeSingle()
+    
+    if (providerForNotification?.owner_user_id && jobId) {
+      try {
+        const { sendNotification } = await import('@/lib/notifications')
+        await sendNotification(
+          providerForNotification.owner_user_id,
+          'job_created',
+          'email',
+          {
+            job_id: jobId,
+            quote_id: finalQuoteId || undefined,
+            message: `New job scheduled for ${moveDate}`
+          }
+        )
+      } catch (notifError) {
+        console.warn('[Reservations API] ⚠️ Error sending job creation notification:', notifError)
+        // Don't fail if notification fails
+      }
+    }
+
     // CRITICAL: Also create a row in the bookings table so customers can see their reservations
     // userId and businessId are guaranteed at this point
     let bookingId: string | null = null
@@ -717,7 +816,7 @@ export async function POST(request: NextRequest) {
       .from('bookings')
       .insert({
         customer_id: userId,
-        business_id: businessId,
+        business_id: resolvedBusinessId,
         service_type: 'moving',
         booking_status: 'confirmed',
         requested_date: moveDate,
@@ -805,34 +904,55 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
 
-    // Get provider owner user_id for notifications
-    const { data: provider } = await supabase
-      .from('movers_providers')
-      .select('owner_user_id')
-      .eq('id', resolvedProviderId)
-      .single()
-
-    // Create notification for provider
-    if (provider?.owner_user_id) {
+    // Send notification to provider about new booking request
+    // Use providerForNotification if already fetched, otherwise fetch it
+    let providerForBookingNotification = providerForNotification
+    if (!providerForBookingNotification) {
+      const { data: providerData } = await supabase
+        .from('movers_providers')
+        .select('owner_user_id')
+        .eq('id', resolvedProviderId)
+        .maybeSingle()
+      providerForBookingNotification = providerData
+    }
+    
+    if (providerForBookingNotification?.owner_user_id && bookingId) {
       try {
-        const { error: notificationError } = await supabase
-          .from('notifications')
-          .insert({
-            user_id: provider.owner_user_id,
-            title: 'New Reservation',
-            message: `${fullName} has booked a move on ${new Date(moveDate).toLocaleDateString()} (${timeSlot}). Total: $${(totalPriceCents / 100).toFixed(2)}`,
-            type: 'reservation',
-            related_id: jobId || scheduledJob?.id,
-            is_read: false,
-          })
-        
-        if (notificationError) {
-          console.error('[Reservations API] Error creating notification:', notificationError)
-          // Don't fail the reservation if notification fails
-        }
-      } catch (err) {
-        console.error('[Reservations API] Exception creating notification:', err)
-        // Don't fail the reservation if notification fails
+        const { sendNotification } = await import('@/lib/notifications')
+        await sendNotification(
+          providerForBookingNotification.owner_user_id,
+          'booking_request',
+          'email',
+          {
+            booking_id: bookingId,
+            job_id: jobId || undefined,
+            quote_id: finalQuoteId || undefined,
+            message: `New reservation from ${fullName || 'Customer'} for ${moveDate}`
+          }
+        )
+      } catch (notifError) {
+        console.warn('[Reservations API] ⚠️ Error sending booking notification:', notifError)
+        // Don't fail booking creation if notification fails
+      }
+    }
+
+    // Send confirmation notification to customer
+    if (bookingId && user.id) {
+      try {
+        const { sendNotification } = await import('@/lib/notifications')
+        await sendNotification(
+          user.id,
+          'booking_confirmed',
+          'email',
+          {
+            booking_id: bookingId,
+            job_id: jobId || undefined,
+            message: 'Your reservation has been confirmed'
+          }
+        )
+      } catch (notifError) {
+        console.warn('[Reservations API] ⚠️ Error sending customer notification:', notifError)
+        // Don't fail booking creation if notification fails
       }
     }
 

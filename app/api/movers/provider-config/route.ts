@@ -9,10 +9,34 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     let providerId = searchParams.get('providerId')
     const businessId = searchParams.get('businessId')
+    const calendarId = searchParams.get('calendarId') // NEW: Support calendarId
 
-    console.log('[Provider Config API] Request:', { providerId, businessId })
+    console.log('[Provider Config API] Request:', { providerId, businessId, calendarId })
 
-    // Resolve providerId from businessId if needed
+    // Resolve providerId from calendarId if provided (secure method)
+    if (calendarId) {
+      const supabase = await createClient()
+      const { data: providerData, error: calendarError } = await supabase
+        .from('movers_providers')
+        .select('id, business_id')
+        .eq('calendar_id', calendarId)
+        .maybeSingle()
+      
+      if (calendarError) {
+        console.error('[Provider Config API] Error resolving provider from calendarId:', calendarError)
+        return NextResponse.json({ error: `Failed to resolve provider: ${calendarError.message}` }, { status: 500, headers })
+      }
+      
+      if (providerData?.id) {
+        providerId = providerData.id
+        console.log('[Provider Config API] Resolved providerId from calendarId:', providerId)
+      } else {
+        console.warn('[Provider Config API] No provider found for calendarId:', calendarId)
+        return NextResponse.json({ error: 'Provider not found' }, { status: 404, headers })
+      }
+    }
+
+    // Resolve providerId from businessId if needed (legacy)
     if (!providerId && businessId) {
       const supabase = await createClient()
       const { data, error: provError } = await supabase

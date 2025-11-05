@@ -76,6 +76,38 @@ export async function POST(request: NextRequest) {
           // Payment succeeded but booking update failed - should be handled by webhook
         }
 
+        // CRITICAL: Trigger review request when payment is marked as paid and booking is completed
+        const { data: updatedBooking } = await supabase
+          .from('bookings')
+          .select('booking_status, customer_id, business_id, business:businesses(name)')
+          .eq('id', booking_id)
+          .single()
+
+        if (updatedBooking && updatedBooking.booking_status === 'completed') {
+          const business = updatedBooking.business as any
+          
+          // Create notification for review request
+          await supabase
+            .from('notifications')
+            .insert({
+              user_id: updatedBooking.customer_id,
+              booking_id: booking_id,
+              notification_type: 'review_request',
+              title: 'How was your service? ⭐',
+              message: `Thank you for your payment! Please share your experience with ${business?.name || 'your service provider'} by leaving a review.`,
+              action_url: `/dashboard/reviews/${booking_id}`,
+              created_at: new Date().toISOString()
+            })
+
+          // Mark that review was requested
+          await supabase
+            .from('bookings')
+            .update({
+              review_requested_at: new Date().toISOString()
+            })
+            .eq('id', booking_id)
+        }
+
         return NextResponse.json({ 
           success: true, 
           clientSecret: intent.client_secret, 

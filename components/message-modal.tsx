@@ -208,6 +208,26 @@ export default function MessageModal({
       setMessages(prev => [...prev, newMessage])
       setMessage('')
       
+      // Send notification to recipient
+      if (recipientId && newMessage) {
+        try {
+          const response = await fetch('/api/messages/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipient_id: recipientId,
+              body: newMessage.body,
+              message_type: newMessage.message_type || 'general',
+              message_id: newMessage.id
+            })
+          })
+          // Notification is handled by the API route
+        } catch (notifError) {
+          console.warn('Error sending message notification:', notifError)
+          // Don't fail message sending if notification fails
+        }
+      }
+      
       if (onMessageSent) {
         onMessageSent(newMessage)
       }

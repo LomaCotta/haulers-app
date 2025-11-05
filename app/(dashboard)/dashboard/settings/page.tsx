@@ -342,12 +342,8 @@ export default function SettingsPage() {
                         }}
                         userId={profile?.id || ''}
                         size="xl"
+                        showUploadHint={false}
                       />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed break-words">
-                        Upload a profile picture. Max size: 5MB. Supported formats: JPG, PNG, GIF, WebP
-                      </p>
                     </div>
                   </div>
                 </div>
@@ -361,17 +357,6 @@ export default function SettingsPage() {
                     placeholder="Enter your full name"
                     className="h-11 sm:h-12 text-sm sm:text-base border-gray-300 focus:border-orange-500 focus:ring-orange-500"
                   />
-                </div>
-
-                <div className="space-y-2 sm:space-y-3">
-                  <Label htmlFor="email" className="text-sm sm:text-base font-semibold text-gray-900">Email</Label>
-                  <Input
-                    id="email"
-                    value={profile?.email || ''}
-                    disabled
-                    className="bg-gray-100 h-11 sm:h-12 text-sm sm:text-base cursor-not-allowed"
-                  />
-                  <p className="text-xs sm:text-sm text-gray-500 font-medium break-words">Email cannot be changed</p>
                 </div>
 
                 <div className="space-y-2 sm:space-y-3">

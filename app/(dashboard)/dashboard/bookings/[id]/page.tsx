@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import { useParams, useRouter, useSearchParams } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -100,7 +100,10 @@ interface BookingItem {
 export default function BookingTrackingPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const id = params.id as string
+  const fromCalendar = searchParams?.get('from') === 'calendar'
+  const calendarDate = searchParams?.get('date') || ''
   const [booking, setBooking] = useState<Booking | null>(null)
   const [bookingItems, setBookingItems] = useState<BookingItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -420,13 +423,56 @@ export default function BookingTrackingPage() {
                 }]
               }
               
+              // Helper to convert string address to address object
+              const parseAddressString = (addrStr: string): any => {
+                if (!addrStr) return null
+                // Try to parse comma-separated address
+                const parts = addrStr.split(',').map(p => p.trim()).filter(Boolean)
+                if (parts.length >= 3) {
+                  return {
+                    address: parts[0],
+                    city: parts[parts.length - 2] || '',
+                    state: parts[parts.length - 1] || '',
+                    zip: ''
+                  }
+                }
+                return { address: addrStr, city: '', state: '', zip: '' }
+              }
+              
+              // Convert quote string addresses to arrays if needed
+              let quotePickupAddresses: any[] = []
+              if (quoteBreakdown.pickup_addresses && Array.isArray(quoteBreakdown.pickup_addresses) && quoteBreakdown.pickup_addresses.length > 0) {
+                quotePickupAddresses = quoteBreakdown.pickup_addresses
+              } else if (quoteData.pickup_address) {
+                const parsed = parseAddressString(quoteData.pickup_address)
+                if (parsed) quotePickupAddresses = [parsed]
+              }
+              
+              let quoteDeliveryAddresses: any[] = []
+              if (quoteBreakdown.delivery_addresses && Array.isArray(quoteBreakdown.delivery_addresses) && quoteBreakdown.delivery_addresses.length > 0) {
+                quoteDeliveryAddresses = quoteBreakdown.delivery_addresses
+              } else if (quoteData.dropoff_address) {
+                const parsed = parseAddressString(quoteData.dropoff_address)
+                if (parsed) quoteDeliveryAddresses = [parsed]
+              }
+              
               // Build comprehensive merged details - merge ALL quote data
               const mergedDetails = {
                 ...currentDetails,
                 quote_id: quoteId,
                 // Always include full breakdown for providers
                 breakdown: quoteBreakdown || currentDetails.breakdown || {},
-                // Merge pickup/delivery addresses if missing
+                // Merge pickup/delivery addresses - prioritize arrays, then single addresses
+                pickup_addresses: currentDetails.pickup_addresses && Array.isArray(currentDetails.pickup_addresses) && currentDetails.pickup_addresses.length > 0
+                  ? currentDetails.pickup_addresses
+                  : (quotePickupAddresses.length > 0
+                    ? quotePickupAddresses
+                    : (currentDetails.pickup_addresses || [])),
+                delivery_addresses: currentDetails.delivery_addresses && Array.isArray(currentDetails.delivery_addresses) && currentDetails.delivery_addresses.length > 0
+                  ? currentDetails.delivery_addresses
+                  : (quoteDeliveryAddresses.length > 0
+                    ? quoteDeliveryAddresses
+                    : (currentDetails.delivery_addresses || [])),
                 pickup_address: currentDetails.pickup_address || quoteData.pickup_address || '',
                 dropoff_address: currentDetails.dropoff_address || quoteData.dropoff_address || '',
                 from_address: currentDetails.from_address || quoteData.pickup_address || '',
@@ -1489,10 +1535,11 @@ export default function BookingTrackingPage() {
                 The booking ID might be invalid, or you may not have permission to view this booking.
               </p>
               <Button 
-                onClick={() => router.push('/dashboard/bookings')}
+                onClick={() => router.push('/dashboard/bookings?view=calendar')}
                 className="bg-orange-600 hover:bg-orange-700"
               >
-                Back to Bookings
+                <Calendar className="w-4 h-4 mr-2" />
+                Back to Calendar
               </Button>
             </CardContent>
           </Card>
@@ -1625,22 +1672,126 @@ export default function BookingTrackingPage() {
                   // Extract quote ID for organization
                   const quoteId = serviceDetails.quote_id || serviceDetails.quoteId || null
                   
+                  // Helper function to parse address strings
+                  const parseAddressString = (addrString: string): {address: string; city: string; state: string; zip: string} => {
+                    if (!addrString || typeof addrString !== 'string') {
+                      return { address: '', city: '', state: '', zip: '' }
+                    }
+                    
+                    // Common US address formats:
+                    // "Street Address, City, State ZIP, Country"
+                    // "Street Address, City, State ZIP"
+                    // "Street Address, City, State"
+                    
+                    // Split by comma
+                    const parts = addrString.split(',').map(p => p.trim()).filter(Boolean)
+                    
+                    if (parts.length >= 3) {
+                      // Format: "Street, City, State ZIP, Country" or "Street, City, State ZIP"
+                      const street = parts[0]
+                      const city = parts[1]
+                      
+                      // Last part might be country, second-to-last might have state and zip
+                      let statePart = parts.length > 3 ? parts[parts.length - 2] : parts[2]
+                      
+                      // Extract state and zip from statePart (e.g., "CA 90210" or "California 90210")
+                      const stateZipMatch = statePart.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/)
+                      if (stateZipMatch) {
+                        return {
+                          address: street,
+                          city: city,
+                          state: stateZipMatch[1],
+                          zip: stateZipMatch[2]
+                        }
+                      }
+                      
+                      // Try to extract zip code separately
+                      const zipMatch = statePart.match(/\b(\d{5}(?:-\d{4})?)\b/)
+                      const zip = zipMatch ? zipMatch[1] : ''
+                      const state = zipMatch ? statePart.replace(zip, '').trim() : statePart
+                      
+                      return {
+                        address: street,
+                        city: city,
+                        state: state,
+                        zip: zip
+                      }
+                    } else if (parts.length === 2) {
+                      // Format: "Street, City" or "Street, State ZIP"
+                      return {
+                        address: parts[0],
+                        city: parts[1],
+                        state: '',
+                        zip: ''
+                      }
+                    } else {
+                      // Just street address
+                      return {
+                        address: addrString,
+                        city: '',
+                        state: '',
+                        zip: ''
+                      }
+                    }
+                  }
+                  
                   // Handle pickup addresses - multiple formats
                   let pickupAddresses: any[] = []
-                  if (serviceDetails.pickup_addresses && Array.isArray(serviceDetails.pickup_addresses)) {
-                    pickupAddresses = serviceDetails.pickup_addresses
+                  console.log('🔍 Parsing pickup addresses from serviceDetails:', {
+                    pickup_addresses: serviceDetails.pickup_addresses,
+                    from_address: serviceDetails.from_address,
+                    pickup_address: serviceDetails.pickup_address,
+                    service_address: booking.service_address
+                  })
+                  
+                  if (serviceDetails.pickup_addresses && Array.isArray(serviceDetails.pickup_addresses) && serviceDetails.pickup_addresses.length > 0) {
+                    // Check if it's an array of strings or objects
+                    if (typeof serviceDetails.pickup_addresses[0] === 'string') {
+                      // Array of strings - parse each one
+                      pickupAddresses = serviceDetails.pickup_addresses.map((addrStr: string) => {
+                        const parsed = parseAddressString(addrStr)
+                        return {
+                          address: parsed.address,
+                          city: parsed.city || booking.service_city || '',
+                          state: parsed.state || booking.service_state || '',
+                          zip: parsed.zip || booking.service_postal_code || ''
+                        }
+                      })
+                    } else {
+                      // Array of objects - use as is
+                      pickupAddresses = serviceDetails.pickup_addresses
+                    }
+                    console.log('✅ Using pickup_addresses array:', pickupAddresses)
                   } else if (serviceDetails.from_address) {
                     // Single pickup address
                     const fromAddr = typeof serviceDetails.from_address === 'string' 
                       ? serviceDetails.from_address 
                       : (serviceDetails.from_address?.address || serviceDetails.from_address?.street || '')
-                    pickupAddresses = [{
-                      address: fromAddr,
-                      aptSuite: serviceDetails.from_address?.aptSuite || serviceDetails.from_apt || '',
-                      city: serviceDetails.from_city || booking.service_city || '',
-                      state: serviceDetails.from_state || booking.service_state || '',
-                      zip: serviceDetails.from_zip || booking.service_postal_code || ''
-                    }]
+                    if (fromAddr) {
+                      pickupAddresses = [{
+                        address: fromAddr,
+                        aptSuite: serviceDetails.from_address?.aptSuite || serviceDetails.from_apt || '',
+                        city: serviceDetails.from_city || booking.service_city || '',
+                        state: serviceDetails.from_state || booking.service_state || '',
+                        zip: serviceDetails.from_zip || booking.service_postal_code || ''
+                      }]
+                      console.log('✅ Using from_address:', pickupAddresses)
+                    }
+                  } else if (serviceDetails.pickup_address) {
+                    // Try pickup_address field
+                    const pickupAddr = typeof serviceDetails.pickup_address === 'string' 
+                      ? serviceDetails.pickup_address 
+                      : (serviceDetails.pickup_address?.address || serviceDetails.pickup_address?.street || '')
+                    if (pickupAddr) {
+                      pickupAddresses = [{
+                        address: pickupAddr,
+                        aptSuite: serviceDetails.pickup_address?.aptSuite || '',
+                        city: serviceDetails.pickup_city || booking.service_city || '',
+                        state: serviceDetails.pickup_state || booking.service_state || '',
+                        zip: serviceDetails.pickup_zip || booking.service_postal_code || ''
+                      }]
+                      console.log('✅ Using pickup_address:', pickupAddresses)
+                    }
                   } else if (booking.service_address) {
                     // Fallback to service_address if no pickup address in details
                     pickupAddresses = [{
@@ -1649,23 +1800,69 @@ export default function BookingTrackingPage() {
                       state: booking.service_state || '',
                       zip: booking.service_postal_code || ''
                     }]
+                    console.log('✅ Using service_address fallback:', pickupAddresses)
                   }
+                  
+                  console.log('📋 Final pickupAddresses:', pickupAddresses)
                   
                   // Handle delivery addresses - multiple formats
                   let deliveryAddresses: any[] = []
-                  if (serviceDetails.delivery_addresses && Array.isArray(serviceDetails.delivery_addresses)) {
-                    deliveryAddresses = serviceDetails.delivery_addresses
+                  console.log('🔍 Parsing delivery addresses from serviceDetails:', {
+                    delivery_addresses: serviceDetails.delivery_addresses,
+                    to_address: serviceDetails.to_address,
+                    dropoff_address: serviceDetails.dropoff_address,
+                    delivery_address: serviceDetails.delivery_address
+                  })
+                  
+                  if (serviceDetails.delivery_addresses && Array.isArray(serviceDetails.delivery_addresses) && serviceDetails.delivery_addresses.length > 0) {
+                    // Check if it's an array of strings or objects
+                    if (typeof serviceDetails.delivery_addresses[0] === 'string') {
+                      // Array of strings - parse each one
+                      deliveryAddresses = serviceDetails.delivery_addresses.map((addrStr: string) => {
+                        const parsed = parseAddressString(addrStr)
+                        return {
+                          address: parsed.address,
+                          city: parsed.city || '',
+                          state: parsed.state || '',
+                          zip: parsed.zip || ''
+                        }
+                      })
+                    } else {
+                      // Array of objects - use as is
+                      deliveryAddresses = serviceDetails.delivery_addresses
+                    }
+                    console.log('✅ Using delivery_addresses array:', deliveryAddresses)
                   } else if (serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address) {
                     const toAddr = serviceDetails.to_address || serviceDetails.dropoff_address || serviceDetails.delivery_address
                     const addrStr = typeof toAddr === 'string' ? toAddr : (toAddr?.address || toAddr?.street || '')
-                    deliveryAddresses = [{
-                      address: addrStr,
-                      aptSuite: serviceDetails.to_address?.aptSuite || serviceDetails.to_apt || '',
-                      city: serviceDetails.to_city || serviceDetails.dropoff_city || '',
-                      state: serviceDetails.to_state || serviceDetails.dropoff_state || '',
-                      zip: serviceDetails.to_zip || serviceDetails.dropoff_zip || ''
-                    }]
+                    if (addrStr) {
+                      deliveryAddresses = [{
+                        address: addrStr,
+                        aptSuite: serviceDetails.to_address?.aptSuite || serviceDetails.to_apt || '',
+                        city: serviceDetails.to_city || serviceDetails.dropoff_city || '',
+                        state: serviceDetails.to_state || serviceDetails.dropoff_state || '',
+                        zip: serviceDetails.to_zip || serviceDetails.dropoff_zip || ''
+                      }]
+                      console.log('✅ Using to_address/dropoff_address:', deliveryAddresses)
+                    }
+                  } else if (serviceDetails.dropoff_address) {
+                    // Try dropoff_address field
+                    const dropoffAddr = typeof serviceDetails.dropoff_address === 'string' 
+                      ? serviceDetails.dropoff_address 
+                      : (serviceDetails.dropoff_address?.address || serviceDetails.dropoff_address?.street || '')
+                    if (dropoffAddr) {
+                      deliveryAddresses = [{
+                        address: dropoffAddr,
+                        aptSuite: serviceDetails.dropoff_address?.aptSuite || '',
+                        city: serviceDetails.dropoff_city || '',
+                        state: serviceDetails.dropoff_state || '',
+                        zip: serviceDetails.dropoff_zip || ''
+                      }]
+                      console.log('✅ Using dropoff_address:', deliveryAddresses)
+                    }
                   }
+                  
+                  console.log('📋 Final deliveryAddresses:', deliveryAddresses)
                   
                   // Fallback addresses for display (ensure strings, never objects)
                   const formatAddress = (addr: any): string => {
@@ -1838,30 +2035,31 @@ export default function BookingTrackingPage() {
                           </div>
                           <div className="pl-6 space-y-3">
                             {pickupAddresses.length > 0 ? (
-                              pickupAddresses.map((addr: any, idx: number) => (
-                                <div key={idx} className="space-y-1">
-                                  {pickupAddresses.length > 1 && (
-                                    <p className="text-base font-medium text-gray-900 mb-1">
-                                      {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
-                                    </p>
-                                  )}
-                                  {(() => {
-                                    const street = addr.address || addr.street || ''
-                                    const apt = addr.aptSuite || addr.apt_suite || ''
-                                    const city = addr.city || addr.city_name || ''
-                                    const state = addr.state || addr.state_name || ''
-                                    const zip = addr.zip || addr.zip_code || addr.postal_code || ''
-                                    const parts = [street, apt, city, state, zip].filter(Boolean)
-                                    const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
-                                    return (
-                                      <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
-                                    )
-                                  })()}
-                                </div>
-                              ))
-                            ) : (
+                              pickupAddresses.map((addr: any, idx: number) => {
+                                const street = addr.address || addr.street || ''
+                                const apt = addr.aptSuite || addr.apt_suite || ''
+                                const city = addr.city || addr.city_name || ''
+                                const state = addr.state || addr.state_name || ''
+                                const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+                                const parts = [street, apt, city, state, zip].filter(Boolean)
+                                const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
+                                
+                                if (!display) return null
+                                
+                                return (
+                                  <div key={idx} className="space-y-1">
+                                    {pickupAddresses.length > 1 && (
+                                      <p className="text-base font-medium text-gray-900 mb-1">
+                                        {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
+                                      </p>
+                                    )}
+                                    <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
+                                  </div>
+                                )
+                              })
+                            ) : fromAddress ? (
                               <p className="text-base text-gray-900 leading-relaxed break-words">{fromAddress}</p>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       )}
@@ -1877,27 +2075,28 @@ export default function BookingTrackingPage() {
                           </div>
                           <div className="pl-6 space-y-3">
                             {deliveryAddresses.length > 0 ? (
-                              deliveryAddresses.map((addr: any, idx: number) => (
-                                <div key={idx} className="space-y-1">
-                                  {deliveryAddresses.length > 1 && (
-                                    <p className="text-base font-medium text-gray-900 mb-1">
-                                      {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
-                                    </p>
-                                  )}
-                                  {(() => {
-                                    const street = addr.address || addr.street || ''
-                                    const apt = addr.aptSuite || addr.apt_suite || ''
-                                    const city = addr.city || addr.city_name || ''
-                                    const state = addr.state || addr.state_name || ''
-                                    const zip = addr.zip || addr.zip_code || addr.postal_code || ''
-                                    const parts = [street, apt, city, state, zip].filter(Boolean)
-                                    const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
-                                    return (
-                                      <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
-                                    )
-                                  })()}
-                                </div>
-                              ))
+                              deliveryAddresses.map((addr: any, idx: number) => {
+                                const street = addr.address || addr.street || ''
+                                const apt = addr.aptSuite || addr.apt_suite || ''
+                                const city = addr.city || addr.city_name || ''
+                                const state = addr.state || addr.state_name || ''
+                                const zip = addr.zip || addr.zip_code || addr.postal_code || ''
+                                const parts = [street, apt, city, state, zip].filter(Boolean)
+                                const display = parts.length > 0 ? parts.join(', ').replace(/,\s*,/g, ', ') : ''
+                                
+                                if (!display) return null
+                                
+                                return (
+                                  <div key={idx} className="space-y-1">
+                                    {deliveryAddresses.length > 1 && (
+                                      <p className="text-base font-medium text-gray-900 mb-1">
+                                        {idx === 0 ? 'Primary' : `Location ${idx + 1}:`}
+                                      </p>
+                                    )}
+                                    <p className="text-base text-gray-900 leading-relaxed break-words">{display}</p>
+                                  </div>
+                                )
+                              })
                             ) : toAddress ? (
                               <p className="text-base text-gray-900 leading-relaxed break-words">{toAddress}</p>
                             ) : null}
@@ -2048,7 +2247,7 @@ export default function BookingTrackingPage() {
                                 <>
                                   {currentPackingHelp && currentPackingHelp !== 'none' && (
                                     <p className="text-base font-semibold text-gray-900 capitalize mb-1">
-                                      Type: {String(currentPackingHelp).replace('_', ' ')}
+                                      {currentPackingHelp === 'kit' ? 'Full Packing Kit' : currentPackingHelp === 'paygo' ? 'Pay as You Go' : String(currentPackingHelp).replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                                     </p>
                                   )}
                                   {currentPackingRooms > 0 && (
@@ -3700,7 +3899,7 @@ export default function BookingTrackingPage() {
                               <span className="text-sm font-medium text-gray-700">Packing</span>
                               {packingCost > 0 || serviceDetails.packing_help === 'paygo' ? (
                                 <div className="text-xs text-gray-600 mt-1">
-                                  Type: {serviceDetails.packing_help === 'kit' ? 'Full Packing Kit' : serviceDetails.packing_help === 'paygo' ? 'Pay as You Go' : serviceDetails.packing_help}
+                                  {serviceDetails.packing_help === 'kit' ? 'Full Packing Kit' : serviceDetails.packing_help === 'paygo' ? 'Pay as You Go' : serviceDetails.packing_help}
                                   {packingRooms > 0 && (
                                     <span> • {packingRooms} {packingRooms === 1 ? 'room' : 'rooms'} to pack</span>
                                   )}
@@ -3925,18 +4124,6 @@ export default function BookingTrackingPage() {
                     Create Invoice
                   </Button>
                 )}
-                {/* Open in Calendar */}
-                <Button 
-                  variant="outline"
-                  className="w-full mt-2 border-2 border-gray-800 hover:bg-gray-900 hover:text-white"
-                  onClick={() => {
-                    const d = booking.requested_date || (booking.service_details?.scheduled_date) || ''
-                    const dateOnly = typeof d === 'string' ? d.split('T')[0] : ''
-                    router.push(`/dashboard/bookings?date=${encodeURIComponent(dateOnly)}&open=${booking.id}`)
-                  }}
-                >
-                  Open in Calendar
-                </Button>
                 {invoices.length > 0 && invoices.some(inv => inv.balance_cents > 0 && inv.status !== 'draft') && isCustomer && (
                   <Button 
                     className="w-full bg-orange-600 hover:bg-orange-700 mt-4"

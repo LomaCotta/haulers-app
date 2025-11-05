@@ -104,6 +104,52 @@ export async function POST(request: NextRequest) {
       }, { status: 500 })
     }
     
+    // Send notification to business owner about new booking request
+    if (booking?.business_id) {
+      try {
+        const { data: business } = await supabase
+          .from('businesses')
+          .select('owner_id')
+          .eq('id', booking.business_id)
+          .single()
+
+        if (business?.owner_id) {
+          const { sendNotification } = await import('@/lib/notifications')
+          await sendNotification(
+            business.owner_id,
+            'booking_request',
+            'email',
+            {
+              booking_id: booking.id,
+              message: 'You have a new booking request'
+            }
+          )
+        }
+      } catch (notifError) {
+        console.error('Error sending booking notification:', notifError)
+        // Don't fail booking creation if notification fails
+      }
+    }
+
+    // Send confirmation notification to customer
+    if (booking?.customer_id) {
+      try {
+        const { sendNotification } = await import('@/lib/notifications')
+        await sendNotification(
+          booking.customer_id,
+          'booking_confirmed',
+          'email',
+          {
+            booking_id: booking.id,
+            message: 'Your booking request has been submitted'
+          }
+        )
+      } catch (notifError) {
+        console.error('Error sending customer notification:', notifError)
+        // Don't fail booking creation if notification fails
+      }
+    }
+    
     console.log('Successfully created booking:', booking?.id)
     return NextResponse.json({ booking })
     

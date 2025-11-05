@@ -10,6 +10,16 @@ export const metadata: Metadata = {
   keywords: ["moving", "hauling", "services", "nonprofit", "transparent", "local", "marketplace", "directory"],
   authors: [{ name: "Haulers.app" }],
   robots: "index, follow",
+  icons: {
+    icon: [
+      { url: "/haulers-favicon.png", sizes: "32x32", type: "image/png" },
+      { url: "/haulers-favicon.png", sizes: "16x16", type: "image/png" },
+    ],
+    apple: [
+      { url: "/haulers-favicon.png", sizes: "180x180", type: "image/png" },
+    ],
+    shortcut: "/haulers-favicon.png",
+  },
   openGraph: {
     type: "website",
     title: "Haulers.app - Transparent Moving & Hauling Services",

@@ -31,8 +31,23 @@ export async function POST(request: NextRequest) {
     let overrides: { perMile?: number; minHours?: number; stairsPolicy?: { included: boolean; per_flight_cents: number }; baseZip?: string; destinationFeePerMileCents?: number; packingConfig?: { enabled: boolean; per_room_cents: number; materials_included: boolean; materials: Array<{ name: string; price_cents: number; included: boolean }> } } = {}
     let providerId: string | undefined = (body?.providerId || body?.provider_id)
     const businessId: string | undefined = body?.businessId
+    const calendarId: string | undefined = body?.calendarId // NEW: Support calendarId
 
-    // Resolve providerId from businessId if needed
+    // Resolve providerId from calendarId if provided (secure method)
+    if (calendarId) {
+      const supabase = await createClient()
+      const { data: providerData, error: calendarError } = await supabase
+        .from('movers_providers')
+        .select('id, business_id')
+        .eq('calendar_id', calendarId)
+        .maybeSingle()
+      
+      if (providerData?.id) {
+        providerId = providerData.id
+      }
+    }
+
+    // Resolve providerId from businessId if needed (legacy)
     if (!providerId && businessId) {
       const supabase = await createClient()
       const { data } = await supabase.from('movers_providers').select('id').eq('business_id', businessId).maybeSingle()

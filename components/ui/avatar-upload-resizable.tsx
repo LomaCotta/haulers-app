@@ -12,6 +12,7 @@ interface AvatarUploadProps {
   userId: string
   size?: 'sm' | 'md' | 'lg' | 'xl'
   className?: string
+  showUploadHint?: boolean // Control whether to show upload instructions
 }
 
 interface CropArea {
@@ -26,7 +27,8 @@ export function AvatarUpload({
   onAvatarChange, 
   userId,
   size = 'lg',
-  className 
+  className,
+  showUploadHint = true
 }: AvatarUploadProps) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
@@ -229,9 +231,10 @@ export function AvatarUpload({
           <button
             onClick={removeAvatar}
             disabled={uploading}
-            className="absolute -top-1 -right-1 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center hover:bg-red-600 disabled:opacity-50"
+            className="absolute -top-2 -right-2 w-7 h-7 bg-white border-2 border-gray-300 text-gray-700 rounded-full flex items-center justify-center hover:bg-red-50 hover:border-red-400 hover:text-red-600 shadow-md transition-all duration-200 disabled:opacity-50 z-10"
+            title="Remove photo"
           >
-            <X className="w-3 h-3" />
+            <X className="w-4 h-4" />
           </button>
         )}
       </div>
@@ -281,9 +284,11 @@ export function AvatarUpload({
         className="hidden"
       />
 
-      <p className="text-xs text-gray-500 text-center max-w-xs">
-        Upload a profile picture. Max size: 5MB. Supported formats: JPG, PNG, GIF, WebP
-      </p>
+      {showUploadHint && error && (error.includes('size') || error.includes('format') || error.includes('image')) && (
+        <p className="text-xs text-gray-500 text-center max-w-xs mt-2">
+          Max size: 5MB. Supported formats: JPG, PNG, GIF, WebP
+        </p>
+      )}
 
       {/* Crop Modal */}
       {showCropModal && originalImage && (

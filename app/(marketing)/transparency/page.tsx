@@ -266,7 +266,11 @@ export default function TransparencyPage() {
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-gray-100">
                     <span className="text-sm text-gray-600">Donations</span>
-                    <span className="font-medium text-gray-900">$0</span>
+                    <span className="font-medium text-gray-900">$780</span>
+                  </div>
+                  <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                    <span className="text-sm text-gray-600">In-Kind Contributions</span>
+                    <span className="font-medium text-gray-900">$6,500</span>
                   </div>
                   <div className="flex justify-between items-center py-2 border-b border-gray-100">
                     <span className="text-sm text-gray-600">Infrastructure</span>
@@ -279,7 +283,7 @@ export default function TransparencyPage() {
                 </div>
                 <div className="text-center py-4 border-t border-gray-100">
                   <p className="text-xs text-gray-500">
-                    No transactions yet
+                    Thank you for your generous support! We received $780 in cash donations and $6,500 in developer work contributions.
                   </p>
                 </div>
               </CardContent>
