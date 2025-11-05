@@ -34,7 +34,7 @@ export async function POST(
         *,
         booking:bookings(id, booking_status, payment_status, customer_id),
         business:businesses(id, name, owner_id),
-        customer:profiles(id, full_name, email)
+        customer:profiles(id, full_name)
       `)
       .eq('id', id)
       .single()
@@ -57,97 +57,119 @@ export async function POST(
 
     const paymentAmount = amount || invoice.balance_cents
 
-    // Process payment
-    const intent = await stripe.paymentIntents.create({
-      amount: paymentAmount,
-      currency: currency,
-      payment_method: paymentMethodId,
-      confirm: true,
-      metadata: { 
-        invoice_id: id,
-        booking_id: booking?.id || '',
-        customer_id: user.id,
-        business_id: business.id
-      },
-    })
+    // If paymentMethodId is provided, process payment immediately
+    // Otherwise, create a payment intent for client-side confirmation
+    if (paymentMethodId) {
+      // Process payment
+      const intent = await stripe.paymentIntents.create({
+        amount: paymentAmount,
+        currency: currency,
+        payment_method: paymentMethodId,
+        confirm: true,
+        metadata: { 
+          invoice_id: id,
+          booking_id: booking?.id || '',
+          customer_id: user.id,
+          business_id: business.id
+        },
+      })
 
-    if (intent.status === 'succeeded') {
-      // Update invoice payment status
-      const paidCents = (invoice.paid_cents || 0) + paymentAmount
-      const isFullyPaid = paidCents >= invoice.total_cents
+      if (intent.status === 'succeeded') {
+        // Update invoice payment status
+        const paidCents = (invoice.paid_cents || 0) + paymentAmount
+        const isFullyPaid = paidCents >= invoice.total_cents
 
-      const { error: updateError } = await supabase
-        .from('invoices')
-        .update({
-          paid_cents: paidCents,
-          balance_cents: invoice.total_cents - paidCents,
-          status: isFullyPaid ? 'paid' : 'partially_paid',
-          paid_at: isFullyPaid ? new Date().toISOString() : invoice.paid_at,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id)
-
-      if (updateError) {
-        console.error('Error updating invoice after payment:', updateError)
-      }
-
-      // Update booking payment status if invoice is fully paid
-      if (isFullyPaid && booking) {
-        await supabase
-          .from('bookings')
+        const { error: updateError } = await supabase
+          .from('invoices')
           .update({
-            payment_status: 'paid',
+            paid_cents: paidCents,
+            balance_cents: invoice.total_cents - paidCents,
+            status: isFullyPaid ? 'paid' : 'partially_paid',
+            paid_at: isFullyPaid ? new Date().toISOString() : invoice.paid_at,
             updated_at: new Date().toISOString()
           })
-          .eq('id', booking.id)
+          .eq('id', id)
 
-        // CRITICAL: Trigger review request when payment is marked as paid
-        // Check if booking is completed and payment is now paid
-        if (booking.booking_status === 'completed') {
-          // Create notification for review request
-          await supabase
-            .from('notifications')
-            .insert({
-              user_id: invoice.customer_id,
-              booking_id: booking.id,
-              notification_type: 'review_request',
-              title: 'How was your service? ⭐',
-              message: `Thank you for your payment! Please share your experience with ${business.name} by leaving a review.`,
-              action_url: `/dashboard/reviews/${booking.id}`,
-              created_at: new Date().toISOString()
-            })
+        if (updateError) {
+          console.error('Error updating invoice after payment:', updateError)
+        }
 
-          // Also update booking to indicate review was requested
+        // Update booking payment status if invoice is fully paid
+        if (isFullyPaid && booking) {
           await supabase
             .from('bookings')
             .update({
-              review_requested_at: new Date().toISOString()
+              payment_status: 'paid',
+              updated_at: new Date().toISOString()
             })
             .eq('id', booking.id)
+
+          // CRITICAL: Trigger review request when payment is marked as paid
+          // Check if booking is completed and payment is now paid
+          if (booking.booking_status === 'completed') {
+            // Create notification for review request
+            await supabase
+              .from('notifications')
+              .insert({
+                user_id: invoice.customer_id,
+                booking_id: booking.id,
+                notification_type: 'review_request',
+                title: 'How was your service? ⭐',
+                message: `Thank you for your payment! Please share your experience with ${business.name} by leaving a review.`,
+                action_url: `/dashboard/reviews/${booking.id}`,
+                created_at: new Date().toISOString()
+              })
+
+            // Also update booking to indicate review was requested
+            await supabase
+              .from('bookings')
+              .update({
+                review_requested_at: new Date().toISOString()
+              })
+              .eq('id', booking.id)
+          }
         }
+
+        return NextResponse.json({ 
+          success: true, 
+          clientSecret: intent.client_secret, 
+          paymentIntent: intent,
+          fullyPaid: isFullyPaid
+        })
+      }
+
+      if (intent.status === 'requires_action') {
+        return NextResponse.json({ 
+          success: true, 
+          requiresAction: true, 
+          clientSecret: intent.client_secret, 
+          paymentIntent: intent 
+        })
       }
 
       return NextResponse.json({ 
-        success: true, 
-        clientSecret: intent.client_secret, 
-        paymentIntent: intent,
-        fullyPaid: isFullyPaid
+        error: 'Payment failed', 
+        status: intent.status 
+      }, { status: 400 })
+    } else {
+      // Create payment intent for client-side confirmation
+      const intent = await stripe.paymentIntents.create({
+        amount: paymentAmount,
+        currency: currency,
+        metadata: { 
+          invoice_id: id,
+          booking_id: booking?.id || '',
+          customer_id: user.id,
+          business_id: business.id
+        },
       })
-    }
 
-    if (intent.status === 'requires_action') {
       return NextResponse.json({ 
         success: true, 
-        requiresAction: true, 
-        clientSecret: intent.client_secret, 
-        paymentIntent: intent 
+        clientSecret: intent.client_secret,
+        paymentIntent: intent
       })
     }
-
-    return NextResponse.json({ 
-      error: 'Payment failed', 
-      status: intent.status 
-    }, { status: 400 })
   } catch (error) {
     console.error('Invoice payment processing error:', error)
     const message = error instanceof Error ? error.message : 'Payment processing failed'

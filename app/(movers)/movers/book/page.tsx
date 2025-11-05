@@ -1351,6 +1351,17 @@ function WizardInner() {
     { min_weight_lbs: 600, max_weight_lbs: 800, price_cents: 0 },
   ]
 
+  // Scroll to top of step 4 when it opens (especially important on mobile)
+  useEffect(() => {
+    if (step === 4) {
+      // Small delay to ensure DOM is rendered, then scroll window to top
+      setTimeout(() => {
+        // Use window.scrollTo instead of scrollIntoView to avoid page reload issues
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }, 100)
+    }
+  }, [step])
+
   useEffect(() => {
     (async () => {
       // Always prefer resolvedCalendarId (auto-resolved from businessId/providerId)

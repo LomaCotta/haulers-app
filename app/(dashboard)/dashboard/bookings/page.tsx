@@ -1929,23 +1929,19 @@ useEffect(() => {
                   )}
 
                   {/* My Orders - bookings they made to other providers */}
-                  {/* Always show this section if there are any bookings OR if we're loading */}
-                  {(myOrders.length > 0 || (providerBookings.length > 0 && bookingRequests.length === 0)) && (
+                  {myOrders.length > 0 && (
                     <div className="mb-8 mt-8 border-t-2 border-gray-200 pt-8">
                       <div className="flex items-center justify-between mb-4">
                         <div>
                           <h2 className="text-2xl font-bold mb-2 flex items-center gap-3">
                             <span>My Orders</span>
-                            {myOrders.length > 0 && (
-                              <Badge className="bg-blue-600 text-white text-sm px-3 py-1">{myOrders.length}</Badge>
-                            )}
+                            <Badge className="bg-blue-600 text-white text-sm px-3 py-1">{myOrders.length}</Badge>
                           </h2>
                           <p className="text-sm text-gray-600">Bookings you've placed with other providers</p>
                         </div>
                       </div>
-                      {myOrders.length > 0 ? (
-                        <div className="space-y-4">
-                          {myOrders.map((booking) => {
+                      <div className="space-y-4">
+                        {myOrders.map((booking) => {
                           // Use actual schema columns
                           const serviceDetails = booking.service_details || {}
                           const fromAddress = formatAddress(serviceDetails.from_address || booking.service_address || '')
@@ -2063,13 +2059,6 @@ useEffect(() => {
                           )
                           })}
                         </div>
-                      ) : (
-                        <Card className="border-2 border-gray-200 bg-gray-50">
-                          <CardContent className="text-center py-8">
-                            <p className="text-gray-600">No orders yet. When you place an order with another provider, it will appear here.</p>
-                          </CardContent>
-                        </Card>
-                      )}
                     </div>
                   )}
                 </>

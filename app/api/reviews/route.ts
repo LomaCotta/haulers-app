@@ -23,13 +23,33 @@ export async function POST(request: NextRequest) {
       .eq("id", bookingId)
       .eq("customer_id", user.id)
       .eq("business_id", businessId)
-      .eq("status", "completed")
       .single()
 
     if (bookingError || !booking) {
       return NextResponse.json({ 
-        error: "Booking not found or not completed" 
+        error: "Booking not found or you don't have access" 
       }, { status: 404 })
+    }
+
+    // Check for paid invoices for this booking
+    const { data: invoices } = await supabase
+      .from('invoices')
+      .select('id, status, paid_cents, total_cents')
+      .eq('booking_id', bookingId)
+    
+    const hasPaidInvoice = invoices?.some((inv: any) => 
+      inv.status === 'paid' && inv.paid_cents >= inv.total_cents
+    )
+    
+    // Check if booking can be reviewed:
+    // 1. Booking is completed, OR
+    // 2. Invoice is paid (service was provided and paid for)
+    const canReview = booking.booking_status === 'completed' || hasPaidInvoice
+
+    if (!canReview) {
+      return NextResponse.json({ 
+        error: "Booking must be completed or have a paid invoice to be reviewed" 
+      }, { status: 400 })
     }
 
     // Check if user already reviewed this booking
@@ -46,23 +66,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Create the review
+    // Note: Schema uses consumer_id and body, not customer_id and comment
     const { data: review, error } = await supabase
       .from("reviews")
       .insert({
         business_id: businessId,
         booking_id: bookingId,
-        customer_id: user.id,
+        consumer_id: user.id, // Schema uses consumer_id
         rating,
-        comment: comment?.trim() || null,
+        body: comment?.trim() || null, // Schema uses body, not comment
       })
-      .select(`
-        *,
-        customer:profiles!reviews_customer_id_fkey(*)
-      `)
+      .select("*")
       .single()
 
     if (error) {
-      return NextResponse.json({ error: "Failed to create review" }, { status: 500 })
+      console.error("Review creation error:", error)
+      return NextResponse.json({ 
+        error: "Failed to create review",
+        details: error.message 
+      }, { status: 500 })
     }
 
     return NextResponse.json(review)

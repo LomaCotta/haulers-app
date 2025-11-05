@@ -6,6 +6,17 @@ import { createClient } from '@/lib/supabase/server'
 
 export async function POST(request: NextRequest) {
   try {
+    // Require authentication
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    
+    if (authError || !user) {
+      return NextResponse.json({ 
+        error: 'Authentication required',
+        message: 'Please sign in to request a quote'
+      }, { status: 401 })
+    }
+
     const body = await request.json()
 
     let validated: QuoteInput
@@ -190,9 +201,9 @@ export async function POST(request: NextRequest) {
     const computed = await calculateQuoteAsync(validated, overrides)
 
     // Store to Supabase movers_quotes
-    const supabase = await createClient()
+    // User is authenticated at this point (checked above)
     
-    // Try to insert quote, but don't fail if it doesn't work (for unauthenticated users)
+    // Try to insert quote - user must be authenticated
     let quoteRecord = null
     try {
       const { data, error } = await supabase
@@ -200,6 +211,7 @@ export async function POST(request: NextRequest) {
         .insert({
           provider_id: null,
           ...(providerId ? { provider_id: providerId } : {}),
+          customer_id: user.id, // Set customer_id since user is authenticated
           full_name: validated.full_name,
           email: validated.email,
           phone: validated.phone,
@@ -216,16 +228,13 @@ export async function POST(request: NextRequest) {
 
       if (error) {
         console.error('[Quotes API] Error saving quote to database:', error)
-        // If it's an RLS error or auth error, we can still return the quote without saving
-        // The reservation creation will handle creating the quote if needed
+        // If it's an RLS error, return error since user is authenticated
         if (error.code === '42501' || error.message?.includes('permission') || error.message?.includes('policy')) {
-          console.warn('[Quotes API] Permission error saving quote - will create quote on reservation')
-          // Return computed quote without database record - reservation API will create it
           return NextResponse.json({ 
-            quote: { id: null }, // No database ID yet
-            ...computed,
-            persist_warning: 'Quote will be saved when reservation is created'
-          })
+            error: 'Permission denied',
+            message: 'Unable to save quote. Please try again.',
+            details: error.message
+          }, { status: 403 })
         }
         // For other errors, still return computed but log the error
         return NextResponse.json({ ...computed, persist_error: error.message })
@@ -235,7 +244,10 @@ export async function POST(request: NextRequest) {
       console.log('[Quotes API] Quote saved successfully:', { quoteId: data?.id })
     } catch (e) {
       console.error('[Quotes API] Exception saving quote:', e)
-      // Continue anyway - return computed quote
+      return NextResponse.json({ 
+        error: 'Failed to save quote',
+        message: 'An error occurred while saving your quote. Please try again.'
+      }, { status: 500 })
     }
 
     return NextResponse.json({ 

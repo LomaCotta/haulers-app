@@ -11,7 +11,7 @@ type QuotePrice = {
   destination_fee: string
   double_drive_time: boolean
   peak: boolean
-  breakdown: { base_hourly: number; insurance: number; packing: number; storage: number; stairs: number; heavy_items: number; total: number }
+  breakdown: { base_hourly: number; insurance: number; packing: number; storage: number; stairs: number; heavy_items: number; destination_fee: number; total: number }
 }
 
 const SERVICE_COSTS = {
@@ -175,6 +175,7 @@ export function calculateQuote(params: QuoteInput, overrides: CalcOverrides = {}
       storage: storageCost,
       stairs: stairsCost,
       heavy_items: heavyItemsCost,
+      destination_fee: destinationFee, // CRITICAL: Include destination fee in breakdown
       total,
     },
   }
@@ -192,6 +193,8 @@ export function calculateQuote(params: QuoteInput, overrides: CalcOverrides = {}
       insuranceCost, 
       stairsCost, 
       heavy_items: heavyItemsCost, // CRITICAL: Include heavy items cost
+      destination_fee: destinationFee, // CRITICAL: Include destination fee in breakdown
+      destinationFee: destinationFee, // Also include camelCase variant for compatibility
       peakSurcharge: 0, 
       total 
     } 

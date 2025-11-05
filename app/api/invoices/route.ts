@@ -36,9 +36,9 @@ export async function GET(request: NextRequest) {
       .from('invoices')
       .select(`
         *,
-        booking:bookings(*),
+        booking:bookings(id, booking_status, review_requested_at),
         business:businesses(id, name),
-        customer:profiles(id, full_name, email)
+        customer:profiles(id, full_name)
       `)
       .order('created_at', { ascending: false })
 
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
             *,
             booking:bookings(*),
             business:businesses(id, name),
-            customer:profiles(id, full_name, email)
+            customer:profiles(id, full_name)
           `)
           .in('business_id', businessIds)
 
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
             *,
             booking:bookings(*),
             business:businesses(id, name),
-            customer:profiles(id, full_name, email)
+            customer:profiles(id, full_name)
           `)
           .eq('customer_id', user.id)
 
@@ -129,7 +129,32 @@ export async function GET(request: NextRequest) {
         )
           .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
 
-        return NextResponse.json(uniqueInvoices)
+        // Check which invoices have reviews
+        const bookingIds = uniqueInvoices
+          .filter(inv => inv.booking_id)
+          .map(inv => inv.booking_id)
+        
+        let reviewsMap = new Map()
+        if (bookingIds.length > 0) {
+          const { data: reviews } = await supabase
+            .from('reviews')
+            .select('booking_id')
+            .in('booking_id', bookingIds)
+          
+          if (reviews) {
+            reviews.forEach((review: any) => {
+              reviewsMap.set(review.booking_id, true)
+            })
+          }
+        }
+
+        // Add review_exists flag to each invoice
+        const invoicesWithReviewStatus = uniqueInvoices.map(inv => ({
+          ...inv,
+          review_exists: inv.booking_id ? reviewsMap.has(inv.booking_id) : false
+        }))
+
+        return NextResponse.json(invoicesWithReviewStatus)
       } else {
         // Only show invoices where they are the customer
         query = query.eq('customer_id', user.id)
@@ -166,7 +191,32 @@ export async function GET(request: NextRequest) {
       }, { status: 500 })
     }
 
-    return NextResponse.json(invoices || [])
+    // Check which invoices have reviews (for single query path)
+    const bookingIds = (invoices || [])
+      .filter(inv => inv.booking_id)
+      .map(inv => inv.booking_id)
+    
+    let reviewsMap = new Map()
+    if (bookingIds.length > 0) {
+      const { data: reviews } = await supabase
+        .from('reviews')
+        .select('booking_id')
+        .in('booking_id', bookingIds)
+      
+      if (reviews) {
+        reviews.forEach((review: any) => {
+          reviewsMap.set(review.booking_id, true)
+        })
+      }
+    }
+
+    // Add review_exists flag to each invoice
+    const invoicesWithReviewStatus = (invoices || []).map(inv => ({
+      ...inv,
+      review_exists: inv.booking_id ? reviewsMap.has(inv.booking_id) : false
+    }))
+
+    return NextResponse.json(invoicesWithReviewStatus)
   } catch (error) {
     console.error('Error in GET /api/invoices:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

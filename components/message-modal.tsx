@@ -126,6 +126,47 @@ export default function MessageModal({
       }
 
       setMessages(messagesData || [])
+      
+      // Mark all unread messages from this sender as read
+      if (messagesData && messagesData.length > 0) {
+        const unreadMessageIds = messagesData
+          .filter(msg => msg.recipient_id === user.id && !msg.is_read)
+          .map(msg => msg.id)
+        
+        if (unreadMessageIds.length > 0) {
+          // Mark messages as read
+          const { error: updateError } = await supabase
+            .from('messages')
+            .update({ is_read: true })
+            .in('id', unreadMessageIds)
+          
+          if (updateError) {
+            console.error('Error marking messages as read:', updateError)
+          } else {
+            // Update local state
+            setMessages(prev => prev.map(msg => 
+              unreadMessageIds.includes(msg.id) ? { ...msg, is_read: true } : msg
+            ))
+            
+            // Cancel/dismiss pending notifications for these messages
+            try {
+              const { error: notifError } = await supabase
+                .from('notification_queue')
+                .update({ status: 'cancelled' })
+                .eq('notification_type', 'message_received')
+                .eq('user_id', user.id)
+                .in('message_id', unreadMessageIds)
+                .eq('status', 'pending')
+              
+              if (notifError) {
+                console.warn('Error cancelling notifications:', notifError)
+              }
+            } catch (notifErr) {
+              console.warn('Error cancelling notifications:', notifErr)
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error('Error:', error)
     } finally {

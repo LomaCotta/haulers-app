@@ -74,12 +74,27 @@ export async function POST(request: NextRequest) {
       if (!resolvedProviderId && businessId) {
         const { data: provider } = await supabase
           .from('movers_providers')
-          .select('id')
+          .select('id, business_id')
           .eq('business_id', businessId)
           .maybeSingle()
         
         if (provider) {
           resolvedProviderId = provider.id
+          if (!resolvedBusinessId) {
+            resolvedBusinessId = provider.business_id || businessId
+          }
+        }
+      }
+      // If we have providerId but no businessId, try to get business_id from provider
+      if (resolvedProviderId && !resolvedBusinessId) {
+        const { data: provider } = await supabase
+          .from('movers_providers')
+          .select('business_id')
+          .eq('id', resolvedProviderId)
+          .maybeSingle()
+        
+        if (provider?.business_id) {
+          resolvedBusinessId = provider.business_id
         }
       }
     }
@@ -582,30 +597,106 @@ export async function POST(request: NextRequest) {
     }
 
     // Send job creation notification to provider (if not already sent via booking_request)
-    // Get provider owner user_id for notifications
+    // Get provider owner user_id and email for notifications
     const { data: providerForNotification } = await supabase
       .from('movers_providers')
       .select('owner_user_id')
       .eq('id', resolvedProviderId)
       .maybeSingle()
     
-    if (providerForNotification?.owner_user_id && jobId) {
+    // Also try to get email from business owner if provider owner doesn't have email
+    let providerEmail: string | null = null
+    let providerUserId: string | null = providerForNotification?.owner_user_id || null
+    
+    if (providerUserId) {
+      // Try to get email from profiles
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email')
+        .eq('id', providerUserId)
+        .maybeSingle()
+      
+      providerEmail = profile?.email || null
+      
+      // If no email in profiles, try to get from auth.users using service role
+      if (!providerEmail && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        try {
+          const { createClient: createAdminClient } = await import('@supabase/supabase-js')
+          const adminSupabase = createAdminClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            process.env.SUPABASE_SERVICE_ROLE_KEY!,
+            { auth: { persistSession: false } }
+          )
+          const { data: authUser, error: authError } = await adminSupabase.auth.admin.getUserById(providerUserId)
+          if (!authError && authUser?.user?.email) {
+            providerEmail = authUser.user.email
+            console.log('[Reservations API] Found provider email from auth.users:', providerEmail)
+          }
+        } catch (adminError) {
+          console.warn('[Reservations API] Could not get email from auth.users:', adminError)
+        }
+      }
+      
+      // If still no email, try to get from business owner
+      if (!providerEmail && resolvedBusinessId) {
+        const { data: businessOwner } = await supabase
+          .from('businesses')
+          .select('owner_id')
+          .eq('id', resolvedBusinessId)
+          .maybeSingle()
+        
+        if (businessOwner?.owner_id) {
+          const { data: ownerProfile } = await supabase
+            .from('profiles')
+            .select('email')
+            .eq('id', businessOwner.owner_id)
+            .maybeSingle()
+          
+          providerEmail = ownerProfile?.email || null
+          if (providerEmail) {
+            providerUserId = businessOwner.owner_id
+            console.log('[Reservations API] Using business owner email for notifications:', providerEmail)
+          }
+        }
+      }
+    }
+    
+    if (providerUserId && jobId) {
       try {
         const { sendNotification } = await import('@/lib/notifications')
-        await sendNotification(
-          providerForNotification.owner_user_id,
+        const result = await sendNotification(
+          providerUserId,
           'job_created',
           'email',
           {
             job_id: jobId,
             quote_id: finalQuoteId || undefined,
+            move_date: moveDate,
+            customer_name: fullName,
+            pickup_address: pickupAddresses?.[0] || '',
+            delivery_address: deliveryAddresses?.[0] || '',
             message: `New job scheduled for ${moveDate}`
+          },
+          {
+            userEmail: providerEmail || undefined // Pass email if we found it
           }
         )
+        if (result.success) {
+          console.log('[Reservations API] ✅ Job creation notification sent successfully:', result.notificationId)
+        } else {
+          console.error('[Reservations API] ❌ Failed to send job creation notification:', result.error)
+          if (providerEmail) {
+            console.log('[Reservations API] Provider email found but notification failed:', providerEmail)
+          } else {
+            console.log('[Reservations API] Provider email not found for user:', providerUserId)
+          }
+        }
       } catch (notifError) {
-        console.warn('[Reservations API] ⚠️ Error sending job creation notification:', notifError)
+        console.error('[Reservations API] ⚠️ Error sending job creation notification:', notifError)
         // Don't fail if notification fails
       }
+    } else if (!providerUserId) {
+      console.warn('[Reservations API] ⚠️ No provider user ID found for notifications')
     }
 
     // CRITICAL: Also create a row in the bookings table so customers can see their reservations
@@ -616,11 +707,11 @@ export async function POST(request: NextRequest) {
     const { data: business } = await supabase
       .from('businesses')
       .select('id, name')
-      .eq('id', businessId)
+      .eq('id', resolvedBusinessId)
       .maybeSingle()
 
     if (!business) {
-      console.error('[Reservations API] ❌ Business not found:', businessId)
+      console.error('[Reservations API] ❌ Business not found:', resolvedBusinessId)
       return NextResponse.json({ 
         error: 'Business not found',
         code: 'BUSINESS_NOT_FOUND'
@@ -687,19 +778,48 @@ export async function POST(request: NextRequest) {
         console.log('[Reservations API] Quote breakdown from DB:', JSON.stringify(dbBreakdown, null, 2))
         console.log('[Reservations API] Using quote breakdown:', JSON.stringify(quoteBreakdownData, null, 2))
         
-        // CRITICAL: Update the quote's breakdown if body has better data
-        if (Object.keys(quoteBreakdown || {}).length > 0 && JSON.stringify(quoteBreakdown) !== JSON.stringify(dbBreakdown)) {
-          console.log('[Reservations API] Updating quote breakdown with complete data from body...')
+        // CRITICAL: Update the quote's breakdown if body has better/more complete data
+        // Don't overwrite if DB has destination_fee but body doesn't
+        const bodyHasDestinationFee = quoteBreakdown?.destination_fee || quoteBreakdown?.destinationFee
+        const dbHasDestinationFee = dbBreakdown?.destination_fee || dbBreakdown?.destinationFee
+        
+        // Only update if body has more complete data OR if they're significantly different
+        const shouldUpdate = (
+          Object.keys(quoteBreakdown || {}).length > 0 && 
+          JSON.stringify(quoteBreakdown) !== JSON.stringify(dbBreakdown) &&
+          // Don't overwrite if DB has destination_fee but body doesn't
+          !(dbHasDestinationFee && !bodyHasDestinationFee)
+        )
+        
+        if (shouldUpdate) {
+          // Merge DB breakdown with body breakdown to preserve destination_fee if missing in body
+          const mergedBreakdown = {
+            ...dbBreakdown,
+            ...quoteBreakdown,
+            // Preserve destination_fee from DB if body doesn't have it
+            ...(dbHasDestinationFee && !bodyHasDestinationFee ? {
+              destination_fee: dbBreakdown.destination_fee || dbBreakdown.destinationFee,
+              destinationFee: dbBreakdown.destination_fee || dbBreakdown.destinationFee,
+              destination_fee_cents: dbBreakdown.destination_fee_cents || dbBreakdown.destinationFeeCents
+            } : {})
+          }
+          
+          console.log('[Reservations API] Updating quote breakdown with merged data...')
           await supabase
             .from('movers_quotes')
             .update({ 
-              breakdown: quoteBreakdown,
-              updated_at: new Date().toISOString()
+              breakdown: mergedBreakdown
             })
             .eq('id', finalQuoteId)
           
-          quoteBreakdownData = quoteBreakdown
+          quoteBreakdownData = mergedBreakdown
           console.log('[Reservations API] ✅ Quote breakdown updated in database')
+        } else {
+          // Use DB breakdown if it's more complete
+          if (dbHasDestinationFee && !bodyHasDestinationFee) {
+            quoteBreakdownData = dbBreakdown
+            console.log('[Reservations API] Using DB breakdown (has destination_fee):', JSON.stringify(dbBreakdown, null, 2))
+          }
         }
       }
     }
@@ -905,7 +1025,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send notification to provider about new booking request
-    // Use providerForNotification if already fetched, otherwise fetch it
+    // Use providerForNotification if already fetched above, otherwise fetch it
     let providerForBookingNotification = providerForNotification
     if (!providerForBookingNotification) {
       const { data: providerData } = await supabase
@@ -940,7 +1060,7 @@ export async function POST(request: NextRequest) {
     if (bookingId && user.id) {
       try {
         const { sendNotification } = await import('@/lib/notifications')
-        await sendNotification(
+        const result = await sendNotification(
           user.id,
           'booking_confirmed',
           'email',
@@ -948,10 +1068,18 @@ export async function POST(request: NextRequest) {
             booking_id: bookingId,
             job_id: jobId || undefined,
             message: 'Your reservation has been confirmed'
+          },
+          {
+            userEmail: user.email || undefined // Pass email from authenticated user
           }
         )
+        if (result.success) {
+          console.log('[Reservations API] ✅ Customer notification sent successfully:', result.notificationId)
+        } else {
+          console.error('[Reservations API] ❌ Failed to send customer notification:', result.error)
+        }
       } catch (notifError) {
-        console.warn('[Reservations API] ⚠️ Error sending customer notification:', notifError)
+        console.error('[Reservations API] ⚠️ Error sending customer notification:', notifError)
         // Don't fail booking creation if notification fails
       }
     }

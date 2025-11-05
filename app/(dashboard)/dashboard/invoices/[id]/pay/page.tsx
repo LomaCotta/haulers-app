@@ -87,12 +87,11 @@ export default function InvoicePaymentPage() {
         return
       }
 
-      // Create payment intent via API
-      const response = await fetch('/api/bookings/payments', {
+      // Create payment intent via invoice payment API
+      const response = await fetch(`/api/invoices/${id}/pay`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          invoice_id: id,
           amount: invoice.balance_cents
         })
       })
@@ -103,31 +102,8 @@ export default function InvoicePaymentPage() {
         throw new Error(result.error || 'Payment failed')
       }
 
-      // Update invoice payment status
-      const updateResponse = await fetch(`/api/invoices/${invoice.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: 'paid',
-          paid_cents: invoice.total_cents
-        })
-      })
-
-      if (!updateResponse.ok) {
-        console.error('Error updating invoice after payment')
-        // Payment succeeded but invoice update failed - should be handled by webhook
-      }
-
-      // Update booking payment status if linked
-      if (result.booking_id) {
-        await supabase
-          .from('bookings')
-          .update({
-            payment_status: 'paid',
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', result.booking_id)
-      }
+      // Payment is already processed by the API endpoint
+      // The invoice and booking status are updated automatically
 
       setSuccess(true)
       

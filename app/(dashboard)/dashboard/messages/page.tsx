@@ -106,6 +106,7 @@ export default function MessagesPage() {
   const [activeTab, setActiveTab] = useState<'messages' | 'friends' | 'groups' | 'search'>('messages')
   const [showMessageModal, setShowMessageModal] = useState(false)
   const [selectedConversation, setSelectedConversation] = useState<any>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [newMessage, setNewMessage] = useState('')
   const [showAddFriend, setShowAddFriend] = useState(false)
   const [friendEmail, setFriendEmail] = useState('')
@@ -156,6 +157,14 @@ export default function MessagesPage() {
   const handleMessageSent = (message: any) => {
     // Refresh conversations or update UI as needed
     fetchData()
+  }
+
+  const handleMessageModalClose = () => {
+    handleCloseMessageModal()
+    // Refresh data to update read status
+    fetchData()
+    // Force ConversationList to refresh
+    setRefreshKey(prev => prev + 1)
   }
 
   const debugFriendsData = async () => {
@@ -862,6 +871,7 @@ export default function MessagesPage() {
           {/* Conversations List */}
           <div className={`lg:col-span-1 ${selectedConversation ? 'hidden lg:block' : 'block'}`}>
             <ConversationList 
+              key={refreshKey}
               onSelectConversation={handleSelectConversation}
               selectedConversationId={selectedConversation?.id}
             />
@@ -1466,7 +1476,7 @@ export default function MessagesPage() {
       {showMessageModal && selectedConversation && (
         <MessageModal
           isOpen={showMessageModal}
-          onClose={handleCloseMessageModal}
+          onClose={handleMessageModalClose}
           recipientId={selectedConversation.id}
           recipientName={selectedConversation.other_user.full_name}
           recipientAvatar={selectedConversation.other_user.avatar_url}

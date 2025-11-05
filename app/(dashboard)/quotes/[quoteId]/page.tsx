@@ -515,8 +515,9 @@ export default function QuoteReceiptPage() {
                         const baseHourlyNormalized = normalizeValue(baseHourly)
 
                         // Destination Fee - can be stored as string "$61" or number 61 (dollars) or 6100 (cents)
+                        // Check multiple possible locations: destination_fee_cents, destination_fee, destinationFee
                         const destinationFeeCents = quote.breakdown?.destination_fee_cents
-                        const destinationFee = quote.breakdown?.destination_fee
+                        const destinationFee = quote.breakdown?.destination_fee || quote.breakdown?.destinationFee
                         let destinationFeeNormalized = 0
                         
                         if (destinationFeeCents !== undefined && destinationFeeCents !== null) {
@@ -533,7 +534,7 @@ export default function QuoteReceiptPage() {
                             destinationFeeNormalized = destinationFee > 1000 ? destinationFee / 100 : destinationFee
                           }
                         }
-
+                        
                         // Packing - check both camelCase and snake_case variants
                         const packing = quote.breakdown?.packing || quote.breakdown?.packingCost || quote.breakdown?.packing_cost || 0
                         const packingNormalized = normalizeValue(packing)
@@ -654,6 +655,30 @@ export default function QuoteReceiptPage() {
                         // Insurance
                         const insurance = quote.breakdown?.insurance || quote.breakdown?.insuranceCost || 0
                         const insuranceNormalized = normalizeValue(insurance)
+                        
+                        // Calculate preliminary subtotal to detect missing destination fee
+                        const preliminarySubtotal = baseHourlyNormalized + packingNormalized + stairsNormalized + heavyItemsNormalized + storageNormalized + insuranceNormalized
+                        const actualTotal = (quote.price_total_cents || 0) / 100
+                        const preliminaryDifference = actualTotal - preliminarySubtotal
+                        
+                        // If destination fee is missing but there's a difference that matches a typical destination fee,
+                        // it's likely the destination fee wasn't saved in breakdown (legacy quote)
+                        // Auto-detect and include it
+                        if (destinationFeeNormalized === 0 && preliminaryDifference > 0 && preliminaryDifference < 200) {
+                          // Likely a missing destination fee (usually $50-$150)
+                          destinationFeeNormalized = preliminaryDifference
+                          console.log('[Quote Breakdown] Auto-detected missing destination fee:', destinationFeeNormalized)
+                        }
+                        
+                        // Debug log to help troubleshoot
+                        if (destinationFeeNormalized > 0) {
+                          console.log('[Quote Breakdown] Destination Fee:', {
+                            destinationFeeCents,
+                            destinationFee,
+                            destinationFeeNormalized,
+                            breakdown_keys: quote.breakdown ? Object.keys(quote.breakdown) : []
+                          })
+                        }
 
                         return (
                           <>
@@ -753,6 +778,11 @@ export default function QuoteReceiptPage() {
                                       Calculated: ${calculatedSubtotal.toFixed(2)} | Actual: ${actualTotal.toFixed(2)}
                                       <br />
                                       Difference: ${Math.abs(calculatedSubtotal - actualTotal).toFixed(2)}
+                                      {destinationFeeNormalized > 0 && (
+                                        <div className="mt-1 text-xs text-gray-600">
+                                          Note: Destination fee (${destinationFeeNormalized.toFixed(2)}) included in calculation.
+                                        </div>
+                                      )}
                                     </div>
                                   )}
                                   {/* Debug: Show raw breakdown if it exists */}

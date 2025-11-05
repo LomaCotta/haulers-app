@@ -41,6 +41,7 @@ export async function sendNotification(
   options?: {
     scheduledFor?: Date
     metadata?: Record<string, any>
+    userEmail?: string // Optional: Pass email directly if already known
   }
 ): Promise<{ success: boolean; notificationId?: string; error?: string }> {
   try {
@@ -60,19 +61,32 @@ export async function sendNotification(
     // Get user email for email notifications
     let userEmail: string | null = null
     if (channel === 'email') {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('email, full_name')
-        .eq('id', userId)
-        .single()
+      // If email is provided in options, use it
+      if (options?.userEmail) {
+        userEmail = options.userEmail
+      } else {
+        // Try to get from profiles table first
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email, full_name')
+          .eq('id', userId)
+          .maybeSingle()
+        
+        userEmail = profile?.email || null
+        
+        // If not found in profiles, the email might not be synced
+        // In this case, we'll fail gracefully - the reservation API should find it
+        if (!userEmail) {
+          console.warn(`[Notifications] Email not found in profiles for user ${userId}`)
+        }
+      }
 
-      if (!profile?.email) {
+      if (!userEmail) {
         return {
           success: false,
           error: 'User email not found'
         }
       }
-      userEmail = profile.email
     }
 
     // Build notification content
@@ -109,7 +123,11 @@ export async function sendNotification(
         p_subject: subject,
         p_body_html: bodyHtml,
         p_body_text: bodyText,
-        p_metadata: options?.metadata || {},
+        p_metadata: {
+          ...(options?.metadata || {}),
+          // Store email in metadata so processNotificationQueue can use it
+          ...(userEmail ? { userEmail } : {})
+        },
         p_booking_id: data.booking_id || null,
         p_invoice_id: data.invoice_id || null,
         p_message_id: data.message_id || null,
@@ -129,6 +147,9 @@ export async function sendNotification(
 
     // If notification is scheduled for now, send immediately
     if (scheduledFor <= new Date() && channel === 'email' && userEmail) {
+      // Process notifications after a brief delay to ensure DB commit
+      // Use a promise-based delay
+      await new Promise(resolve => setTimeout(resolve, 500))
       await processNotificationQueue()
     }
 
@@ -153,6 +174,7 @@ export async function processNotificationQueue(): Promise<void> {
     const supabase = await createClient()
 
     // Get pending notifications that are ready to send
+    // Include the specific notification we just created if we have its ID
     const { data: notifications, error } = await supabase
       .from('notification_queue')
       .select('*')
@@ -160,22 +182,56 @@ export async function processNotificationQueue(): Promise<void> {
       .eq('channel', 'email')
       .lte('scheduled_for', new Date().toISOString())
       .or('next_retry_at.is.null,next_retry_at.lte.' + new Date().toISOString())
+      .order('created_at', { ascending: true })
       .limit(50) // Process in batches
 
     if (error || !notifications || notifications.length === 0) {
+      if (error) {
+        console.error('[Notifications] Error fetching notifications:', error)
+      }
       return
     }
 
+    console.log(`[Notifications] Processing ${notifications.length} pending notification(s)`)
+
     for (const notification of notifications) {
       try {
-        // Get user email
+        // Get user email - try profiles first, then auth.users
+        let userEmail: string | null = null
         const { data: profile } = await supabase
           .from('profiles')
           .select('email, full_name')
           .eq('id', notification.user_id)
-          .single()
+          .maybeSingle()
+        
+        userEmail = profile?.email || null
+        
+        // If not found in profiles, try auth.users via service role
+        if (!userEmail && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          try {
+            const { createClient: createAdminClient } = await import('@supabase/supabase-js')
+            const adminSupabase = createAdminClient(
+              process.env.NEXT_PUBLIC_SUPABASE_URL!,
+              process.env.SUPABASE_SERVICE_ROLE_KEY!,
+              { auth: { persistSession: false } }
+            )
+            const { data: authUser, error: authError } = await adminSupabase.auth.admin.getUserById(notification.user_id)
+            if (!authError && authUser?.user?.email) {
+              userEmail = authUser.user.email
+              console.log(`[Notifications] Found email from auth.users for user ${notification.user_id}: ${userEmail}`)
+            }
+          } catch (adminError) {
+            console.warn(`[Notifications] Could not get email from auth.users for user ${notification.user_id}:`, adminError)
+          }
+        }
+        
+        // Also check if email is stored in metadata
+        if (!userEmail && notification.metadata?.userEmail) {
+          userEmail = notification.metadata.userEmail
+        }
 
-        if (!profile?.email) {
+        if (!userEmail) {
+          console.error(`[Notifications] Email not found for user ${notification.user_id}`)
           await supabase.rpc('mark_notification_failed', {
             p_notification_id: notification.id,
             p_error_message: 'User email not found',
@@ -186,8 +242,9 @@ export async function processNotificationQueue(): Promise<void> {
 
         // Send email using the fixed sendEmail function
         const { sendEmail } = await import('@/lib/email/resend')
+        console.log(`[Notifications] Sending email to ${userEmail} for notification ${notification.id} (${notification.notification_type})`)
         const result = await sendEmail({
-          to: profile.email,
+          to: userEmail,
           subject: notification.subject || 'Notification',
           html: notification.body_html || '',
           text: notification.body_text || '',
@@ -202,6 +259,7 @@ export async function processNotificationQueue(): Promise<void> {
         })
 
         if (result.success) {
+          console.log(`[Notifications] ✅ Email sent successfully for notification ${notification.id} to ${userEmail}`)
           // Mark as sent
           await supabase.rpc('mark_notification_sent', {
             p_notification_id: notification.id,
@@ -209,6 +267,7 @@ export async function processNotificationQueue(): Promise<void> {
             p_status: 'sent'
           })
         } else {
+          console.error(`[Notifications] ❌ Failed to send email for notification ${notification.id}:`, result.error)
           // Mark as failed (will retry if retries remaining)
           await supabase.rpc('mark_notification_failed', {
             p_notification_id: notification.id,
@@ -217,7 +276,7 @@ export async function processNotificationQueue(): Promise<void> {
           })
         }
       } catch (error: any) {
-        console.error(`Error processing notification ${notification.id}:`, error)
+        console.error(`[Notifications] Error processing notification ${notification.id}:`, error)
         await supabase.rpc('mark_notification_failed', {
           p_notification_id: notification.id,
           p_error_message: error.message || 'Unknown error',
@@ -323,6 +382,56 @@ function getNotificationSubject(notificationType: NotificationType, data: Notifi
  * Get notification body HTML
  */
 function getNotificationBodyHtml(notificationType: NotificationType, data: NotificationData): string {
+  // Special handling for job_created notifications
+  if (notificationType === 'job_created') {
+    const jobId = data.job_id || 'N/A'
+    const quoteId = data.quote_id || 'N/A'
+    const moveDate = data.move_date || data.message?.match(/scheduled for (.+)/)?.[1] || 'N/A'
+    const customerName = data.customer_name || data.full_name || 'Customer'
+    const pickupAddress = data.pickup_address || 'N/A'
+    const dropoffAddress = data.dropoff_address || 'N/A'
+    
+    return `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>New Job Created</title>
+        </head>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="background: linear-gradient(to right, #f97316, #ea580c); padding: 20px; border-radius: 8px 8px 0 0; color: white;">
+            <h1 style="margin: 0;">New Job Created</h1>
+          </div>
+          <div style="background: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px;">
+            <p>Hello,</p>
+            <p>A new moving job has been scheduled for your company.</p>
+            
+            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f97316;">
+              <h2 style="margin-top: 0; color: #f97316;">Job Details</h2>
+              <p><strong>Customer:</strong> ${customerName}</p>
+              <p><strong>Scheduled Date:</strong> ${moveDate}</p>
+              <p><strong>Pickup Address:</strong> ${pickupAddress}</p>
+              <p><strong>Delivery Address:</strong> ${dropoffAddress}</p>
+              ${data.message ? `<p><strong>Note:</strong> ${data.message}</p>` : ''}
+            </div>
+
+            <div style="margin: 20px 0;">
+              <a href="${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/dashboard/bookings${jobId !== 'N/A' ? `?job=${jobId}` : ''}" 
+                 style="display: inline-block; background: #f97316; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                View Job Details
+              </a>
+            </div>
+            
+            <p style="margin-top: 30px; font-size: 12px; color: #666;">
+              Job ID: ${jobId} | Quote ID: ${quoteId}
+            </p>
+          </div>
+        </body>
+      </html>
+    `
+  }
+  
   return `
     <div style="font-family: Arial, sans-serif; padding: 20px;">
       <h2>${getNotificationSubject(notificationType, data)}</h2>
@@ -336,6 +445,26 @@ function getNotificationBodyHtml(notificationType: NotificationType, data: Notif
  * Get notification body text
  */
 function getNotificationBodyText(notificationType: NotificationType, data: NotificationData): string {
+  if (notificationType === 'job_created') {
+    const customerName = data.customer_name || data.full_name || 'Customer'
+    const moveDate = data.move_date || data.message?.match(/scheduled for (.+)/)?.[1] || 'N/A'
+    const pickupAddress = data.pickup_address || 'N/A'
+    const dropoffAddress = data.dropoff_address || 'N/A'
+    
+    return `New Job Created
+
+A new moving job has been scheduled for your company.
+
+Job Details:
+Customer: ${customerName}
+Scheduled Date: ${moveDate}
+Pickup Address: ${pickupAddress}
+Delivery Address: ${dropoffAddress}
+${data.message ? `Note: ${data.message}` : ''}
+
+View job details: ${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/dashboard/bookings${data.job_id ? `?job=${data.job_id}` : ''}`
+  }
+  
   return `${getNotificationSubject(notificationType, data)}\n\nYou have a new notification.\n${data.message || ''}`
 }
 

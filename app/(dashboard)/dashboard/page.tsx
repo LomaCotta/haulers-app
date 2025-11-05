@@ -11,13 +11,24 @@ import {
   FileText,
   MessageSquare,
   Calendar,
-  Bell,
   ArrowRight,
   CreditCard,
   Clock,
-  MapPin
+  MapPin,
+  DollarSign,
+  Building,
+  Users,
+  TrendingUp,
+  AlertCircle,
+  CheckCircle,
+  Send,
+  Download,
+  Loader2,
+  Bell,
+  Star
 } from 'lucide-react'
-// Simple date formatting helper
+import { format } from 'date-fns'
+
 const formatDateDistance = (date: Date | string): string => {
   const now = new Date()
   const target = typeof date === 'string' ? new Date(date) : date
@@ -38,16 +49,6 @@ interface Profile {
   full_name: string
 }
 
-interface UpcomingEvent {
-  id: string
-  title: string
-  date: string
-  time?: string
-  address?: string
-  status: string
-  type: 'booking' | 'job'
-}
-
 interface Invoice {
   id: string
   invoice_number: string
@@ -55,165 +56,265 @@ interface Invoice {
   balance_cents: number
   due_date?: string
   status: string
+  issue_date: string
+  created_at?: string
+  booking_id?: string | null
+  business_id: string
+  customer_id?: string
+  business?: {
+    id: string
+    name: string
+  }
+  customer?: {
+    id: string
+    full_name: string
+  }
+  booking?: {
+    review_requested_at?: string | null
+  }
+}
+
+interface Booking {
+  id: string
+  booking_status: string
+  requested_date: string
+  requested_time?: string
+  service_address?: string
+  total_price_cents?: number
+  customer?: {
+    full_name: string
+  }
   business?: {
     name: string
   }
 }
 
+interface Conversation {
+  id: string
+  other_user_id: string
+  other_user_name: string
+  last_message?: string
+  last_message_at?: string
+  unread_count: number
+}
+
 export default function DashboardPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
-  const [upcomingEvents, setUpcomingEvents] = useState<UpcomingEvent[]>([])
+  const [isBusinessOwner, setIsBusinessOwner] = useState(false)
   const [unreadMessages, setUnreadMessages] = useState(0)
-  const [unpaidInvoices, setUnpaidInvoices] = useState<Invoice[]>([])
+  const [recentInvoices, setRecentInvoices] = useState<Invoice[]>([])
+  const [recentBookings, setRecentBookings] = useState<Booking[]>([])
+  const [recentConversations, setRecentConversations] = useState<Conversation[]>([])
+  const [stats, setStats] = useState({
+    totalInvoices: 0,
+    sentInvoices: 0,
+    receivedInvoices: 0,
+    unpaidInvoices: 0,
+    totalBookings: 0,
+    pendingBookings: 0,
+    totalRevenue: 0,
+    unreadMessages: 0
+  })
   const router = useRouter()
   const supabase = createClient()
 
   useEffect(() => {
-    const loadDashboard = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        if (!user) {
-          router.push('/auth/signin')
-          return
-        }
-
-        // Load profile
-        const { data: profileData, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single()
-
-        if (profileError) {
-          if (profileError.code === 'PGRST116') {
-            router.push('/onboarding')
-            return
-          }
-        }
-
-        if (profileData) {
-          setProfile(profileData)
-
-          // Redirect providers and admins to their specific pages
-          if (profileData.role === 'provider') {
-            router.push('/dashboard/businesses')
-            return
-          } else if (profileData.role === 'admin') {
-            router.push('/admin')
-            return
-          }
-
-          // For consumers, load dashboard data
-          await Promise.all([
-            loadUpcomingEvents(user.id),
-            loadUnreadMessages(user.id),
-            loadUnpaidInvoices(user.id)
-          ])
-        } else {
-          router.push('/onboarding')
-        }
-      } catch (error) {
-        console.error('Error loading dashboard:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     loadDashboard()
-  }, [router, supabase])
+  }, [])
 
-  const loadUpcomingEvents = async (userId: string) => {
+  const loadDashboard = async () => {
     try {
-      // Get upcoming bookings
-      const { data: bookings } = await supabase
-        .from('bookings')
-        .select('id, requested_date, requested_time, service_address, booking_status, service_details, business:businesses(name)')
-        .eq('customer_id', userId)
-        .in('booking_status', ['confirmed', 'accepted', 'scheduled', 'in_progress'])
-        .gte('requested_date', new Date().toISOString().split('T')[0])
-        .order('requested_date', { ascending: true })
-        .order('requested_time', { ascending: true })
-        .limit(3)
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        router.push('/auth/signin')
+        return
+      }
 
-      // Get upcoming scheduled jobs from movers_scheduled_jobs (if they're a customer)
-      // First get quotes for this customer, then get scheduled jobs for those quotes
-      const { data: customerQuotes } = await supabase
-        .from('movers_quotes')
+      // Load profile
+      const { data: profileData } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
+      if (!profileData) {
+        router.push('/onboarding')
+        return
+      }
+
+      setProfile(profileData)
+
+      // Check if user owns businesses
+      const { data: businesses } = await supabase
+        .from('businesses')
         .select('id')
-        .eq('customer_id', userId)
-      
-      const quoteIds = customerQuotes?.map(q => q.id) || []
-      
-      let scheduledJobs: any[] = []
-      if (quoteIds.length > 0) {
-        const { data: jobs } = await supabase
-          .from('movers_scheduled_jobs')
-          .select(`
-            id,
-            scheduled_date,
-            scheduled_start_time,
-            status,
-            quote_id,
-            quote:movers_quotes!quote_id(pickup_address, full_name)
-          `)
-          .in('quote_id', quoteIds)
-          .gte('scheduled_date', new Date().toISOString().split('T')[0])
-          .in('status', ['scheduled', 'confirmed', 'in_progress'])
-          .order('scheduled_date', { ascending: true })
-          .order('scheduled_start_time', { ascending: true })
-          .limit(3)
-        
-        scheduledJobs = jobs || []
+        .eq('owner_id', user.id)
+        .limit(1)
+
+      const isOwner = businesses && businesses.length > 0
+      setIsBusinessOwner(!!isOwner)
+
+      // Load dashboard data based on role
+      if (isOwner) {
+        // Business owner dashboard
+        await Promise.all([
+          loadBusinessStats(user.id, businesses.map(b => b.id)),
+          loadRecentInvoices(user.id),
+          loadRecentBookings(user.id, businesses.map(b => b.id)),
+          loadRecentMessages(user.id)
+        ])
+      } else {
+        // Consumer dashboard
+        await Promise.all([
+          loadConsumerStats(user.id),
+          loadRecentInvoices(user.id),
+          loadRecentBookings(user.id, []),
+          loadRecentMessages(user.id)
+        ])
       }
-
-      const events: UpcomingEvent[] = []
-
-      // Add bookings
-      if (bookings) {
-        bookings.forEach((booking: any) => {
-          events.push({
-            id: booking.id,
-            title: booking.business?.name || 'Service',
-            date: booking.requested_date,
-            time: booking.requested_time,
-            address: booking.service_address || booking.service_details?.from_address,
-            status: booking.booking_status,
-            type: 'booking'
-          })
-        })
-      }
-
-      // Add scheduled jobs
-      if (scheduledJobs) {
-        scheduledJobs.forEach((job: any) => {
-          events.push({
-            id: job.id,
-            title: job.quote?.full_name || 'Scheduled Service',
-            date: job.scheduled_date,
-            time: job.scheduled_start_time,
-            address: job.quote?.pickup_address,
-            status: job.status,
-            type: 'job'
-          })
-        })
-      }
-
-      // Sort by date and time, take top 3
-      events.sort((a, b) => {
-        const dateA = new Date(`${a.date}T${a.time || '00:00:00'}`)
-        const dateB = new Date(`${b.date}T${b.time || '00:00:00'}`)
-        return dateA.getTime() - dateB.getTime()
-      })
-
-      setUpcomingEvents(events.slice(0, 3))
     } catch (error) {
-      console.error('Error loading upcoming events:', error)
+      console.error('Error loading dashboard:', error)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const loadUnreadMessages = async (userId: string) => {
+  const loadBusinessStats = async (userId: string, businessIds: string[]) => {
     try {
+      // Load invoices (sent and received)
+      const response = await fetch(`/api/invoices`)
+      const invoices = response.ok ? await response.json() : []
+      
+      const sentInvoices = invoices.filter((inv: Invoice) => 
+        businessIds.includes(inv.business_id)
+      )
+      const receivedInvoices = invoices.filter((inv: Invoice) => 
+        inv.customer_id === userId
+      )
+      const unpaidSent = sentInvoices.filter((inv: Invoice) => 
+        inv.status === 'sent' && inv.balance_cents > 0
+      )
+      const unpaidReceived = receivedInvoices.filter((inv: Invoice) => 
+        (inv.status === 'sent' || inv.status === 'overdue') && inv.balance_cents > 0
+      )
+
+      // Load bookings
+      const { data: bookings } = await supabase
+        .from('bookings')
+        .select('*')
+        .in('business_id', businessIds)
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      const pendingBookings = bookings?.filter((b: Booking) => 
+        ['pending', 'confirmed', 'in_progress'].includes(b.booking_status)
+      ) || []
+
+      const totalRevenue = bookings?.reduce((sum: number, b: Booking) => 
+        sum + (b.total_price_cents || 0), 0
+      ) || 0
+
+      setStats({
+        totalInvoices: invoices.length,
+        sentInvoices: sentInvoices.length,
+        receivedInvoices: receivedInvoices.length,
+        unpaidInvoices: unpaidSent.length + unpaidReceived.length,
+        totalBookings: bookings?.length || 0,
+        pendingBookings: pendingBookings.length,
+        totalRevenue,
+        unreadMessages: 0 // Will be set by loadRecentMessages
+      })
+    } catch (error) {
+      console.error('Error loading business stats:', error)
+    }
+  }
+
+  const loadConsumerStats = async (userId: string) => {
+    try {
+      const response = await fetch(`/api/invoices`)
+      const invoices = response.ok ? await response.json() : []
+      
+      const myInvoices = invoices.filter((inv: Invoice) => 
+        inv.customer_id === userId
+      )
+      const unpaid = myInvoices.filter((inv: Invoice) => 
+        (inv.status === 'sent' || inv.status === 'overdue') && inv.balance_cents > 0
+      )
+
+      const { data: bookings } = await supabase
+        .from('bookings')
+        .select('*')
+        .eq('customer_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(100)
+
+      const pendingBookings = bookings?.filter((b: Booking) => 
+        ['pending', 'confirmed', 'in_progress'].includes(b.booking_status)
+      ) || []
+
+      setStats({
+        totalInvoices: myInvoices.length,
+        sentInvoices: 0,
+        receivedInvoices: myInvoices.length,
+        unpaidInvoices: unpaid.length,
+        totalBookings: bookings?.length || 0,
+        pendingBookings: pendingBookings.length,
+        totalRevenue: 0,
+        unreadMessages: 0
+      })
+    } catch (error) {
+      console.error('Error loading consumer stats:', error)
+    }
+  }
+
+  const loadRecentInvoices = async (userId: string) => {
+    try {
+      const response = await fetch(`/api/invoices`)
+      if (response.ok) {
+        const invoices = await response.json()
+        // Sort by created_at descending and take top 5
+        const recent = invoices
+          .sort((a: Invoice, b: Invoice) => 
+            new Date(b.created_at || b.issue_date).getTime() - new Date(a.created_at || a.issue_date).getTime()
+          )
+          .slice(0, 5)
+        setRecentInvoices(recent)
+      }
+    } catch (error) {
+      console.error('Error loading recent invoices:', error)
+    }
+  }
+
+  const loadRecentBookings = async (userId: string, businessIds: string[]) => {
+    try {
+      if (businessIds.length > 0) {
+        // Business owner: get bookings for their businesses
+        const { data: bookings } = await supabase
+          .from('bookings')
+          .select('*, customer:profiles(id, full_name)')
+          .in('business_id', businessIds)
+          .order('created_at', { ascending: false })
+          .limit(5)
+        setRecentBookings(bookings || [])
+      } else {
+        // Consumer: get their bookings
+        const { data: bookings } = await supabase
+          .from('bookings')
+          .select('*, business:businesses(id, name)')
+          .eq('customer_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(5)
+        setRecentBookings(bookings || [])
+      }
+    } catch (error) {
+      console.error('Error loading recent bookings:', error)
+    }
+  }
+
+  const loadRecentMessages = async (userId: string) => {
+    try {
+      // Get unread message count
       const { count } = await supabase
         .from('messages')
         .select('*', { count: 'exact', head: true })
@@ -221,233 +322,443 @@ export default function DashboardPage() {
         .eq('is_read', false)
 
       setUnreadMessages(count || 0)
+      setStats(prev => ({ ...prev, unreadMessages: count || 0 }))
+
+      // Get recent conversations
+      const { data: conversations } = await supabase
+        .from('messages')
+        .select('*, sender:profiles!messages_sender_id_fkey(id, full_name)')
+        .eq('recipient_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(10)
+
+      if (conversations) {
+        // Group by sender and get most recent
+        const conversationMap = new Map()
+        conversations.forEach((msg: any) => {
+          const senderId = msg.sender_id
+          if (!conversationMap.has(senderId) || 
+              new Date(msg.created_at) > new Date(conversationMap.get(senderId).last_message_at || '')) {
+            conversationMap.set(senderId, {
+              id: senderId,
+              other_user_id: senderId,
+              other_user_name: msg.sender?.full_name || 'Unknown',
+              last_message: msg.message_text,
+              last_message_at: msg.created_at,
+              unread_count: msg.is_read ? 0 : 1
+            })
+          }
+        })
+        setRecentConversations(Array.from(conversationMap.values()).slice(0, 5))
+      }
     } catch (error) {
-      console.error('Error loading unread messages:', error)
+      console.error('Error loading messages:', error)
     }
   }
 
-  const loadUnpaidInvoices = async (userId: string) => {
-    try {
-      const response = await fetch(`/api/invoices?customerId=${userId}&status=sent`)
-      const data = await response.json()
-
-      if (response.ok && data) {
-        const unpaid = data.filter((inv: Invoice) => 
-          inv.status === 'sent' || inv.status === 'overdue' || inv.balance_cents > 0
-        )
-        setUnpaidInvoices(unpaid)
-      }
-    } catch (error) {
-      console.error('Error loading invoices:', error)
-    }
+  const formatPrice = (cents: number) => {
+    return `$${(cents / 100).toFixed(2)}`
   }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-600 mx-auto mb-4"></div>
+          <Loader2 className="w-8 h-8 animate-spin text-orange-600 mx-auto mb-4" />
           <p className="text-gray-600">Loading your dashboard...</p>
         </div>
       </div>
     )
   }
 
-  if (!profile || profile.role !== 'consumer') {
+  if (!profile) {
     return null
   }
 
   return (
     <div className="container mx-auto py-8 px-4">
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         {/* Header */}
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-600 mt-1">Welcome back, {profile.full_name}!</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight text-gray-900">
+              Dashboard
+            </h1>
+            <p className="text-gray-600 mt-2">
+              Welcome back, {profile.full_name}!
+            </p>
+          </div>
+          {isBusinessOwner && (
+            <Link href="/dashboard/invoices/new">
+              <Button className="bg-orange-600 hover:bg-orange-700">
+                <FileText className="w-4 h-4 mr-2" />
+                Create Invoice
+              </Button>
+            </Link>
+          )}
         </div>
 
-        {/* Notifications Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Unpaid Invoices */}
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Invoices */}
           <Card className="border-2 border-gray-200 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <CreditCard className="w-5 h-5 text-orange-600" />
-                  Invoices
-                </CardTitle>
-                {unpaidInvoices.length > 0 && (
-                  <Badge className="bg-orange-500 text-white">{unpaidInvoices.length}</Badge>
-                )}
-              </div>
-              <CardDescription>Outstanding invoices</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {unpaidInvoices.length > 0 ? (
-                <div className="space-y-3">
-                  {unpaidInvoices.slice(0, 3).map((invoice) => (
-                    <Link key={invoice.id} href={`/dashboard/invoices/${invoice.id}`}>
-                      <div className="p-3 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-semibold text-sm">{invoice.invoice_number}</p>
-                            <p className="text-xs text-gray-600">{invoice.business?.name}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-bold text-sm text-gray-900">
-                              ${(invoice.balance_cents / 100).toFixed(2)}
-                            </p>
-                            {invoice.due_date && (
-                              <p className="text-xs text-gray-500">
-                                {formatDateDistance(invoice.due_date)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                  {unpaidInvoices.length > 3 && (
-                    <Link href="/dashboard/invoices">
-                      <Button variant="ghost" className="w-full text-sm text-orange-600 hover:text-orange-700">
-                        View All ({unpaidInvoices.length})
-                        <ArrowRight className="w-4 h-4 ml-2" />
-                      </Button>
-                    </Link>
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Total Invoices</p>
+                  <p className="text-2xl font-bold text-gray-900">{stats.totalInvoices}</p>
+                  {isBusinessOwner && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {stats.sentInvoices} sent • {stats.receivedInvoices} received
+                    </p>
                   )}
                 </div>
-              ) : (
-                <p className="text-sm text-gray-500 text-center py-4">No outstanding invoices</p>
-              )}
-              <Link href="/dashboard/invoices">
-                <Button variant="outline" className="w-full mt-3 border-orange-300 hover:bg-orange-50">
-                  View All Invoices
-                </Button>
-              </Link>
+                <div className="p-3 bg-blue-100 rounded-lg">
+                  <FileText className="w-6 h-6 text-blue-600" />
+                </div>
+              </div>
             </CardContent>
           </Card>
 
-          {/* Unread Messages */}
+          {/* Unpaid Invoices */}
           <Card className="border-2 border-gray-200 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardContent className="p-6">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <MessageSquare className="w-5 h-5 text-orange-600" />
-                  Messages
-                </CardTitle>
-                {unreadMessages > 0 && (
-                  <Badge className="bg-orange-500 text-white">{unreadMessages}</Badge>
-                )}
+                <div>
+                  <p className="text-sm font-medium text-gray-600">Unpaid Invoices</p>
+                  <p className="text-2xl font-bold text-orange-600">{stats.unpaidInvoices}</p>
+                  <p className="text-xs text-gray-500 mt-1">Requires attention</p>
+                </div>
+                <div className="p-3 bg-orange-100 rounded-lg">
+                  <CreditCard className="w-6 h-6 text-orange-600" />
+                </div>
               </div>
-              <CardDescription>Unread messages</CardDescription>
-            </CardHeader>
-            <CardContent>
-              {unreadMessages > 0 ? (
-                <div className="text-center py-4">
-                  <p className="text-2xl font-bold text-orange-600 mb-2">{unreadMessages}</p>
-                  <p className="text-sm text-gray-600 mb-4">
-                    {unreadMessages === 1 ? 'unread message' : 'unread messages'}
+            </CardContent>
+          </Card>
+
+          {/* Bookings */}
+          <Card className="border-2 border-gray-200 shadow-lg">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-gray-600">
+                    {isBusinessOwner ? 'Total Bookings' : 'My Bookings'}
                   </p>
-                  <Link href="/dashboard/messages">
-                    <Button className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700">
-                      View Messages
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </Link>
+                  <p className="text-2xl font-bold text-gray-900">{stats.totalBookings}</p>
+                  {stats.pendingBookings > 0 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {stats.pendingBookings} pending
+                    </p>
+                  )}
                 </div>
-              ) : (
-                <div className="text-center py-4">
-                  <p className="text-sm text-gray-500 mb-4">No unread messages</p>
-                  <Link href="/dashboard/messages">
-                    <Button variant="outline" className="w-full border-orange-300 hover:bg-orange-50">
-                      View Messages
-                    </Button>
-                  </Link>
+                <div className="p-3 bg-green-100 rounded-lg">
+                  <Calendar className="w-6 h-6 text-green-600" />
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
 
-          {/* Upcoming Events */}
-          <Card className="border-2 border-gray-200 shadow-lg">
+          {/* Revenue (Business Owners) or Messages */}
+          {isBusinessOwner ? (
+            <Card className="border-2 border-gray-200 shadow-lg">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                    <p className="text-2xl font-bold text-gray-900">{formatPrice(stats.totalRevenue)}</p>
+                    <p className="text-xs text-gray-500 mt-1">All time</p>
+                  </div>
+                  <div className="p-3 bg-purple-100 rounded-lg">
+                    <DollarSign className="w-6 h-6 text-purple-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="border-2 border-gray-200 shadow-lg">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">Messages</p>
+                    <p className="text-2xl font-bold text-gray-900">{stats.unreadMessages}</p>
+                    <p className="text-xs text-gray-500 mt-1">Unread</p>
+                  </div>
+                  <div className="p-3 bg-blue-100 rounded-lg">
+                    <MessageSquare className="w-6 h-6 text-blue-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Recent Invoices */}
+          <Card className="lg:col-span-2 border-2 border-gray-200 shadow-lg">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
                 <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <Calendar className="w-5 h-5 text-orange-600" />
-                  Upcoming Events
+                  <FileText className="w-5 h-5 text-orange-600" />
+                  Recent Invoices
                 </CardTitle>
-                {upcomingEvents.length > 0 && (
-                  <Badge className="bg-orange-500 text-white">{upcomingEvents.length}</Badge>
-                )}
+                <Link href="/dashboard/invoices">
+                  <Button variant="ghost" size="sm" className="text-orange-600 hover:text-orange-700">
+                    View All
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </Link>
               </div>
-              <CardDescription>Next 1-3 scheduled events</CardDescription>
+              <CardDescription>
+                {isBusinessOwner ? 'Invoices you sent and received' : 'Your invoices'}
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {upcomingEvents.length > 0 ? (
+              {recentInvoices.length > 0 ? (
                 <div className="space-y-3">
-                  {upcomingEvents.map((event) => {
-                    const eventDate = new Date(`${event.date}T${event.time || '00:00:00'}`)
-                    return (
-                      <Link key={event.id} href={`/dashboard/bookings/${event.id}`}>
-                        <div className="p-3 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
-                          <div className="flex items-start gap-3">
-                            <div className="flex-shrink-0 w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center">
-                              <Calendar className="w-5 h-5 text-orange-600" />
-                            </div>
+                  {recentInvoices.map((invoice) => (
+                    <div key={invoice.id} className="space-y-2">
+                      <Link href={`/dashboard/invoices/${invoice.id}`}>
+                        <div className="p-4 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
+                          <div className="flex items-center justify-between">
                             <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-sm truncate">{event.title}</p>
-                              <div className="flex items-center gap-2 mt-1 text-xs text-gray-600">
-                                <Clock className="w-3 h-3" />
-                                <span>{eventDate.toLocaleDateString()} {event.time}</span>
+                              <div className="flex items-center gap-2 mb-1">
+                                <p className="font-semibold text-sm">{invoice.invoice_number}</p>
+                                <Badge className={
+                                  invoice.status === 'paid' ? 'bg-green-100 text-green-800' :
+                                  invoice.status === 'sent' ? 'bg-blue-100 text-blue-800' :
+                                  invoice.status === 'overdue' ? 'bg-red-100 text-red-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }>
+                                  {invoice.status.replace('_', ' ')}
+                                </Badge>
+                                {isBusinessOwner && invoice.customer_id === profile.id && (
+                                  <Badge className="bg-green-100 text-green-800 text-xs">
+                                    Received
+                                  </Badge>
+                                )}
+                                {isBusinessOwner && invoice.customer && (
+                                  <Badge className="bg-blue-100 text-blue-800 text-xs">
+                                    Sent
+                                  </Badge>
+                                )}
                               </div>
-                              {event.address && (
-                                <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
-                                  <MapPin className="w-3 h-3" />
-                                  <span className="truncate">{event.address}</span>
-                                </div>
+                              <div className="flex items-center gap-4 text-xs text-gray-600 mt-2">
+                                {isBusinessOwner && invoice.customer && (
+                                  <span>To: {invoice.customer.full_name}</span>
+                                )}
+                                {isBusinessOwner && invoice.business && invoice.customer_id === profile.id && (
+                                  <span>From: {invoice.business.name}</span>
+                                )}
+                                {!isBusinessOwner && invoice.business && (
+                                  <span>From: {invoice.business.name}</span>
+                                )}
+                                {invoice.due_date && invoice.status !== 'paid' && (
+                                  <span className={invoice.status === 'overdue' ? 'text-red-600 font-semibold' : ''}>
+                                    {formatDateDistance(invoice.due_date)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right ml-4">
+                              <p className="font-bold text-lg text-gray-900">
+                                {formatPrice(invoice.total_cents)}
+                              </p>
+                              {invoice.balance_cents > 0 && (
+                                <p className="text-xs text-orange-600 font-medium">
+                                  {formatPrice(invoice.balance_cents)} due
+                                </p>
                               )}
                             </div>
                           </div>
                         </div>
                       </Link>
-                    )
-                  })}
-                  <Link href="/dashboard/bookings">
-                    <Button variant="ghost" className="w-full text-sm text-orange-600 hover:text-orange-700">
-                      View All Bookings
-                      <ArrowRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </Link>
+                      
+                      {/* Review Link for Paid Invoices */}
+                      {!isBusinessOwner && invoice.status === 'paid' && invoice.booking_id && !(invoice as any).review_exists && (
+                        <div className="px-4 pb-2">
+                          <Link href={`/dashboard/reviews/${invoice.booking_id}`}>
+                            <Button 
+                              size="sm" 
+                              variant="outline"
+                              className="w-full border-orange-300 hover:bg-orange-50 text-orange-600 hover:text-orange-700"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Star className="w-4 h-4 mr-2" />
+                              Leave a Review
+                            </Button>
+                          </Link>
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <div className="text-center py-4">
-                  <p className="text-sm text-gray-500 mb-4">No upcoming events</p>
-                  <Link href="/dashboard/bookings">
-                    <Button variant="outline" className="w-full border-orange-300 hover:bg-orange-50">
-                      View Bookings
-                    </Button>
-                  </Link>
+                <div className="text-center py-8">
+                  <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                  <p className="text-sm text-gray-500 mb-4">No invoices yet</p>
+                  {isBusinessOwner && (
+                    <Link href="/dashboard/invoices/new">
+                      <Button variant="outline" className="border-orange-300 hover:bg-orange-50">
+                        Create First Invoice
+                      </Button>
+                    </Link>
+                  )}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          {/* Messages & Quick Actions */}
+          <div className="space-y-6">
+            {/* Messages */}
+            <Card className="border-2 border-gray-200 shadow-lg">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-orange-600" />
+                    Messages
+                    {unreadMessages > 0 && (
+                      <Badge className="bg-orange-500 text-white">{unreadMessages}</Badge>
+                    )}
+                  </CardTitle>
+                  <Link href="/dashboard/messages">
+                    <Button variant="ghost" size="sm" className="text-orange-600 hover:text-orange-700">
+                      View All
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </Link>
+                </div>
+                <CardDescription>Recent conversations</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {recentConversations.length > 0 ? (
+                  <div className="space-y-2">
+                    {recentConversations.map((conv) => (
+                      <Link key={conv.id} href={`/dashboard/messages?userId=${conv.other_user_id}`}>
+                        <div className="p-3 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-semibold text-sm truncate">{conv.other_user_name}</p>
+                              {conv.last_message && (
+                                <p className="text-xs text-gray-600 truncate mt-1">{conv.last_message}</p>
+                              )}
+                            </div>
+                            {conv.unread_count > 0 && (
+                              <Badge className="bg-orange-500 text-white ml-2">{conv.unread_count}</Badge>
+                            )}
+                          </div>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <MessageSquare className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-sm text-gray-500 mb-4">No messages yet</p>
+                    <Link href="/dashboard/messages">
+                      <Button variant="outline" className="border-orange-300 hover:bg-orange-50">
+                        View Messages
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Recent Bookings */}
+            <Card className="border-2 border-gray-200 shadow-lg">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                    <Calendar className="w-5 h-5 text-orange-600" />
+                    Recent Bookings
+                  </CardTitle>
+                  <Link href="/dashboard/bookings">
+                    <Button variant="ghost" size="sm" className="text-orange-600 hover:text-orange-700">
+                      View All
+                      <ArrowRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </Link>
+                </div>
+                <CardDescription>
+                  {isBusinessOwner ? 'Latest booking requests' : 'Your recent bookings'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {recentBookings.length > 0 ? (
+                  <div className="space-y-2">
+                    {recentBookings.map((booking) => (
+                      <Link key={booking.id} href={`/dashboard/bookings/${booking.id}`}>
+                        <div className="p-3 rounded-lg border border-gray-200 hover:border-orange-300 hover:bg-orange-50/50 transition-all cursor-pointer">
+                          <div className="flex items-center justify-between mb-1">
+                            <Badge className={
+                              booking.booking_status === 'completed' ? 'bg-green-100 text-green-800' :
+                              booking.booking_status === 'confirmed' ? 'bg-blue-100 text-blue-800' :
+                              booking.booking_status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'
+                            }>
+                              {booking.booking_status.replace('_', ' ')}
+                            </Badge>
+                            {booking.total_price_cents && (
+                              <span className="font-semibold text-sm">{formatPrice(booking.total_price_cents)}</span>
+                            )}
+                          </div>
+                          <p className="text-sm font-medium text-gray-900">
+                            {isBusinessOwner 
+                              ? booking.customer?.full_name || 'Customer'
+                              : booking.business?.name || 'Service Provider'
+                            }
+                          </p>
+                          {booking.requested_date && (
+                            <p className="text-xs text-gray-600 mt-1">
+                              {format(new Date(booking.requested_date), 'MMM d, yyyy')}
+                              {booking.requested_time && ` at ${booking.requested_time}`}
+                            </p>
+                          )}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-6">
+                    <Calendar className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <p className="text-sm text-gray-500 mb-4">No bookings yet</p>
+                    <Link href="/dashboard/bookings">
+                      <Button variant="outline" className="border-orange-300 hover:bg-orange-50">
+                        View Bookings
+                      </Button>
+                    </Link>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </div>
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Link href="/dashboard/bookings">
-            <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
-              <CardContent className="p-6 text-center">
-                <Calendar className="w-8 h-8 text-orange-600 mx-auto mb-2" />
-                <p className="font-semibold">My Bookings</p>
-              </CardContent>
-            </Card>
-          </Link>
           <Link href="/dashboard/invoices">
             <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
               <CardContent className="p-6 text-center">
                 <FileText className="w-8 h-8 text-orange-600 mx-auto mb-2" />
                 <p className="font-semibold">Invoices</p>
+                {stats.unpaidInvoices > 0 && (
+                  <Badge className="mt-2 bg-orange-500 text-white">{stats.unpaidInvoices} unpaid</Badge>
+                )}
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/dashboard/bookings">
+            <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
+              <CardContent className="p-6 text-center">
+                <Calendar className="w-8 h-8 text-orange-600 mx-auto mb-2" />
+                <p className="font-semibold">
+                  {isBusinessOwner ? 'Bookings' : 'My Bookings'}
+                </p>
+                {stats.pendingBookings > 0 && (
+                  <Badge className="mt-2 bg-blue-500 text-white">{stats.pendingBookings} pending</Badge>
+                )}
               </CardContent>
             </Card>
           </Link>
@@ -457,19 +768,30 @@ export default function DashboardPage() {
                 <MessageSquare className="w-8 h-8 text-orange-600 mx-auto mb-2" />
                 <p className="font-semibold">Messages</p>
                 {unreadMessages > 0 && (
-                  <Badge className="mt-2 bg-orange-500 text-white">{unreadMessages}</Badge>
+                  <Badge className="mt-2 bg-orange-500 text-white">{unreadMessages} unread</Badge>
                 )}
               </CardContent>
             </Card>
           </Link>
-          <Link href="/find">
-            <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
-              <CardContent className="p-6 text-center">
-                <Bell className="w-8 h-8 text-orange-600 mx-auto mb-2" />
-                <p className="font-semibold">Find Services</p>
-              </CardContent>
-            </Card>
-          </Link>
+          {isBusinessOwner ? (
+            <Link href="/dashboard/businesses">
+              <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
+                <CardContent className="p-6 text-center">
+                  <Building className="w-8 h-8 text-orange-600 mx-auto mb-2" />
+                  <p className="font-semibold">My Businesses</p>
+                </CardContent>
+              </Card>
+            </Link>
+          ) : (
+            <Link href="/find">
+              <Card className="border-2 border-gray-200 hover:border-orange-300 hover:shadow-lg transition-all cursor-pointer">
+                <CardContent className="p-6 text-center">
+                  <Bell className="w-8 h-8 text-orange-600 mx-auto mb-2" />
+                  <p className="font-semibold">Find Services</p>
+                </CardContent>
+              </Card>
+            </Link>
+          )}
         </div>
       </div>
     </div>

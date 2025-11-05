@@ -224,7 +224,8 @@ export default function CreateInvoicePage() {
   }, [selectedBookingId, bookings])
 
   const handleBookingSelect = (bookingId: string) => {
-    setSelectedBookingId(bookingId)
+    // Handle "none" value which means no booking selected
+    setSelectedBookingId(bookingId === 'none' ? '' : bookingId)
   }
 
   const addItem = () => {
@@ -413,12 +414,12 @@ export default function CreateInvoicePage() {
             {bookings.length > 0 && (
               <div>
                 <Label htmlFor="booking">Link to Booking (Optional)</Label>
-                <Select value={selectedBookingId} onValueChange={handleBookingSelect}>
+                <Select value={selectedBookingId || 'none'} onValueChange={handleBookingSelect}>
                   <SelectTrigger id="booking">
                     <SelectValue placeholder="Select a booking..." />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None - Create Standalone Invoice</SelectItem>
+                    <SelectItem value="none">None - Create Standalone Invoice</SelectItem>
                     {bookings.map((booking) => (
                       <SelectItem key={booking.id} value={booking.id}>
                         {booking.customer?.full_name || 'Customer'} - {formatPrice(booking.total_price_cents)} - {booking.booking_status}

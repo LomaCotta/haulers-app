@@ -19,27 +19,56 @@ export async function GET(
       .from('invoices')
       .select(`
         *,
-        booking:bookings(*),
-        business:businesses(id, name, phone, email),
-        customer:profiles(id, full_name, email),
+        booking:bookings(id, booking_status, requested_date, requested_time, service_address, review_requested_at),
+        business:businesses(id, name, phone, email, owner_id, address, city, state, postal_code, logo_url),
+        customer:profiles(id, full_name),
         items:invoice_items(*)
       `)
       .eq('id', id)
       .single()
 
     if (error || !invoice) {
+      console.error('Error fetching invoice:', error)
       return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
     }
 
     // Verify access
-    const isBusinessOwner = invoice.business?.owner_id === user.id
+    const business = invoice.business as any
+    const isBusinessOwner = business?.owner_id === user.id
     const isCustomer = invoice.customer_id === user.id
+    
+    console.log('Invoice access check:', {
+      invoiceId: id,
+      userId: user.id,
+      businessOwnerId: business?.owner_id,
+      customerId: invoice.customer_id,
+      isBusinessOwner,
+      isCustomer
+    })
 
     if (!isBusinessOwner && !isCustomer) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
     }
 
-    return NextResponse.json(invoice)
+    // Check if review exists for this booking
+    let reviewExists = false
+    if (invoice.booking_id) {
+      const { data: review } = await supabase
+        .from('reviews')
+        .select('id')
+        .eq('booking_id', invoice.booking_id)
+        .maybeSingle()
+      
+      reviewExists = !!review
+    }
+
+    // Add review_exists flag to invoice
+    const invoiceWithReview = {
+      ...invoice,
+      review_exists: reviewExists
+    }
+
+    return NextResponse.json(invoiceWithReview)
   } catch (error) {
     console.error('Error in GET /api/invoices/[id]:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -61,7 +90,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const { status, notes, items } = body
+    const { status, notes, items, due_date, payment_terms_days } = body
 
     // Get invoice and verify ownership
     const { data: invoice, error: invoiceError } = await supabase
@@ -90,11 +119,82 @@ export async function PATCH(
       // If marking as sent, set sent date
       if (status === 'sent' && !invoice.email_sent_at) {
         updateData.email_sent_at = new Date().toISOString()
+        
+        // Trigger review request if invoice is linked to a completed booking
+        if (invoice.booking_id) {
+          try {
+            const { data: booking } = await supabase
+              .from('bookings')
+              .select('booking_status, review_requested_at, customer_id, business_id, business:businesses(name)')
+              .eq('id', invoice.booking_id)
+              .single()
+            
+            if (booking && booking.booking_status === 'completed' && !booking.review_requested_at) {
+              const business = booking.business as any
+              
+              // Create notification for review request (handle both schema versions)
+              try {
+                await supabase
+                  .from('notifications')
+                  .insert({
+                    user_id: booking.customer_id,
+                    booking_id: invoice.booking_id,
+                    notification_type: 'review_request',
+                    title: 'How was your service? ⭐',
+                    message: `Thank you for your business! Please share your experience with ${business?.name || 'your service provider'} by leaving a review.`,
+                    action_url: `/dashboard/reviews/${invoice.booking_id}`,
+                    type: 'system',
+                    related_id: invoice.booking_id,
+                    created_at: new Date().toISOString()
+                  })
+              } catch (notifError: any) {
+                // Fallback: try without notification_type if column doesn't exist
+                if (notifError.code === '42703' || notifError.message?.includes('notification_type')) {
+                  await supabase
+                    .from('notifications')
+                    .insert({
+                      user_id: booking.customer_id,
+                      booking_id: invoice.booking_id,
+                      title: 'How was your service? ⭐',
+                      message: `Thank you for your business! Please share your experience with ${business?.name || 'your service provider'} by leaving a review.`,
+                      action_url: `/dashboard/reviews/${invoice.booking_id}`,
+                      type: 'system',
+                      related_id: invoice.booking_id,
+                      created_at: new Date().toISOString()
+                    })
+                } else {
+                  throw notifError
+                }
+              }
+              
+              // Mark that review was requested
+              await supabase
+                .from('bookings')
+                .update({
+                  review_requested_at: new Date().toISOString()
+                })
+                .eq('id', invoice.booking_id)
+              
+              console.log(`[Invoice] Review request triggered for booking ${invoice.booking_id}`)
+            }
+          } catch (reviewError) {
+            console.error('Error triggering review request:', reviewError)
+            // Don't fail invoice update if review request fails
+          }
+        }
       }
     }
 
     if (notes !== undefined) {
       updateData.notes = notes
+    }
+
+    if (due_date !== undefined) {
+      updateData.due_date = due_date
+    }
+
+    if (payment_terms_days !== undefined) {
+      updateData.payment_terms_days = payment_terms_days
     }
 
     const { data: updatedInvoice, error: updateError } = await supabase

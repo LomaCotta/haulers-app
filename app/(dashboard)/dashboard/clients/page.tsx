@@ -33,6 +33,15 @@ interface Client {
   totalSpent: number
   lastBookingDate?: string
   averageRating?: number
+  invoices?: Array<{
+    id: string
+    invoice_number: string
+    status: string
+    total_cents: number
+    balance_cents: number
+    issue_date: string
+    due_date: string | null
+  }>
   bookingHistory: Array<{
     id: string
     date: string
@@ -98,6 +107,17 @@ export default function ClientsPage() {
         .select('*')
         .in('business_id', businessIds)
         .order('created_at', { ascending: false })
+
+      // Fetch invoices for all businesses
+      const { data: invoices, error: invoicesError } = await supabase
+        .from('invoices')
+        .select('*')
+        .in('business_id', businessIds)
+        .order('created_at', { ascending: false })
+
+      if (invoicesError) {
+        console.warn('Error fetching invoices:', invoicesError)
+      }
 
       if (bookingsError) {
         console.error('Error fetching bookings:', bookingsError)
@@ -174,6 +194,7 @@ export default function ClientsPage() {
             phone: customerPhone,
             totalBookings: 0,
             totalSpent: 0,
+            invoices: [],
             bookingHistory: []
           })
         }
@@ -194,6 +215,30 @@ export default function ClientsPage() {
         if (booking.requested_date) {
           if (!client.lastBookingDate || booking.requested_date > client.lastBookingDate) {
             client.lastBookingDate = booking.requested_date
+          }
+        }
+      }
+
+      // Add invoices to clients
+      if (invoices && invoices.length > 0) {
+        for (const invoice of invoices) {
+          const customerId = invoice.customer_id
+          if (!customerId || customerId === user.id) continue
+
+          const client = clientMap.get(customerId)
+          if (client && !client.invoices) {
+            client.invoices = []
+          }
+          if (client) {
+            client.invoices!.push({
+              id: invoice.id,
+              invoice_number: invoice.invoice_number,
+              status: invoice.status,
+              total_cents: invoice.total_cents,
+              balance_cents: invoice.balance_cents,
+              issue_date: invoice.issue_date,
+              due_date: invoice.due_date
+            })
           }
         }
       }
@@ -581,6 +626,65 @@ export default function ClientsPage() {
                           {client.bookingHistory.length > 3 && (
                             <p className="text-xs text-gray-500 mt-2">
                               +{client.bookingHistory.length - 3} more bookings
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Invoices */}
+                    {client.invoices && client.invoices.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-gray-200">
+                        <h4 className="text-sm font-semibold text-gray-700 mb-2">Invoices</h4>
+                        <div className="space-y-2">
+                          {client.invoices.slice(0, 3).map((invoice) => {
+                            const getInvoiceStatusBadge = (status: string) => {
+                              const statusConfig: Record<string, { color: string; label: string }> = {
+                                draft: { color: 'bg-gray-100 text-gray-800', label: 'Draft' },
+                                sent: { color: 'bg-blue-100 text-blue-800', label: 'Sent' },
+                                paid: { color: 'bg-green-100 text-green-800', label: 'Paid' },
+                                partially_paid: { color: 'bg-yellow-100 text-yellow-800', label: 'Partially Paid' },
+                                overdue: { color: 'bg-red-100 text-red-800', label: 'Overdue' }
+                              }
+                              const config = statusConfig[status] || statusConfig.draft
+                              return (
+                                <Badge className={config.color}>
+                                  {config.label}
+                                </Badge>
+                              )
+                            }
+                            return (
+                              <div key={invoice.id} className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  {getInvoiceStatusBadge(invoice.status)}
+                                  <Link href={`/dashboard/invoices/${invoice.id}`} className="text-gray-900 hover:text-orange-600 font-medium">
+                                    {invoice.invoice_number}
+                                  </Link>
+                                  {invoice.due_date && (
+                                    <span className="text-gray-500 text-xs">
+                                      Due: {new Date(invoice.due_date).toLocaleDateString()}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-gray-900">{formatPrice(invoice.total_cents)}</span>
+                                  {invoice.balance_cents > 0 && (
+                                    <span className="text-orange-600 text-xs font-medium">
+                                      ${(invoice.balance_cents / 100).toFixed(2)} due
+                                    </span>
+                                  )}
+                                  <Link href={`/dashboard/invoices/${invoice.id}`}>
+                                    <Button variant="ghost" size="sm">
+                                      <FileText className="w-4 h-4" />
+                                    </Button>
+                                  </Link>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          {client.invoices.length > 3 && (
+                            <p className="text-xs text-gray-500 mt-2">
+                              +{client.invoices.length - 3} more invoices
                             </p>
                           )}
                         </div>
