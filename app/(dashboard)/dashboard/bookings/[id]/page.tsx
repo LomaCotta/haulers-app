@@ -398,120 +398,127 @@ export default function BookingTrackingPage() {
           
           // ALWAYS fetch quote to ensure we have complete data
           if (isMissingCriticalData || isMissingBreakdown || true) { // Always fetch for now
-            const { data: quoteData, error: quoteError } = await supabase
-              .from('movers_quotes')
-              .select('*, breakdown') // CRITICAL: Explicitly include breakdown JSONB field
-              .eq('id', quoteId)
-              .single()
+            try {
+              const { data: quoteData, error: quoteError } = await supabase
+                .from('movers_quotes')
+                .select('*, breakdown') // CRITICAL: Explicitly include breakdown JSONB field
+                .eq('id', quoteId)
+                .single()
 
-            if (!quoteError && quoteData) {
-              console.log('📋 Found quote data for merge:', JSON.stringify(quoteData, null, 2))
-              console.log('📋 Quote breakdown:', JSON.stringify(quoteData.breakdown, null, 2))
-              
-              // Merge quote data into service_details - prioritize quote data
-              const quoteBreakdown = quoteData.breakdown || {}
-              
-              // Extract heavy items from quote breakdown - check multiple formats
-              let quoteHeavyItems = []
-              if (quoteBreakdown.heavy_items && Array.isArray(quoteBreakdown.heavy_items)) {
-                quoteHeavyItems = quoteBreakdown.heavy_items
-              } else if (quoteBreakdown.heavy_items_count > 0) {
-                quoteHeavyItems = [{
-                  band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || 'N/A',
-                  count: quoteBreakdown.heavy_items_count,
-                  price_cents: quoteBreakdown.heavy_item_price_cents || 0
-                }]
-              }
-              
-              // Helper to convert string address to address object
-              const parseAddressString = (addrStr: string): any => {
-                if (!addrStr) return null
-                // Try to parse comma-separated address
-                const parts = addrStr.split(',').map(p => p.trim()).filter(Boolean)
-                if (parts.length >= 3) {
-                  return {
-                    address: parts[0],
-                    city: parts[parts.length - 2] || '',
-                    state: parts[parts.length - 1] || '',
-                    zip: ''
-                  }
+              if (quoteError) {
+                console.error('❌ Error fetching quote:', quoteError)
+                // Continue without quote data - booking might not have a quote yet
+              } else if (quoteData) {
+                console.log('📋 Found quote data for merge:', JSON.stringify(quoteData, null, 2))
+                console.log('📋 Quote breakdown:', JSON.stringify(quoteData.breakdown, null, 2))
+                
+                // Merge quote data into service_details - prioritize quote data
+                const quoteBreakdown = quoteData.breakdown || {}
+                
+                // Extract heavy items from quote breakdown - check multiple formats
+                let quoteHeavyItems = []
+                if (quoteBreakdown.heavy_items && Array.isArray(quoteBreakdown.heavy_items)) {
+                  quoteHeavyItems = quoteBreakdown.heavy_items
+                } else if (quoteBreakdown.heavy_items_count > 0) {
+                  quoteHeavyItems = [{
+                    band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || 'N/A',
+                    count: quoteBreakdown.heavy_items_count,
+                    price_cents: quoteBreakdown.heavy_item_price_cents || 0
+                  }]
                 }
-                return { address: addrStr, city: '', state: '', zip: '' }
+                
+                // Helper to convert string address to address object
+                const parseAddressString = (addrStr: string): any => {
+                  if (!addrStr) return null
+                  // Try to parse comma-separated address
+                  const parts = addrStr.split(',').map(p => p.trim()).filter(Boolean)
+                  if (parts.length >= 3) {
+                    return {
+                      address: parts[0],
+                      city: parts[parts.length - 2] || '',
+                      state: parts[parts.length - 1] || '',
+                      zip: ''
+                    }
+                  }
+                  return { address: addrStr, city: '', state: '', zip: '' }
+                }
+                
+                // Convert quote string addresses to arrays if needed
+                let quotePickupAddresses: any[] = []
+                if (quoteBreakdown.pickup_addresses && Array.isArray(quoteBreakdown.pickup_addresses) && quoteBreakdown.pickup_addresses.length > 0) {
+                  quotePickupAddresses = quoteBreakdown.pickup_addresses
+                } else if (quoteData.pickup_address) {
+                  const parsed = parseAddressString(quoteData.pickup_address)
+                  if (parsed) quotePickupAddresses = [parsed]
+                }
+                
+                let quoteDeliveryAddresses: any[] = []
+                if (quoteBreakdown.delivery_addresses && Array.isArray(quoteBreakdown.delivery_addresses) && quoteBreakdown.delivery_addresses.length > 0) {
+                  quoteDeliveryAddresses = quoteBreakdown.delivery_addresses
+                } else if (quoteData.dropoff_address) {
+                  const parsed = parseAddressString(quoteData.dropoff_address)
+                  if (parsed) quoteDeliveryAddresses = [parsed]
+                }
+                
+                // Build comprehensive merged details - merge ALL quote data
+                const mergedDetails = {
+                  ...currentDetails,
+                  quote_id: quoteId,
+                  // Always include full breakdown for providers
+                  breakdown: quoteBreakdown || currentDetails.breakdown || {},
+                  // Merge pickup/delivery addresses - prioritize arrays, then single addresses
+                  pickup_addresses: currentDetails.pickup_addresses && Array.isArray(currentDetails.pickup_addresses) && currentDetails.pickup_addresses.length > 0
+                    ? currentDetails.pickup_addresses
+                    : (quotePickupAddresses.length > 0
+                      ? quotePickupAddresses
+                      : (currentDetails.pickup_addresses || [])),
+                  delivery_addresses: currentDetails.delivery_addresses && Array.isArray(currentDetails.delivery_addresses) && currentDetails.delivery_addresses.length > 0
+                    ? currentDetails.delivery_addresses
+                    : (quoteDeliveryAddresses.length > 0
+                      ? quoteDeliveryAddresses
+                      : (currentDetails.delivery_addresses || [])),
+                  pickup_address: currentDetails.pickup_address || quoteData.pickup_address || '',
+                  dropoff_address: currentDetails.dropoff_address || quoteData.dropoff_address || '',
+                  from_address: currentDetails.from_address || quoteData.pickup_address || '',
+                  to_address: currentDetails.to_address || quoteData.dropoff_address || '',
+                  // HEAVY ITEMS - use quote data if available
+                  heavy_items: quoteHeavyItems.length > 0 ? quoteHeavyItems : (currentDetails.heavy_items || []),
+                  heavy_items_count: quoteBreakdown.heavy_items_count !== undefined ? quoteBreakdown.heavy_items_count : (currentDetails.heavy_items_count || 0),
+                  heavy_item_band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || currentDetails.heavy_item_band || 'none',
+                  // STAIRS - use quote data if available
+                  stairs_flights: quoteBreakdown.stairs_flights !== undefined ? quoteBreakdown.stairs_flights : (currentDetails.stairs_flights || 0),
+                  stairs: quoteBreakdown.stairs_flights > 0 || quoteBreakdown.stairs === true || currentDetails.stairs === true,
+                  // PACKING - use quote data if available
+                  packing_help: quoteBreakdown.packing_help || quoteBreakdown.packing || currentDetails.packing_help || 'none',
+                  packing_rooms: quoteBreakdown.packing_rooms !== undefined ? quoteBreakdown.packing_rooms : (currentDetails.packing_rooms || 0),
+                  packing_materials: quoteBreakdown.packing_materials || currentDetails.packing_materials || [],
+                  packing: quoteBreakdown.packing || currentDetails.packing || {},
+                  // Other fields
+                  move_size: currentDetails.move_size || quoteBreakdown.move_size || quoteData.move_size || 'unknown',
+                  // CRITICAL: Prioritize saved booking data over quote data - quote is old, booking is current
+                  mover_team: currentDetails.mover_team || currentDetails.crew_size || quoteBreakdown.mover_team || quoteData.crew_size || 2,
+                  crew_size: currentDetails.crew_size || currentDetails.mover_team || quoteData.crew_size || quoteBreakdown.mover_team || 2,
+                  hourly_rate: currentDetails.hourly_rate || quoteBreakdown.hourly_rate || null,
+                  hourly_rate_cents: currentDetails.hourly_rate_cents || bookingObj.hourly_rate_cents || (quoteBreakdown.hourly_rate_cents || (quoteBreakdown.hourly_rate ? Math.round(quoteBreakdown.hourly_rate * 100) : null)),
+                  storage: quoteBreakdown.storage || currentDetails.storage || 'none',
+                  ins_coverage: quoteBreakdown.ins_coverage || currentDetails.ins_coverage || 'basic',
+                  time_slot: currentDetails.time_slot || quoteBreakdown.time_slot || 'morning',
+                }
+                
+                console.log('✅ Merged service_details with quote data:', JSON.stringify(mergedDetails, null, 2))
+                
+                // Update booking object with merged details (client-side only, database already has it)
+                bookingObj.service_details = mergedDetails as any
+                setBooking({ ...bookingObj })
               }
-              
-              // Convert quote string addresses to arrays if needed
-              let quotePickupAddresses: any[] = []
-              if (quoteBreakdown.pickup_addresses && Array.isArray(quoteBreakdown.pickup_addresses) && quoteBreakdown.pickup_addresses.length > 0) {
-                quotePickupAddresses = quoteBreakdown.pickup_addresses
-              } else if (quoteData.pickup_address) {
-                const parsed = parseAddressString(quoteData.pickup_address)
-                if (parsed) quotePickupAddresses = [parsed]
-              }
-              
-              let quoteDeliveryAddresses: any[] = []
-              if (quoteBreakdown.delivery_addresses && Array.isArray(quoteBreakdown.delivery_addresses) && quoteBreakdown.delivery_addresses.length > 0) {
-                quoteDeliveryAddresses = quoteBreakdown.delivery_addresses
-              } else if (quoteData.dropoff_address) {
-                const parsed = parseAddressString(quoteData.dropoff_address)
-                if (parsed) quoteDeliveryAddresses = [parsed]
-              }
-              
-              // Build comprehensive merged details - merge ALL quote data
-              const mergedDetails = {
-                ...currentDetails,
-                quote_id: quoteId,
-                // Always include full breakdown for providers
-                breakdown: quoteBreakdown || currentDetails.breakdown || {},
-                // Merge pickup/delivery addresses - prioritize arrays, then single addresses
-                pickup_addresses: currentDetails.pickup_addresses && Array.isArray(currentDetails.pickup_addresses) && currentDetails.pickup_addresses.length > 0
-                  ? currentDetails.pickup_addresses
-                  : (quotePickupAddresses.length > 0
-                    ? quotePickupAddresses
-                    : (currentDetails.pickup_addresses || [])),
-                delivery_addresses: currentDetails.delivery_addresses && Array.isArray(currentDetails.delivery_addresses) && currentDetails.delivery_addresses.length > 0
-                  ? currentDetails.delivery_addresses
-                  : (quoteDeliveryAddresses.length > 0
-                    ? quoteDeliveryAddresses
-                    : (currentDetails.delivery_addresses || [])),
-                pickup_address: currentDetails.pickup_address || quoteData.pickup_address || '',
-                dropoff_address: currentDetails.dropoff_address || quoteData.dropoff_address || '',
-                from_address: currentDetails.from_address || quoteData.pickup_address || '',
-                to_address: currentDetails.to_address || quoteData.dropoff_address || '',
-                // HEAVY ITEMS - use quote data if available
-                heavy_items: quoteHeavyItems.length > 0 ? quoteHeavyItems : (currentDetails.heavy_items || []),
-                heavy_items_count: quoteBreakdown.heavy_items_count !== undefined ? quoteBreakdown.heavy_items_count : (currentDetails.heavy_items_count || 0),
-                heavy_item_band: quoteBreakdown.heavy_item_band || quoteBreakdown.weight_band || currentDetails.heavy_item_band || 'none',
-                // STAIRS - use quote data if available
-                stairs_flights: quoteBreakdown.stairs_flights !== undefined ? quoteBreakdown.stairs_flights : (currentDetails.stairs_flights || 0),
-                stairs: quoteBreakdown.stairs_flights > 0 || quoteBreakdown.stairs === true || currentDetails.stairs === true,
-                // PACKING - use quote data if available
-                packing_help: quoteBreakdown.packing_help || quoteBreakdown.packing || currentDetails.packing_help || 'none',
-                packing_rooms: quoteBreakdown.packing_rooms !== undefined ? quoteBreakdown.packing_rooms : (currentDetails.packing_rooms || 0),
-                packing_materials: quoteBreakdown.packing_materials || currentDetails.packing_materials || [],
-                packing: quoteBreakdown.packing || currentDetails.packing || {},
-                // Other fields
-                move_size: currentDetails.move_size || quoteBreakdown.move_size || quoteData.move_size || 'unknown',
-                // CRITICAL: Prioritize saved booking data over quote data - quote is old, booking is current
-                mover_team: currentDetails.mover_team || currentDetails.crew_size || quoteBreakdown.mover_team || quoteData.crew_size || 2,
-                crew_size: currentDetails.crew_size || currentDetails.mover_team || quoteData.crew_size || quoteBreakdown.mover_team || 2,
-                hourly_rate: currentDetails.hourly_rate || quoteBreakdown.hourly_rate || null,
-                hourly_rate_cents: currentDetails.hourly_rate_cents || bookingObj.hourly_rate_cents || (quoteBreakdown.hourly_rate_cents || (quoteBreakdown.hourly_rate ? Math.round(quoteBreakdown.hourly_rate * 100) : null)),
-                storage: quoteBreakdown.storage || currentDetails.storage || 'none',
-                ins_coverage: quoteBreakdown.ins_coverage || currentDetails.ins_coverage || 'basic',
-                time_slot: currentDetails.time_slot || quoteBreakdown.time_slot || 'morning',
-              }
-              
-              console.log('✅ Merged service_details with quote data:', JSON.stringify(mergedDetails, null, 2))
-              
-              // Update booking object with merged details (client-side only, database already has it)
-              bookingObj.service_details = mergedDetails as any
-              setBooking({ ...bookingObj })
-            } else if (quoteError) {
-              console.error('❌ Error fetching quote:', quoteError)
+            } catch (err) {
+              console.error('❌ Error fetching quote:', err)
+              // Continue without quote data - booking might not have a quote yet
             }
           }
         } catch (err) {
-          console.error('Error fetching quote:', err)
+          console.error('Error in quote fetching block:', err)
+          // Continue without quote data
         }
       }
 

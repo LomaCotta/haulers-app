@@ -135,6 +135,7 @@ export default function EditBusinessPage() {
     availability_days: [] as string[],
     availability_hours: { start: '09:00', end: '17:00' },
     daily_availability: {} as Record<string, { start: string; end: string; enabled: boolean }>,
+    weekly_job_counts: {} as Record<string, { morning_jobs: number; afternoon_jobs: number }>,
     services_offered: [] as string[],
     features: [] as string[],
     years_experience: 0,
@@ -233,7 +234,57 @@ export default function EditBusinessPage() {
         bonded: data.bonded || false,
         response_time_hours: data.response_time_hours || 24,
         min_booking_notice_hours: data.min_booking_notice_hours || 24,
+        weekly_job_counts: {},
       })
+      
+      // Fetch movers_availability_rules for job counts
+      const { data: provider } = await supabase
+        .from('movers_providers')
+        .select('id')
+        .eq('business_id', businessId)
+        .single()
+
+      let weeklyJobCounts: Record<string, { morning_jobs: number; afternoon_jobs: number }> = {}
+      if (provider) {
+        const { data: rules } = await supabase
+          .from('movers_availability_rules')
+          .select('*')
+          .eq('provider_id', provider.id)
+
+        if (rules && rules.length > 0) {
+          const WEEKDAY_TO_DAY: Record<number, string> = {
+            0: 'Sunday',
+            1: 'Monday',
+            2: 'Tuesday',
+            3: 'Wednesday',
+            4: 'Thursday',
+            5: 'Friday',
+            6: 'Saturday'
+          }
+
+          rules.forEach((rule: any) => {
+            const day = WEEKDAY_TO_DAY[rule.weekday]
+            if (day) {
+              weeklyJobCounts[day] = {
+                morning_jobs: rule.morning_jobs || 3,
+                afternoon_jobs: rule.afternoon_jobs || 2
+              }
+            }
+          })
+        }
+      }
+
+      // Set default job counts if not found
+      DAYS_OF_WEEK.forEach(day => {
+        if (!weeklyJobCounts[day]) {
+          weeklyJobCounts[day] = { morning_jobs: 3, afternoon_jobs: 2 }
+        }
+      })
+      
+      setFormData(prev => ({
+        ...prev,
+        weekly_job_counts: weeklyJobCounts
+      }))
       
       setPhotos({
         logo_url: data.logo_url || '',
@@ -245,6 +296,86 @@ export default function EditBusinessPage() {
       router.push('/dashboard/businesses')
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Sync daily_availability to movers_availability_rules
+  const syncAvailabilityToMoversRules = async (businessId: string, dailyAvailability: Record<string, { start: string; end: string; enabled: boolean }>, weeklyJobCounts?: Record<string, { morning_jobs: number; afternoon_jobs: number }>) => {
+    try {
+      // Get movers_provider for this business
+      const { data: provider } = await supabase
+        .from('movers_providers')
+        .select('id')
+        .eq('business_id', businessId)
+        .single()
+
+      if (!provider) {
+        console.log('No movers provider found for business, skipping availability sync')
+        return
+      }
+
+      const DAY_TO_WEEKDAY: Record<string, number> = {
+        'Sunday': 0,
+        'Monday': 1,
+        'Tuesday': 2,
+        'Wednesday': 3,
+        'Thursday': 4,
+        'Friday': 5,
+        'Saturday': 6
+      }
+
+      // Convert daily_availability to movers_availability_rules format
+      // Use weekly_job_counts from formData if available
+      const rules = Object.entries(dailyAvailability)
+        .filter(([_, data]) => data?.enabled)
+        .map(([day, data]) => {
+          const weekday = DAY_TO_WEEKDAY[day]
+          const startTime = data.start ? `${data.start}:00` : '08:00:00'
+          const endTime = data.end ? `${data.end}:00` : '17:00:00'
+          
+          // Get job counts from parameter or use defaults
+          const jobCounts = weeklyJobCounts?.[day] || { morning_jobs: 3, afternoon_jobs: 2 }
+          
+          return {
+            provider_id: provider.id,
+            weekday,
+            start_time: startTime,
+            end_time: endTime,
+            max_concurrent_jobs: 1,
+            morning_jobs: jobCounts.morning_jobs || 3,
+            afternoon_jobs: jobCounts.afternoon_jobs || 2,
+            morning_start: startTime,
+            afternoon_start: '12:00:00',
+            afternoon_end: endTime,
+          }
+        })
+
+      // Delete existing rules and insert new ones
+      const { error: deleteError } = await supabase
+        .from('movers_availability_rules')
+        .delete()
+        .eq('provider_id', provider.id)
+
+      if (deleteError) {
+        console.error('Error deleting availability rules:', deleteError)
+        return
+      }
+
+      if (rules.length > 0) {
+        const { error: insertError } = await supabase
+          .from('movers_availability_rules')
+          .insert(rules)
+
+        if (insertError) {
+          console.error('Error inserting availability rules:', insertError)
+        } else {
+          console.log(`Successfully synced ${rules.length} availability rules to movers_availability_rules`)
+        }
+      } else {
+        console.log('No enabled days to sync, all rules deleted')
+      }
+    } catch (error) {
+      console.error('Error syncing availability:', error)
     }
   }
 
@@ -304,66 +435,119 @@ export default function EditBusinessPage() {
           return
         }
 
+        // Sync availability to movers_availability_rules
+        await syncAvailabilityToMoversRules(business.id, formData.daily_availability, formData.weekly_job_counts)
+
         router.push('/dashboard/businesses')
       } else {
-        // For business owners, submit changes for admin approval
-        const proposedChanges: any = {
-          description: formData.description,
-          phone: formData.phone,
-          email: formData.email,
-          website: formData.website,
-          service_type: formData.service_type,
-          address: formData.address,
-          city: formData.city,
-          state: formData.state,
-          postal_code: formData.postal_code,
-          service_radius_km: formData.service_radius_km,
-          base_rate_cents: formData.base_rate_cents,
-          hourly_rate_cents: formData.hourly_rate_cents,
+        // For business owners: Update availability and photos directly, submit other changes for approval
+        
+        // 1. Update availability and photos directly (no approval needed)
+        const directUpdateData: any = {
           availability_days: formData.availability_days,
           availability_hours: formData.availability_hours,
           daily_availability: formData.daily_availability,
-          services_offered: formData.services_offered,
-          features: formData.features,
-          years_experience: formData.years_experience,
-          languages_spoken: formData.languages_spoken,
-          certifications: formData.certifications,
-          emergency_service: formData.emergency_service,
-          same_day_service: formData.same_day_service,
-          insurance_verified: formData.insurance_verified,
-          licensed: formData.licensed,
-          bonded: formData.bonded,
-          response_time_hours: formData.response_time_hours,
-          min_booking_notice_hours: formData.min_booking_notice_hours,
-          // Photo data
           logo_url: photos.logo_url,
           cover_photo_url: photos.cover_photo_url,
           gallery_photos: photos.gallery_photos,
         }
 
-        const { error: submitError } = await supabase
-          .from('business_edit_requests')
-          .insert({
-            business_id: business.id,
-            requester_id: user.id,
-            proposed_changes: proposedChanges,
-            status: 'pending'
-          })
+        const { error: directUpdateError } = await supabase
+          .from('businesses')
+          .update(directUpdateData)
+          .eq('id', business.id)
 
-        if (submitError) {
-          console.error('Submit error:', submitError)
-          // If table doesn't exist, show helpful message
-          if (submitError.code === '42P01') {
-            setError('The edit approval system is not set up yet. Please contact an administrator to run the required SQL script.')
-            return
-          }
-          setError('Failed to submit changes for approval: ' + submitError.message)
+        if (directUpdateError) {
+          setError('Failed to update availability and photos: ' + directUpdateError.message)
           return
         }
 
-        // Show success dialog
-        setSubmissionTime(new Date())
-        setShowApprovalDialog(true)
+        // Sync availability to movers_availability_rules
+        await syncAvailabilityToMoversRules(business.id, formData.daily_availability, formData.weekly_job_counts)
+
+        // 2. Check if there are other changes that need approval
+        const needsApproval = 
+          formData.description !== business.description ||
+          formData.phone !== business.phone ||
+          formData.email !== business.email ||
+          formData.website !== business.website ||
+          formData.service_type !== business.service_type ||
+          formData.address !== business.address ||
+          formData.city !== business.city ||
+          formData.state !== business.state ||
+          formData.postal_code !== business.postal_code ||
+          formData.service_radius_km !== business.service_radius_km ||
+          formData.base_rate_cents !== business.base_rate_cents ||
+          formData.hourly_rate_cents !== business.hourly_rate_cents ||
+          JSON.stringify(formData.services_offered) !== JSON.stringify(business.services_offered || []) ||
+          JSON.stringify(formData.features) !== JSON.stringify(business.features || []) ||
+          formData.years_experience !== business.years_experience ||
+          JSON.stringify(formData.languages_spoken) !== JSON.stringify(business.languages_spoken || []) ||
+          JSON.stringify(formData.certifications) !== JSON.stringify(business.certifications || []) ||
+          formData.emergency_service !== business.emergency_service ||
+          formData.same_day_service !== business.same_day_service ||
+          formData.insurance_verified !== business.insurance_verified ||
+          formData.licensed !== business.licensed ||
+          formData.bonded !== business.bonded ||
+          formData.response_time_hours !== business.response_time_hours ||
+          formData.min_booking_notice_hours !== business.min_booking_notice_hours
+
+        if (needsApproval) {
+          // Submit other changes for admin approval
+          const proposedChanges: any = {
+            description: formData.description,
+            phone: formData.phone,
+            email: formData.email,
+            website: formData.website,
+            service_type: formData.service_type,
+            address: formData.address,
+            city: formData.city,
+            state: formData.state,
+            postal_code: formData.postal_code,
+            service_radius_km: formData.service_radius_km,
+            base_rate_cents: formData.base_rate_cents,
+            hourly_rate_cents: formData.hourly_rate_cents,
+            services_offered: formData.services_offered,
+            features: formData.features,
+            years_experience: formData.years_experience,
+            languages_spoken: formData.languages_spoken,
+            certifications: formData.certifications,
+            emergency_service: formData.emergency_service,
+            same_day_service: formData.same_day_service,
+            insurance_verified: formData.insurance_verified,
+            licensed: formData.licensed,
+            bonded: formData.bonded,
+            response_time_hours: formData.response_time_hours,
+            min_booking_notice_hours: formData.min_booking_notice_hours,
+          }
+
+          const { error: submitError } = await supabase
+            .from('business_edit_requests')
+            .insert({
+              business_id: business.id,
+              requester_id: user.id,
+              proposed_changes: proposedChanges,
+              status: 'pending'
+            })
+
+          if (submitError) {
+            console.error('Submit error:', submitError)
+            // If table doesn't exist, show helpful message
+            if (submitError.code === '42P01') {
+              setError('Availability and photos updated successfully. Other changes require admin approval but the approval system is not set up yet.')
+              return
+            }
+            setError('Availability and photos updated successfully. Failed to submit other changes for approval: ' + submitError.message)
+            return
+          }
+
+          // Show success dialog for approval submission
+          setSubmissionTime(new Date())
+          setShowApprovalDialog(true)
+        } else {
+          // No other changes, just redirect
+          router.push('/dashboard/businesses')
+        }
       }
     } catch (err) {
       setError('An unexpected error occurred')
@@ -563,7 +747,7 @@ export default function EditBusinessPage() {
                   <div>
                     <p className="font-semibold text-lg">Changes Require Admin Approval</p>
                     <p className="text-blue-600 mt-1">
-                      Your changes will be submitted for review and will only go live after admin approval.
+                      <strong>Availability schedules and photos</strong> update immediately. Other changes (description, contact info, pricing, etc.) will be submitted for review and will only go live after admin approval.
                     </p>
                   </div>
                 </div>
@@ -924,6 +1108,97 @@ export default function EditBusinessPage() {
                   <p className="text-gray-500 text-sm">No days selected for availability</p>
                 )}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Weekly Availability Settings */}
+        <Card className="bg-white/90 backdrop-blur-sm shadow-xl border-0 hover:shadow-2xl transition-all duration-300 rounded-2xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 text-white">
+            <CardTitle className="flex items-center gap-3 text-xl">
+              <Settings className="w-6 h-6" />
+              Weekly Availability Settings
+            </CardTitle>
+            <CardDescription className="text-blue-100">Set how many jobs you can take per day for morning and afternoon slots</CardDescription>
+          </CardHeader>
+          <CardContent className="p-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {DAYS_OF_WEEK.map((day) => {
+                const dayData = formData.daily_availability[day]
+                const jobCounts = formData.weekly_job_counts[day] || { morning_jobs: 3, afternoon_jobs: 2 }
+                const isEnabled = dayData?.enabled
+
+                return (
+                  <div key={day} className={`p-5 border rounded-lg transition-all duration-200 ${
+                    isEnabled 
+                      ? 'border-blue-200 bg-blue-50 hover:border-blue-300 hover:shadow-sm' 
+                      : 'border-gray-200 bg-gray-50 opacity-60'
+                  }`}>
+                    <h3 className="text-base font-semibold text-gray-900 mb-4 pb-3 border-b border-gray-200">
+                      {day}
+                    </h3>
+                    <div className="space-y-4">
+                      {/* Morning Slot */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-sm font-medium text-gray-700">Morning Jobs</label>
+                          <span className="text-xs text-gray-500 font-medium">8:00 AM - 12:00 PM</span>
+                        </div>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={jobCounts.morning_jobs}
+                          onChange={(e) => {
+                            setFormData(prev => ({
+                              ...prev,
+                              weekly_job_counts: {
+                                ...prev.weekly_job_counts,
+                                [day]: {
+                                  ...prev.weekly_job_counts[day],
+                                  morning_jobs: parseInt(e.target.value) || 0
+                                }
+                              }
+                            }))
+                          }}
+                          disabled={!isEnabled}
+                          className={`h-10 border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-gray-900 font-medium ${
+                            !isEnabled ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                        />
+                      </div>
+
+                      {/* Afternoon Slot */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-sm font-medium text-gray-700">Afternoon Jobs</label>
+                          <span className="text-xs text-gray-500 font-medium">12:00 PM - 5:00 PM</span>
+                        </div>
+                        <Input
+                          type="number"
+                          min="0"
+                          value={jobCounts.afternoon_jobs}
+                          onChange={(e) => {
+                            setFormData(prev => ({
+                              ...prev,
+                              weekly_job_counts: {
+                                ...prev.weekly_job_counts,
+                                [day]: {
+                                  ...prev.weekly_job_counts[day],
+                                  afternoon_jobs: parseInt(e.target.value) || 0
+                                }
+                              }
+                            }))
+                          }}
+                          disabled={!isEnabled}
+                          className={`h-10 border-gray-200 focus:border-blue-500 focus:ring-blue-500 bg-white text-gray-900 font-medium ${
+                            !isEnabled ? 'opacity-50 cursor-not-allowed' : ''
+                          }`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </CardContent>
         </Card>
@@ -1311,12 +1586,12 @@ export default function EditBusinessPage() {
             {saving ? (
               <>
                 <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin mr-4" />
-                {userRole === 'admin' ? 'Saving Changes...' : 'Submitting for Approval...'}
+                {userRole === 'admin' ? 'Saving Changes...' : 'Submitting...'}
               </>
             ) : (
               <>
                 <Save className="w-6 h-6 mr-4" />
-                {userRole === 'admin' ? 'Save All Changes' : 'Submit for Admin Approval'}
+                {userRole === 'admin' ? 'Save All Changes' : 'Submit'}
               </>
             )}
           </Button>

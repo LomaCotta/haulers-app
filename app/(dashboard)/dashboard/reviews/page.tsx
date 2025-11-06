@@ -5,8 +5,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { createClient } from '@/lib/supabase/client'
-import { Star, MessageSquare, Calendar, Clock, Building, User, AlertCircle, Trash2, CheckCircle, X, Filter } from 'lucide-react'
+import { Star, MessageSquare, Calendar, Clock, Building, User, AlertCircle, Trash2, CheckCircle, X, Filter, Loader2, Eye, EyeOff } from 'lucide-react'
 import { ReviewForm } from '@/components/review-form'
+import { Textarea } from '@/components/ui/textarea'
+import { Label } from '@/components/ui/label'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { format } from 'date-fns'
 
 interface Review {
   id: string
@@ -19,6 +30,9 @@ interface Review {
   comment?: string | null // API uses comment
   photos?: string[]
   created_at: string
+  is_hidden?: boolean
+  owner_response?: string | null
+  owner_response_at?: string | null
   customer?: {
     id: string
     full_name: string
@@ -79,6 +93,15 @@ export default function ReviewsPage() {
   const [selectedBookingForReview, setSelectedBookingForReview] = useState<string | null>(null)
   const [filterRating, setFilterRating] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<'received' | 'left' | 'pending' | 'all'>('received')
+  const [responseDialogOpen, setResponseDialogOpen] = useState(false)
+  const [selectedReviewForResponse, setSelectedReviewForResponse] = useState<Review | null>(null)
+  const [responseText, setResponseText] = useState('')
+  const [submittingResponse, setSubmittingResponse] = useState(false)
+  const [toast, setToast] = useState<{show: boolean; message: string; type: 'success' | 'error'}>({
+    show: false,
+    message: '',
+    type: 'success'
+  })
   
   const supabase = createClient()
 
@@ -530,6 +553,53 @@ export default function ReviewsPage() {
     }
   }
 
+  const handleOpenResponseDialog = (review: Review) => {
+    setSelectedReviewForResponse(review)
+    setResponseText(review.owner_response || '')
+    setResponseDialogOpen(true)
+  }
+
+  const handleSubmitResponse = async () => {
+    if (!selectedReviewForResponse) return
+
+    setSubmittingResponse(true)
+    try {
+      const response = await fetch(`/api/reviews/${selectedReviewForResponse.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ owner_response: responseText.trim() || null })
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        showToast(error.error || 'Failed to save response', 'error')
+        return
+      }
+
+      showToast('Response saved successfully', 'success')
+      setResponseDialogOpen(false)
+      setSelectedReviewForResponse(null)
+      setResponseText('')
+      
+      // Refresh reviews
+      if (isProvider) {
+        fetchReviewsReceived()
+      }
+    } catch (error) {
+      console.error('Error submitting response:', error)
+      showToast('Failed to save response. Please try again.', 'error')
+    } finally {
+      setSubmittingResponse(false)
+    }
+  }
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ show: true, message, type })
+    setTimeout(() => {
+      setToast({ show: false, message: '', type: 'success' })
+    }, 4000)
+  }
+
   const renderStars = (rating: number, size: 'sm' | 'md' | 'lg' = 'md') => {
     const sizeClasses = {
       sm: 'h-3 w-3',
@@ -943,6 +1013,22 @@ export default function ReviewsPage() {
                           </div>
                         )}
 
+                        {/* Owner Response */}
+                        {review.owner_response && (
+                          <div className="bg-orange-50 rounded-lg p-3 sm:p-4 border border-orange-200 mb-3 sm:mb-4 shadow-sm">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Building className="w-4 h-4 text-orange-600" />
+                              <span className="font-semibold text-orange-900 text-sm sm:text-base">Owner Response</span>
+                              {review.owner_response_at && (
+                                <span className="text-xs text-orange-600">
+                                  {format(new Date(review.owner_response_at), 'MMM d, yyyy')}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-orange-900 leading-relaxed text-sm sm:text-base break-words whitespace-pre-wrap">{review.owner_response}</p>
+                          </div>
+                        )}
+
                         {/* Actions */}
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3 pt-3 sm:pt-4 border-t border-gray-100">
                           {isAdmin && (
@@ -963,12 +1049,11 @@ export default function ReviewsPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => console.log('Reply to review:', review.id)}
-                              className="border-gray-300 hover:border-orange-400 hover:text-orange-600 font-medium min-h-[44px] px-3 sm:px-4 py-2 text-xs sm:text-sm"
+                              onClick={() => handleOpenResponseDialog(review)}
+                              className="border-orange-300 hover:bg-orange-50 text-orange-700 hover:border-orange-400 font-medium min-h-[44px] px-3 sm:px-4 py-2 text-xs sm:text-sm"
                             >
                               <MessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4 mr-1.5 sm:mr-2" />
-                              <span className="hidden sm:inline">Reply (Coming Soon)</span>
-                              <span className="sm:hidden">Reply</span>
+                              {review.owner_response ? 'Edit Response' : 'Reply to Review'}
                             </Button>
                           )}
                         </div>
@@ -998,6 +1083,119 @@ export default function ReviewsPage() {
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {/* Owner Response Dialog */}
+      <Dialog open={responseDialogOpen} onOpenChange={setResponseDialogOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-gray-900">
+              {selectedReviewForResponse?.owner_response ? 'Edit Owner Response' : 'Reply to Review'}
+            </DialogTitle>
+            <DialogDescription>
+              Respond to this review as the business owner. Your response will be visible to everyone.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedReviewForResponse && (
+            <div className="space-y-4 py-4">
+              {/* Review Display */}
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-1">
+                    {renderStars(selectedReviewForResponse.rating)}
+                  </div>
+                  <span className="text-sm font-semibold text-gray-700">
+                    by {(selectedReviewForResponse.customer || selectedReviewForResponse.consumer)?.full_name || 'Anonymous'}
+                  </span>
+                </div>
+                {(selectedReviewForResponse.body || selectedReviewForResponse.comment) && (
+                  <p className="text-sm text-gray-700 mt-2">{selectedReviewForResponse.body || selectedReviewForResponse.comment}</p>
+                )}
+              </div>
+
+              {/* Response Input */}
+              <div className="space-y-2">
+                <Label htmlFor="response">Your Response</Label>
+                <Textarea
+                  id="response"
+                  placeholder="Write a professional response to this review..."
+                  value={responseText}
+                  onChange={(e) => setResponseText(e.target.value)}
+                  className="min-h-[120px]"
+                  rows={6}
+                />
+                <p className="text-xs text-gray-500">
+                  {responseText.length} characters
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setResponseDialogOpen(false)
+                setSelectedReviewForResponse(null)
+                setResponseText('')
+              }}
+              disabled={submittingResponse}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSubmitResponse}
+              disabled={submittingResponse || !responseText.trim()}
+              className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-md hover:shadow-lg transition-all duration-200"
+            >
+              {submittingResponse ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Save Response
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Toast Notification */}
+      {toast.show && (
+        <div className="fixed top-4 right-4 z-[9999] animate-in slide-in-from-right duration-300">
+          <div className={`flex items-center gap-3 px-6 py-4 rounded-lg shadow-xl border backdrop-blur-sm max-w-md transition-all ${
+            toast.type === 'success' 
+              ? 'bg-green-50 border-green-200 text-green-800' 
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}>
+            <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+              toast.type === 'success' ? 'bg-green-100' : 'bg-red-100'
+            }`}>
+              {toast.type === 'success' ? (
+                <CheckCircle className="w-5 h-5 text-green-600" />
+              ) : (
+                <AlertCircle className="w-5 h-5 text-red-600" />
+              )}
+            </div>
+            <div className="flex-1">
+              <p className="font-medium text-sm leading-relaxed">{toast.message}</p>
+            </div>
+            <button
+              onClick={() => setToast({ show: false, message: '', type: 'success' })}
+              className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-opacity-80 transition-colors ${
+                toast.type === 'success' ? 'hover:bg-green-100 text-green-600' : 'hover:bg-red-100 text-red-600'
+              }`}
+              aria-label="Close notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )

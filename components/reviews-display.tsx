@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Star } from "lucide-react"
+import { Star, CheckCircle, Building } from "lucide-react"
 import { format } from "date-fns"
 
 interface Review {
@@ -16,6 +16,8 @@ interface Review {
   booking: {
     id: string
   }
+  owner_response?: string | null
+  owner_response_at?: string | null
 }
 
 interface ReviewsDisplayProps {
@@ -115,11 +117,30 @@ export function ReviewsDisplay({ reviews, businessId }: ReviewsDisplayProps) {
                       </div>
                     </div>
                   </div>
-                  <Badge variant="secondary">Verified</Badge>
+                  <Badge className="bg-green-50 text-green-700 border-green-200 hover:bg-green-50 text-xs font-normal px-2 py-0.5">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Verified Booking
+                  </Badge>
                 </div>
                 
                 {review.comment && (
-                  <p className="text-sm text-muted-foreground">{review.comment}</p>
+                  <p className="text-sm text-muted-foreground mb-3">{review.comment}</p>
+                )}
+                
+                {/* Owner Response */}
+                {review.owner_response && (
+                  <div className="mt-3 bg-orange-50 rounded-lg p-3 border border-orange-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Building className="w-3.5 h-3.5 text-orange-600" />
+                      <span className="font-semibold text-orange-900 text-xs">Owner Response</span>
+                      {review.owner_response_at && (
+                        <span className="text-xs text-orange-600">
+                          {format(new Date(review.owner_response_at), 'MMM d, yyyy')}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-orange-900 text-sm leading-relaxed whitespace-pre-wrap break-words">{review.owner_response}</p>
+                  </div>
                 )}
               </CardContent>
             </Card>

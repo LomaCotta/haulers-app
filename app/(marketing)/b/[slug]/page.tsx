@@ -38,8 +38,10 @@ import {
   PhoneCall,
   ExternalLink,
   Info,
-  AlertCircle
+  AlertCircle,
+  Building
 } from 'lucide-react'
+import Avatar from '@/components/ui/avatar'
 import Image from 'next/image'
 import Link from 'next/link'
 import ModernBookingSystem from '@/components/modern-booking-system'
@@ -88,12 +90,18 @@ interface Business {
 interface Review {
   id: string
   user_name: string
+  user_id?: string
   user_avatar?: string
+  user_joined_date?: string
   rating: number
   comment: string
   date: string
   helpful: number
   verified: boolean
+  owner_response?: string | null
+  owner_response_at?: string | null
+  review_count?: number
+  friend_count?: number
 }
 
 export default function BusinessProfilePage() {
@@ -101,6 +109,7 @@ export default function BusinessProfilePage() {
   const businessId = params.slug as string
   const [business, setBusiness] = useState<Business | null>(null)
   const [reviews, setReviews] = useState<Review[]>([])
+  const [ownerProfile, setOwnerProfile] = useState<{id: string; full_name: string; avatar_url?: string} | null>(null)
   const [loading, setLoading] = useState(true)
   const [showBookingForm, setShowBookingForm] = useState(false)
   const [expandedSection, setExpandedSection] = useState<string | null>(null)
@@ -169,12 +178,12 @@ export default function BusinessProfilePage() {
             verification_status: businessData.verification_status
           })
           
-          // Fetch reviews
+          // Fetch reviews with profile data
           const { data: reviewsData, error: reviewsError } = await supabase
             .from('reviews')
             .select(`
               *,
-              consumer:profiles(id, full_name)
+              consumer:profiles(id, full_name, avatar_url, created_at)
             `)
             .eq('business_id', businessId)
             .order('created_at', { ascending: false })
@@ -183,14 +192,135 @@ export default function BusinessProfilePage() {
             console.error('Error fetching reviews:', reviewsError)
           }
 
+          // Fetch availability from movers_availability_rules
+          let availabilityFromRules: Record<string, { start: string; end: string; enabled: boolean }> | null = null
+          const { data: provider } = await supabase
+            .from('movers_providers')
+            .select('id')
+            .eq('business_id', businessId)
+            .single()
+
+          if (provider) {
+            const { data: rules } = await supabase
+              .from('movers_availability_rules')
+              .select('*')
+              .eq('provider_id', provider.id)
+              .order('weekday', { ascending: true })
+
+            if (rules && rules.length > 0) {
+              const WEEKDAY_TO_DAY: Record<number, string> = {
+                0: 'Sunday',
+                1: 'Monday',
+                2: 'Tuesday',
+                3: 'Wednesday',
+                4: 'Thursday',
+                5: 'Friday',
+                6: 'Saturday'
+              }
+              
+              availabilityFromRules = {}
+              rules.forEach((rule: any) => {
+                const day = WEEKDAY_TO_DAY[rule.weekday]
+                if (day) {
+                  // Convert time format from HH:MM:SS to HH:MM
+                  const startTime = rule.start_time ? rule.start_time.substring(0, 5) : '08:00'
+                  const endTime = rule.end_time ? rule.end_time.substring(0, 5) : '17:00'
+                  
+                  availabilityFromRules![day] = {
+                    start: startTime,
+                    end: endTime,
+                    enabled: true
+                  }
+                }
+              })
+              console.log('Fetched availability from movers_availability_rules:', availabilityFromRules)
+            } else {
+              console.log('No movers_availability_rules found, will use daily_availability fallback')
+            }
+          }
+
+          // Fetch owner profile data for owner responses
+          const ownerId = businessData.owner_id
+          let ownerProfile = null
+          if (ownerId) {
+            const { data: ownerData } = await supabase
+              .from('profiles')
+              .select('id, full_name, avatar_url')
+              .eq('id', ownerId)
+              .single()
+            ownerProfile = ownerData
+          }
+
+          // Get review counts and friend counts for each reviewer via API
+          const consumerIds = [...new Set((reviewsData || []).map(r => r.consumer_id).filter(Boolean))]
+          const reviewCountsMap: Record<string, number> = {}
+          const friendCountsMap: Record<string, number> = {}
+          
+          if (consumerIds.length > 0) {
+            try {
+              // Fetch stats from API route (bypasses RLS)
+              const response = await fetch('/api/users/stats', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ userIds: consumerIds })
+              })
+
+              if (response.ok) {
+                const { stats } = await response.json()
+                consumerIds.forEach((userId: string) => {
+                  if (stats[userId]) {
+                    reviewCountsMap[userId] = stats[userId].reviewCount || 0
+                    friendCountsMap[userId] = stats[userId].friendCount || 0
+                  } else {
+                    reviewCountsMap[userId] = 0
+                    friendCountsMap[userId] = 0
+                  }
+                })
+              } else {
+                // Fallback: count reviews directly (friends will show 0)
+                console.log('API route failed, using fallback')
+                for (const userId of consumerIds) {
+                  const { count: reviewCount } = await supabase
+                    .from('reviews')
+                    .select('*', { count: 'exact', head: true })
+                    .eq('consumer_id', userId)
+                  reviewCountsMap[userId] = reviewCount || 0
+                  friendCountsMap[userId] = 0
+                }
+              }
+            } catch (err) {
+              console.error('Error fetching user stats:', err)
+              // Fallback: count reviews directly
+              for (const userId of consumerIds) {
+                const { count: reviewCount } = await supabase
+                  .from('reviews')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('consumer_id', userId)
+                reviewCountsMap[userId] = reviewCount || 0
+                friendCountsMap[userId] = 0
+              }
+            }
+          }
+
           const transformedReviews: Review[] = (reviewsData || []).map(review => ({
             id: review.id,
             user_name: review.consumer?.full_name || 'Anonymous',
+            user_id: review.consumer_id || review.consumer?.id,
+            user_avatar: review.consumer?.avatar_url || null,
+            user_joined_date: review.consumer?.created_at || null,
             rating: review.rating,
             comment: review.body || '',
-            date: new Date(review.created_at).toLocaleDateString(),
+            date: new Date(review.created_at).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric'
+            }),
             helpful: 0,
-            verified: true
+            verified: true,
+            owner_response: review.owner_response || null,
+            owner_response_at: review.owner_response_at || null,
+            review_count: reviewCountsMap[review.consumer_id] || 1,
+            friend_count: friendCountsMap[review.consumer_id] || 0
           }))
 
           // Calculate stats
@@ -225,7 +355,7 @@ export default function BusinessProfilePage() {
               gallery_photos: businessData.gallery_photos || [],
               availability_days: businessData.availability_days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
               availability_hours: businessData.availability_hours || { start: '09:00', end: '17:00' },
-              daily_availability: businessData.daily_availability || null,
+              daily_availability: availabilityFromRules || businessData.daily_availability || null,
               services_offered: businessData.services_offered || [],
               features: businessData.features || [],
               years_experience: businessData.years_experience ?? null,
@@ -247,6 +377,9 @@ export default function BusinessProfilePage() {
             console.log('Business data transformed successfully:', transformedBusiness)
             setBusiness(transformedBusiness)
             setReviews(transformedReviews)
+            if (ownerProfile) {
+              setOwnerProfile(ownerProfile)
+            }
           } catch (transformError) {
             console.error('Error transforming business data:', transformError)
             throw transformError
@@ -376,7 +509,7 @@ export default function BusinessProfilePage() {
   const hasTrustFlags = Boolean(business.insurance_verified || business.background_checked)
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gray-50">
       {/* Hero Section with Cover Photo */}
       <div className="relative h-96 overflow-hidden">
         {business.cover_photo_url ? (
@@ -420,11 +553,11 @@ export default function BusinessProfilePage() {
                 
                 {/* Business Details */}
                 <div>
-                  <div className="flex items-center space-x-3 mb-2">
-                    <h1 className="text-4xl font-bold">{business.name}</h1>
+                  <div className="flex items-center space-x-3 mb-3">
+                    <h1 className="text-4xl font-bold text-white drop-shadow-lg">{business.name}</h1>
                     {business.verified && (
-                      <Badge className="bg-green-500 text-white px-3 py-1">
-                        <CheckCircle className="w-4 h-4 mr-1" />
+                      <Badge className="bg-green-500 text-white px-3 py-1.5 shadow-lg">
+                        <CheckCircle className="w-4 h-4 mr-1.5" />
                         Verified
                       </Badge>
                     )}
@@ -432,22 +565,22 @@ export default function BusinessProfilePage() {
                   
                   <div className="flex items-center space-x-6 text-lg">
                     {business.rating_count > 0 && (
-                      <div className="flex items-center space-x-1">
-                        <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                        <span className="font-semibold">{business.rating_avg.toFixed(1)}</span>
-                        <span className="text-gray-300">({business.rating_count} reviews)</span>
+                      <div className="flex items-center space-x-2">
+                        <Star className="w-5 h-5 fill-yellow-400 text-yellow-400 drop-shadow-md" />
+                        <span className="font-bold text-white drop-shadow-md">{business.rating_avg.toFixed(1)}</span>
+                        <span className="text-gray-200 drop-shadow-md">({business.rating_count} reviews)</span>
                       </div>
                     )}
                     
-                    <div className="flex items-center space-x-1">
-                      <MapPin className="w-5 h-5" />
-                      <span>{business.city}, {business.state}</span>
+                    <div className="flex items-center space-x-1.5">
+                      <MapPin className="w-5 h-5 text-white drop-shadow-md" />
+                      <span className="text-white drop-shadow-md">{business.city}, {business.state}</span>
                     </div>
                     
                     {(business.years_experience ?? 0) > 0 && (
-                      <div className="flex items-center space-x-1">
-                        <Award className="w-5 h-5" />
-                        <span>{business.years_experience ?? 0} years experience</span>
+                      <div className="flex items-center space-x-1.5">
+                        <Award className="w-5 h-5 text-white drop-shadow-md" />
+                        <span className="text-white drop-shadow-md">{business.years_experience ?? 0} years experience</span>
                       </div>
                     )}
                   </div>
@@ -462,18 +595,18 @@ export default function BusinessProfilePage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Content */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-8">
             {/* About / Description */}
             <Card className="border-0 shadow-xl">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-2xl font-bold">About</CardTitle>
+              <CardHeader className="pb-4 border-b border-gray-200">
+                <CardTitle className="text-2xl font-bold text-gray-900">About</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="pt-6">
                 {business.description && business.description.trim().length > 0 && (
-                  <p className="text-gray-800 leading-relaxed text-lg">
+                  <p className="text-gray-800 leading-relaxed text-base mb-4">
                     {business.description}
                   </p>
                 )}
@@ -491,12 +624,12 @@ export default function BusinessProfilePage() {
               </CardContent>
             </Card>
             {/* Pricing & Booking Card */}
-            <Card className="border-0 shadow-xl bg-gradient-to-r from-green-50 to-emerald-50">
+            <Card className="border-0 shadow-xl bg-gradient-to-r from-orange-50 to-orange-100 border-2 border-orange-200">
               <CardContent className="p-8">
                 <div className="flex">
                   <Button 
                     size="lg" 
-                    className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 text-lg font-semibold shadow-lg"
+                    className="flex-1 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white px-8 py-4 text-lg font-bold shadow-lg hover:shadow-xl transition-all duration-200"
                     asChild
                   >
                     <Link href={`/movers/book?businessId=${business.id}`}>
@@ -510,46 +643,54 @@ export default function BusinessProfilePage() {
 
             {/* Business Information */}
             <Card className="border-0 shadow-xl">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-2xl font-bold flex items-center">
+              <CardHeader className="pb-4 border-b border-gray-200">
+                <CardTitle className="text-2xl font-bold text-gray-900 flex items-center">
                   <Info className="w-6 h-6 mr-2 text-blue-600" />
                   Business Information
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="pt-6 space-y-8">
                 {/* Location */}
                 <div className="flex items-start space-x-4">
-                  <MapPin className="w-6 h-6 text-blue-600 mt-1" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900 mb-1">Location</h3>
-                    <p className="text-gray-700">{business.address}</p>
-                    <p className="text-gray-600">{business.city}, {business.state}</p>
+                  <MapPin className="w-6 h-6 text-blue-600 mt-1 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h3 className="font-bold text-gray-900 mb-2 text-base">Location</h3>
+                    <p className="text-gray-700 text-base leading-relaxed">{business.address}</p>
+                    <p className="text-gray-600 text-base">{business.city}, {business.state}</p>
                   </div>
                 </div>
 
                 {/* Availability */}
                 <div className="flex items-start space-x-4">
-                  <Clock className="w-6 h-6 text-green-600 mt-1" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900 mb-2">Availability</h3>
+                  <Clock className="w-6 h-6 text-green-600 mt-1 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h3 className="font-bold text-gray-900 mb-3 text-base">Availability</h3>
                     {business.daily_availability ? (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6">
                         {['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].map((day) => {
                           const entry = business.daily_availability?.[day]
+                          // Only show if entry exists and is not closed
                           const isClosed = entry?.closed === true || (!entry?.start && !entry?.end)
+                          
+                          // Only render if day is not closed
+                          if (isClosed) return null
+                          
                           return (
                             <div key={day} className="flex items-center justify-between border-b border-gray-100 py-1">
                               <span className="text-gray-700 font-medium mr-4 w-28">{day}</span>
                               <span className="text-gray-600">
-                                {isClosed ? (
-                                  <Badge variant="secondary" className="px-2 py-0.5">Closed</Badge>
-                                ) : (
-                                  <>{entry?.start ? formatTime(entry.start) : ''} {entry?.start && entry?.end ? ' - ' : ''} {entry?.end ? formatTime(entry.end) : ''}</>
-                                )}
+                                {entry?.start ? formatTime(entry.start) : ''} {entry?.start && entry?.end ? ' - ' : ''} {entry?.end ? formatTime(entry.end) : ''}
                               </span>
                             </div>
                           )
                         })}
+                        {/* Show message if no days are available */}
+                        {!['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'].some(day => {
+                          const entry = business.daily_availability?.[day]
+                          return entry && !entry.closed && (entry.start || entry.end)
+                        }) && (
+                          <p className="text-gray-500 text-sm col-span-2">No availability set</p>
+                        )}
                       </div>
                     ) : (
                       <>
@@ -583,9 +724,9 @@ export default function BusinessProfilePage() {
                 {/* Services */}
                 {business.services_offered.length > 0 && (
                   <div className="flex items-start space-x-4">
-                    <Award className="w-6 h-6 text-purple-600 mt-1" />
-                    <div>
-                      <h3 className="font-semibold text-gray-900 mb-2">Services Offered</h3>
+                    <Award className="w-6 h-6 text-purple-600 mt-1 flex-shrink-0" />
+                    <div className="flex-1">
+                      <h3 className="font-bold text-gray-900 mb-3 text-base">Services Offered</h3>
                       <div className="flex flex-wrap gap-2">
                         {business.services_offered.map((service) => (
                           <Badge key={service} variant="outline" className="px-3 py-1">
@@ -599,9 +740,9 @@ export default function BusinessProfilePage() {
 
                 {/* Languages */}
                 <div className="flex items-start space-x-4">
-                  <Languages className="w-6 h-6 text-orange-600 mt-1" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900 mb-2">Languages</h3>
+                  <Languages className="w-6 h-6 text-orange-600 mt-1 flex-shrink-0" />
+                  <div className="flex-1">
+                    <h3 className="font-bold text-gray-900 mb-3 text-base">Languages</h3>
                     <div className="flex flex-wrap gap-2">
                       {business.languages_spoken.map((language) => (
                         <Badge key={language} variant="secondary" className="px-3 py-1">
@@ -615,9 +756,9 @@ export default function BusinessProfilePage() {
                 {/* Certifications */}
                 {business.certifications.length > 0 && (
                   <div className="flex items-start space-x-4">
-                    <Award className="w-6 h-6 text-indigo-600 mt-1" />
-                    <div>
-                      <h3 className="font-semibold text-gray-900 mb-2">Certifications</h3>
+                    <Award className="w-6 h-6 text-indigo-600 mt-1 flex-shrink-0" />
+                    <div className="flex-1">
+                      <h3 className="font-bold text-gray-900 mb-3 text-base">Certifications</h3>
                       <div className="flex flex-wrap gap-2">
                         {business.certifications.map((cert) => (
                           <Badge key={cert} className="bg-indigo-100 text-indigo-800 px-3 py-1">
@@ -631,114 +772,185 @@ export default function BusinessProfilePage() {
               </CardContent>
             </Card>
 
-            {/* Performance Stats */}
-            {(hasYears || hasCompletion || hasJobs || hasResponse || hasTrustFlags) && (
-            <Card className="border-0 shadow-xl">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-2xl font-bold flex items-center">
-                  <TrendingUp className="w-6 h-6 mr-2 text-green-600" />
-                  Performance & Trust
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  {hasYears && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-blue-600 mb-1">
-                        {business.years_experience}
-                      </div>
-                      <div className="text-sm text-gray-600">Years Experience</div>
-                    </div>
-                  )}
-                  
-                  {hasCompletion && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-green-600 mb-1">
-                        {business.completion_rate}%
-                      </div>
-                      <div className="text-sm text-gray-600">Completion Rate</div>
-                    </div>
-                  )}
-                  
-                  {hasJobs && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-purple-600 mb-1">
-                        {business.total_jobs}
-                      </div>
-                      <div className="text-sm text-gray-600">Total Jobs</div>
-                    </div>
-                  )}
-                  
-                  {hasResponse && (
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-orange-600 mb-1">
-                        {getResponseTimeText()}
-                      </div>
-                      <div className="text-sm text-gray-600">Response Time</div>
-                    </div>
-                  )}
-                </div>
-                
-                <div className="mt-6 flex flex-wrap gap-4">
-                  {business.insurance_verified && (
-                    <div className="flex items-center text-green-600">
-                      <Shield className="w-5 h-5 mr-2" />
-                      <span className="font-medium">Insurance Verified</span>
-                    </div>
-                  )}
-                  
-                  {business.background_checked && (
-                    <div className="flex items-center text-blue-600">
-                      <CheckCircle className="w-5 h-5 mr-2" />
-                      <span className="font-medium">Background Checked</span>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-            )}
-
-            {/* Reviews Section */}
+            {/* Reviews Section - Yelp/Thumbtack Style */}
             {reviews.length > 0 && (
-            <Card className="border-0 shadow-xl">
-              <CardHeader className="pb-4">
-                <CardTitle className="text-2xl font-bold flex items-center">
-                  <Star className="w-6 h-6 mr-2 text-yellow-500" />
-                  Reviews ({business.rating_count})
-                </CardTitle>
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-3 border-b border-gray-200">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                    <span>{business.rating_count} {business.rating_count === 1 ? 'Review' : 'Reviews'}</span>
+                  </CardTitle>
+                  {business.rating_count > 0 && (
+                    <div className="flex items-center gap-2">
+                      <div className="text-xl font-semibold text-gray-900">{business.rating_avg.toFixed(1)}</div>
+                      <div className="flex items-center gap-0.5">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`w-3.5 h-3.5 ${
+                              i < Math.round(business.rating_avg) 
+                                ? 'text-yellow-400 fill-yellow-400' 
+                                : 'text-gray-300'
+                            }`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardHeader>
-              <CardContent>
-                  <div className="space-y-6">
+              <CardContent className="pt-4">
+                  <div className="space-y-4">
                     {reviews.map((review) => (
-                      <div key={review.id} className="border-b border-gray-100 pb-6 last:border-b-0">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-semibold">
-                              {review.user_name.charAt(0)}
+                      <div key={review.id} className="pb-4 border-b border-gray-100 last:border-b-0 last:pb-0">
+                        {/* Review Header - Compact Professional Style */}
+                        <div className="flex items-start gap-3 mb-2">
+                          {/* Clickable Avatar */}
+                          {review.user_id ? (
+                            <Link href={`/users/${review.user_id}`} className="flex-shrink-0 hover:opacity-80 transition-opacity">
+                              <Avatar 
+                                src={review.user_avatar} 
+                                alt={review.user_name}
+                                size="md"
+                                className="shadow-sm"
+                                fallbackIcon={
+                                  <span className="text-white font-semibold text-xs bg-gradient-to-br from-blue-500 to-purple-500 w-full h-full flex items-center justify-center">
+                                    {review.user_name.charAt(0).toUpperCase()}
+                                  </span>
+                                }
+                              />
+                            </Link>
+                          ) : (
+                            <Avatar 
+                              src={review.user_avatar} 
+                              alt={review.user_name}
+                              size="md"
+                              className="shadow-sm"
+                              fallbackIcon={
+                                <span className="text-white font-semibold text-xs bg-gradient-to-br from-blue-500 to-purple-500 w-full h-full flex items-center justify-center">
+                                  {review.user_name.charAt(0).toUpperCase()}
+                                </span>
+                              }
+                            />
+                          )}
+                          
+                          {/* Reviewer Info - Inline Compact */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className="flex items-center flex-wrap gap-1.5">
+                                {/* Name */}
+                                {review.user_id ? (
+                                  <Link href={`/users/${review.user_id}`} className="hover:text-orange-600 transition-colors">
+                                    <span className="font-semibold text-sm text-gray-900">{review.user_name}</span>
+                                  </Link>
+                                ) : (
+                                  <span className="font-semibold text-sm text-gray-900">{review.user_name}</span>
+                                )}
+                                
+                                {/* Verified Badge - Icon Only */}
+                                {review.verified && (
+                                  <CheckCircle className="w-3 h-3 text-green-600" />
+                                )}
+                                
+                                {/* Stats - Inline with name */}
+                                {(review.friend_count !== undefined && review.friend_count > 0) || (review.review_count && review.review_count > 0) ? (
+                                  <>
+                                    <span className="text-gray-400 text-[10px]">•</span>
+                                    {review.friend_count !== undefined && review.friend_count > 0 && (
+                                      <>
+                                        <Users className="w-3 h-3 text-gray-500" />
+                                        <span className="text-xs text-gray-600">{review.friend_count}</span>
+                                      </>
+                                    )}
+                                    {review.review_count && review.review_count > 0 && (
+                                      <>
+                                        {review.friend_count !== undefined && review.friend_count > 0 && (
+                                          <span className="text-gray-400 text-[10px]">•</span>
+                                        )}
+                                        <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                                        <span className="text-xs text-gray-600">{review.review_count}</span>
+                                      </>
+                                    )}
+                                  </>
+                                ) : null}
+                              </div>
+                              
+                              {/* Date - Right aligned */}
+                              <span className="text-xs text-gray-500 flex-shrink-0">{review.date}</span>
                             </div>
-                            <div>
-                              <div className="font-semibold text-gray-900">{review.user_name}</div>
-                              <div className="flex items-center space-x-1">
-                                {[...Array(5)].map((_, i) => (
-                                  <Star
-                                    key={i}
-                                    className={`w-4 h-4 ${
-                                      i < review.rating ? 'text-yellow-400 fill-current' : 'text-gray-300'
-                                    }`}
+                            
+                            {/* Star Rating */}
+                            <div className="flex items-center gap-1 mb-2">
+                              {[...Array(5)].map((_, i) => (
+                                <Star
+                                  key={i}
+                                  className={`w-3.5 h-3.5 ${
+                                    i < review.rating 
+                                      ? 'text-yellow-400 fill-yellow-400' 
+                                      : 'text-gray-300'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        
+                        {/* Review Text - Compact */}
+                        <div className="ml-[52px]">
+                          <p className="text-gray-800 leading-relaxed text-sm mb-2">
+                            {review.comment}
+                          </p>
+                          
+                          {/* Owner Response - Compact Indented */}
+                          {review.owner_response && (
+                            <div className="mt-2 bg-orange-50 rounded-md p-2.5 border-l-2 border-orange-300">
+                              <div className="flex items-start gap-2 mb-1.5">
+                                {/* Owner Avatar */}
+                                {ownerProfile ? (
+                                  <Avatar 
+                                    src={ownerProfile.avatar_url || undefined} 
+                                    alt={ownerProfile.full_name}
+                                    size="sm"
+                                    className="flex-shrink-0 shadow-sm"
+                                    fallbackIcon={
+                                      <span className="text-white font-semibold text-[10px] bg-gradient-to-br from-orange-500 to-orange-600 w-full h-full flex items-center justify-center">
+                                        {ownerProfile.full_name.charAt(0).toUpperCase()}
+                                      </span>
+                                    }
                                   />
-                                ))}
+                                ) : (
+                                  <div className="w-7 h-7 rounded-full bg-orange-500 flex items-center justify-center flex-shrink-0">
+                                    <Building className="w-3.5 h-3.5 text-white" />
+                                  </div>
+                                )}
+                                
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                    <span className="font-semibold text-orange-900 text-xs">
+                                      {ownerProfile ? ownerProfile.full_name : 'Business Owner'}
+                                    </span>
+                                    <Badge className="bg-orange-100 text-orange-700 border border-orange-200 text-[10px] font-normal px-1 py-0 h-3.5 flex items-center">
+                                      Owner
+                                    </Badge>
+                                    {review.owner_response_at && (
+                                      <span className="text-[10px] text-orange-600">
+                                        {new Date(review.owner_response_at).toLocaleDateString('en-US', {
+                                          month: 'short',
+                                          day: 'numeric',
+                                          year: 'numeric'
+                                        })}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-orange-900 leading-relaxed text-xs whitespace-pre-wrap break-words">
+                                    {review.owner_response}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="text-sm text-gray-500">{review.date}</div>
+                          )}
                         </div>
-                        <p className="text-gray-700 leading-relaxed">{review.comment}</p>
-                        {review.verified && (
-                          <div className="flex items-center text-green-600 mt-2">
-                            <CheckCircle className="w-4 h-4 mr-1" />
-                            <span className="text-sm font-medium">Verified Booking</span>
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
@@ -751,10 +963,10 @@ export default function BusinessProfilePage() {
           <div className="space-y-6">
             {/* Contact Information */}
             <Card className="border-0 shadow-xl">
-              <CardHeader>
-                <CardTitle className="text-xl font-bold">Contact Information</CardTitle>
+              <CardHeader className="pb-4 border-b border-gray-200">
+                <CardTitle className="text-xl font-bold text-gray-900">Contact Information</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="pt-6 space-y-6">
                 {business.phone && (
                   <div className="flex items-center space-x-3">
                     <Phone className="w-5 h-5 text-blue-600" />
@@ -798,10 +1010,10 @@ export default function BusinessProfilePage() {
             {/* Gallery */}
             {business.gallery_photos && business.gallery_photos.length > 0 && (
               <Card className="border-0 shadow-xl">
-                <CardHeader>
-                  <CardTitle className="text-xl font-bold">Photos</CardTitle>
+                <CardHeader className="pb-4 border-b border-gray-200">
+                  <CardTitle className="text-xl font-bold text-gray-900">Photos</CardTitle>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="pt-6">
                   <div className="grid grid-cols-2 gap-3">
                     {business.gallery_photos.slice(0, 4).map((photo, index) => (
                       <div key={index} className="aspect-square rounded-lg overflow-hidden">

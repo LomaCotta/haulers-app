@@ -103,8 +103,35 @@ export async function GET(request: NextRequest) {
     }
 
     const supabase = await createClient()
+    const { data: { user } } = await supabase.auth.getUser()
 
-    const { data: reviews, error } = await supabase
+    // Check if user is admin or business owner
+    let isAdmin = false
+    let isBusinessOwner = false
+
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .single()
+      
+      isAdmin = profile?.role === "admin"
+
+      if (!isAdmin) {
+        const { data: business } = await supabase
+          .from("businesses")
+          .select("owner_id")
+          .eq("id", businessId)
+          .eq("owner_id", user.id)
+          .single()
+        
+        isBusinessOwner = !!business
+      }
+    }
+
+    // Build query - RLS will handle filtering, but we also filter explicitly
+    let query = supabase
       .from("reviews")
       .select(`
         *,
@@ -114,11 +141,18 @@ export async function GET(request: NextRequest) {
       .eq("business_id", businessId)
       .order("created_at", { ascending: false })
 
+    // Only show hidden reviews to admins and business owners
+    if (!isAdmin && !isBusinessOwner) {
+      query = query.eq("is_hidden", false)
+    }
+
+    const { data: reviews, error } = await query
+
     if (error) {
       return NextResponse.json({ error: "Failed to fetch reviews" }, { status: 500 })
     }
 
-    return NextResponse.json(reviews)
+    return NextResponse.json(reviews || [])
   } catch (error) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
   }

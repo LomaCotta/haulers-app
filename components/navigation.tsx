@@ -35,6 +35,7 @@ export function Navigation({ user: propUser }: NavigationProps) {
     { href: "/", label: "Home" },
     { href: "/find", label: "Find Services" },
     { href: "/categories", label: "All Categories" },
+    { href: "/mission", label: "Mission" },
     { href: "/transparency", label: "Transparency" },
     { href: "/pricing", label: "Pricing" },
   ]

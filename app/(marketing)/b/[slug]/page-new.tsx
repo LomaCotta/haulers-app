@@ -627,12 +627,12 @@ export default function BusinessProfilePage() {
                           </div>
                           <div className="text-sm text-gray-500">{review.date}</div>
                         </div>
-                        <p className="text-gray-700 leading-relaxed">{review.comment}</p>
+                        <p className="text-gray-700 leading-relaxed mb-2">{review.comment}</p>
                         {review.verified && (
-                          <div className="flex items-center text-green-600 mt-2">
-                            <CheckCircle className="w-4 h-4 mr-1" />
-                            <span className="text-sm font-medium">Verified Booking</span>
-                          </div>
+                          <Badge className="bg-green-50 text-green-700 border-green-200 hover:bg-green-50 text-xs font-normal px-2 py-0.5">
+                            <CheckCircle className="w-3 h-3 mr-1" />
+                            Verified Booking
+                          </Badge>
                         )}
                       </div>
                     ))}

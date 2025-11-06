@@ -19,7 +19,8 @@ import {
   Settings,
   Eye,
   Star,
-  Calendar
+  Calendar,
+  ArrowRight
 } from 'lucide-react'
 
 interface Business {
@@ -39,6 +40,16 @@ interface Booking {
   status: string
   created_at: string
   quote_cents: number
+  requested_date?: string
+  total_price_cents?: number
+  customer?: {
+    id: string
+    full_name: string
+  }
+  business?: {
+    id: string
+    name: string
+  }
 }
 
 interface User {
@@ -52,6 +63,13 @@ export default function AdminDashboard() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [bookings, setBookings] = useState<Booking[]>([])
   const [users, setUsers] = useState<User[]>([])
+  const [stats, setStats] = useState({
+    totalUsers: 0,
+    totalBusinesses: 0,
+    verifiedBusinesses: 0,
+    totalBookings: 0,
+    totalRevenue: 0
+  })
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
@@ -76,7 +94,32 @@ export default function AdminDashboard() {
         return
       }
 
-      // Fetch businesses
+      // Fetch total counts
+      const [
+        { count: totalUsersCount },
+        { count: totalBusinessesCount },
+        { count: verifiedBusinessesCount },
+        { count: totalBookingsCount },
+        { data: bookingsForRevenue }
+      ] = await Promise.all([
+        supabase.from('profiles').select('*', { count: 'exact', head: true }),
+        supabase.from('businesses').select('*', { count: 'exact', head: true }),
+        supabase.from('businesses').select('*', { count: 'exact', head: true }).eq('verified', true),
+        supabase.from('bookings').select('*', { count: 'exact', head: true }),
+        supabase.from('bookings').select('quote_cents')
+      ])
+
+      const totalRevenue = bookingsForRevenue?.reduce((sum, b) => sum + (b.quote_cents || 0), 0) || 0
+
+      setStats({
+        totalUsers: totalUsersCount || 0,
+        totalBusinesses: totalBusinessesCount || 0,
+        verifiedBusinesses: verifiedBusinessesCount || 0,
+        totalBookings: totalBookingsCount || 0,
+        totalRevenue
+      })
+
+      // Fetch limited data for lists
       const { data: businessesData } = await supabase
         .from('businesses')
         .select(`
@@ -86,14 +129,16 @@ export default function AdminDashboard() {
         .order('created_at', { ascending: false })
         .limit(10)
 
-      // Fetch recent bookings
       const { data: bookingsData } = await supabase
         .from('bookings')
-        .select('*')
+        .select(`
+          *,
+          customer:profiles!bookings_customer_id_fkey(id, full_name),
+          business:businesses!bookings_business_id_fkey(id, name)
+        `)
         .order('created_at', { ascending: false })
-        .limit(10)
+        .limit(20)
 
-      // Fetch users
       const { data: usersData } = await supabase
         .from('profiles')
         .select('*')
@@ -123,7 +168,7 @@ export default function AdminDashboard() {
       }
 
       // Refresh data
-      fetchAdminData()
+      await fetchAdminData()
     } catch (error) {
       console.error('Error:', error)
     }
@@ -169,49 +214,101 @@ export default function AdminDashboard() {
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Users</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{users.length}</div>
-            <p className="text-xs text-muted-foreground">+12% from last month</p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/users">
+          <Card className="border-2 border-gray-200 shadow-lg hover:border-blue-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Total Users</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{stats.totalUsers}</div>
+                  <p className="text-xs text-muted-foreground mt-2">+12% from last month</p>
+                  <div className="mt-3 flex items-center text-xs text-blue-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    View all
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </div>
+                </div>
+                <div className="p-3 bg-blue-100 rounded-lg group-hover:bg-blue-200 transition-colors">
+                  <Users className="w-6 h-6 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Businesses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{businesses.length}</div>
-            <p className="text-xs text-muted-foreground">
-              {businesses.filter(b => b.verified).length} verified
-            </p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/verify">
+          <Card className="border-2 border-gray-200 shadow-lg hover:border-green-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Businesses</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-gray-900 group-hover:text-green-600 transition-colors">{stats.totalBusinesses}</div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {stats.verifiedBusinesses} verified
+                  </p>
+                  <div className="mt-3 flex items-center text-xs text-green-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    View all
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </div>
+                </div>
+                <div className="p-3 bg-green-100 rounded-lg group-hover:bg-green-200 transition-colors">
+                  <Building className="w-6 h-6 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{bookings.length}</div>
-            <p className="text-xs text-muted-foreground">+8% from last month</p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/bookings">
+          <Card className="border-2 border-gray-200 shadow-lg hover:border-purple-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Total Bookings</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-gray-900 group-hover:text-purple-600 transition-colors">{stats.totalBookings}</div>
+                  <p className="text-xs text-muted-foreground mt-2">+8% from last month</p>
+                  <div className="mt-3 flex items-center text-xs text-purple-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    View all
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </div>
+                </div>
+                <div className="p-3 bg-purple-100 rounded-lg group-hover:bg-purple-200 transition-colors">
+                  <Calendar className="w-6 h-6 text-purple-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Revenue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatPrice(bookings.reduce((sum, b) => sum + (b.quote_cents || 0), 0))}
-            </div>
-            <p className="text-xs text-muted-foreground">Total platform value</p>
-          </CardContent>
-        </Card>
+        <Link href="/admin/ledger">
+          <Card className="border-2 border-gray-200 shadow-lg hover:border-orange-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-gray-600">Revenue</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="flex-1">
+                  <div className="text-3xl font-bold text-gray-900 group-hover:text-orange-600 transition-colors">
+                    {formatPrice(stats.totalRevenue)}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">Total platform value</p>
+                  <div className="mt-3 flex items-center text-xs text-orange-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                    View ledger
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </div>
+                </div>
+                <div className="p-3 bg-orange-100 rounded-lg group-hover:bg-orange-200 transition-colors">
+                  <DollarSign className="w-6 h-6 text-orange-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -270,24 +367,35 @@ export default function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {bookings.slice(0, 5).map((booking) => (
-                <div key={booking.id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div>
-                    <p className="font-medium">New Booking</p>
-                    <p className="text-sm text-gray-500">
-                      {new Date(booking.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <Badge variant="outline">{booking.status}</Badge>
-                    {booking.quote_cents && (
-                      <p className="text-sm text-gray-500 mt-1">
-                        {formatPrice(booking.quote_cents)}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
+              {bookings.length > 0 ? (
+                bookings.slice(0, 5).map((booking) => {
+                  const customerName = booking.customer?.full_name || 'Unknown Customer'
+                  const businessName = booking.business?.name || 'Unknown Business'
+                  const bookingDate = booking.requested_date 
+                    ? new Date(booking.requested_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    : new Date(booking.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                  const totalAmount = booking.total_price_cents || booking.quote_cents || 0
+                  
+                  return (
+                    <Link key={booking.id} href={`/dashboard/bookings/${booking.id}`}>
+                      <div className="flex items-center justify-between p-3 border rounded-lg hover:border-blue-300 hover:bg-blue-50/50 transition-all duration-200 cursor-pointer group">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-gray-900 group-hover:text-blue-600 transition-colors truncate">
+                            {customerName} • {businessName} • {bookingDate} • {formatPrice(totalAmount)}
+                          </p>
+                        </div>
+                        <div className="ml-4 flex-shrink-0">
+                          <Badge variant="outline" className="group-hover:border-blue-300">
+                            {booking.status}
+                          </Badge>
+                        </div>
+                      </div>
+                    </Link>
+                  )
+                })
+              ) : (
+                <p className="text-gray-500 text-center py-4">No recent activity</p>
+              )}
             </div>
             <Button variant="outline" className="w-full mt-4" asChild>
               <Link href="/admin/bookings">View All Activity</Link>

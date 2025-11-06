@@ -11,6 +11,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { createClient } from '@/lib/supabase/client'
 import { profileRoleSchema } from '@/lib/schema'
 import { ArrowLeft, User, Building } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 
 // Declare Turnstile types
 declare global {
@@ -31,6 +32,10 @@ export default function SignUpPage() {
   const [role, setRole] = useState<'consumer' | 'provider'>('consumer')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  
+  // Agreements
+  const [agreeTerms, setAgreeTerms] = useState(false)
+  const [agreePrivacy, setAgreePrivacy] = useState(false)
   
   // Turnstile state
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
@@ -166,6 +171,12 @@ export default function SignUpPage() {
     setError('')
 
     try {
+      // Validate agreements
+      if (!agreeTerms || !agreePrivacy) {
+        setError('Please agree to the Terms of Service and Privacy Policy to continue.')
+        return
+      }
+
       // Validate role
       const validatedRole = profileRoleSchema.parse(role)
 
@@ -334,13 +345,38 @@ export default function SignUpPage() {
                 </div>
               )}
 
+              {/* Agreements */}
+              <div className="space-y-2 text-sm text-gray-700">
+                <label className="flex items-start gap-3">
+                  <Checkbox id="agreeTerms" checked={agreeTerms} onCheckedChange={(v) => setAgreeTerms(Boolean(v))} />
+                  <span>
+                    I agree to the{' '}
+                    <Link href="/terms" className="text-orange-600 hover:text-orange-500 underline">Terms of Service</Link>.
+                  </span>
+                </label>
+                <label className="flex items-start gap-3">
+                  <Checkbox id="agreePrivacy" checked={agreePrivacy} onCheckedChange={(v) => setAgreePrivacy(Boolean(v))} />
+                  <span>
+                    I have read the{' '}
+                    <Link href="/terms#privacy" className="text-orange-600 hover:text-orange-500 underline">Privacy Policy</Link>.
+                  </span>
+                </label>
+              </div>
+
               <Button 
                 type="submit" 
                 className="w-full h-12 text-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-200" 
-                disabled={loading}
+                disabled={loading || !agreeTerms || !agreePrivacy}
               >
                 {loading ? 'Creating account...' : 'Create account'}
               </Button>
+
+              <p className="text-xs text-gray-500 text-center mt-3">
+                By creating an account, you agree to our{' '}
+                <Link href="/terms" className="text-orange-600 hover:text-orange-500 underline">Terms of Service</Link>
+                {' '}and{' '}
+                <Link href="/terms#privacy" className="text-orange-600 hover:text-orange-500 underline">Privacy Policy</Link>.
+              </p>
             </form>
 
             <div className="mt-6 text-center">

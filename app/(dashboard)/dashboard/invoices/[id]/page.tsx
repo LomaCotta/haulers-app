@@ -333,7 +333,7 @@ export default function InvoiceDetailPage() {
         setCompleteJobDialogOpen(false)
         setToast({
           show: true,
-          message: 'Job completed! Customer has been notified to leave a review.',
+          message: 'Job completed successfully!',
           type: 'success'
         })
         setTimeout(() => {
@@ -772,7 +772,7 @@ export default function InvoiceDetailPage() {
               Mark Payment
             </Button>
           )}
-          {isBusinessOwner && invoice.status === 'paid' && invoice.booking_id && (
+          {isBusinessOwner && invoice.status === 'paid' && invoice.booking_id && !invoice.booking?.review_requested_at && (
             <Button
               className="bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white"
               onClick={() => setCompleteJobDialogOpen(true)}
@@ -899,16 +899,9 @@ export default function InvoiceDetailPage() {
                 </DialogTitle>
               </div>
               <DialogDescription className="text-base text-gray-700 pt-2 leading-relaxed">
-                Mark this job as complete and send a review request to the customer. This will notify them to leave a review for their experience.
+                Mark this job as complete.
               </DialogDescription>
             </DialogHeader>
-            <div className="py-4 px-1">
-              <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
-                <p className="text-sm text-gray-700 leading-relaxed">
-                  This will send a notification to the customer asking them to leave a review for their completed service.
-                </p>
-              </div>
-            </div>
             <DialogFooter className="gap-2 sm:gap-0 mt-6">
               <Button
                 variant="outline"
@@ -931,7 +924,7 @@ export default function InvoiceDetailPage() {
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4 mr-2" />
-                    Complete Job & Request Review
+                    Complete Job
                   </>
                 )}
               </Button>

@@ -401,94 +401,126 @@ export default function DashboardPage() {
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* Invoices */}
-          <Card className="border-2 border-gray-200 shadow-lg">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Invoices</p>
-                  <p className="text-2xl font-bold text-gray-900">{stats.totalInvoices}</p>
-                  {isBusinessOwner && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {stats.sentInvoices} sent • {stats.receivedInvoices} received
-                    </p>
-                  )}
+          <Link href="/dashboard/invoices">
+            <Card className="border-2 border-gray-200 shadow-lg hover:border-blue-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-600 mb-1">Total Invoices</p>
+                    <p className="text-3xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{stats.totalInvoices}</p>
+                    {isBusinessOwner && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        {stats.sentInvoices} sent • {stats.receivedInvoices} received
+                      </p>
+                    )}
+                    <div className="mt-3 flex items-center text-xs text-blue-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      View all
+                      <ArrowRight className="w-3 h-3 ml-1" />
+                    </div>
+                  </div>
+                  <div className="p-3 bg-blue-100 rounded-lg group-hover:bg-blue-200 transition-colors">
+                    <FileText className="w-6 h-6 text-blue-600" />
+                  </div>
                 </div>
-                <div className="p-3 bg-blue-100 rounded-lg">
-                  <FileText className="w-6 h-6 text-blue-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
 
           {/* Unpaid Invoices */}
-          <Card className="border-2 border-gray-200 shadow-lg">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Unpaid Invoices</p>
-                  <p className="text-2xl font-bold text-orange-600">{stats.unpaidInvoices}</p>
-                  <p className="text-xs text-gray-500 mt-1">Requires attention</p>
+          <Link href="/dashboard/invoices?status=sent">
+            <Card className="border-2 border-gray-200 shadow-lg hover:border-orange-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-600 mb-1">Unpaid Invoices</p>
+                    <p className="text-3xl font-bold text-orange-600 group-hover:text-orange-700 transition-colors">{stats.unpaidInvoices}</p>
+                    <p className="text-xs text-gray-500 mt-2">
+                      {stats.unpaidInvoices > 0 ? 'Requires attention' : 'All paid'}
+                    </p>
+                    <div className="mt-3 flex items-center text-xs text-orange-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      View unpaid
+                      <ArrowRight className="w-3 h-3 ml-1" />
+                    </div>
+                  </div>
+                  <div className="p-3 bg-orange-100 rounded-lg group-hover:bg-orange-200 transition-colors">
+                    <CreditCard className="w-6 h-6 text-orange-600" />
+                  </div>
                 </div>
-                <div className="p-3 bg-orange-100 rounded-lg">
-                  <CreditCard className="w-6 h-6 text-orange-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
 
           {/* Bookings */}
-          <Card className="border-2 border-gray-200 shadow-lg">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    {isBusinessOwner ? 'Total Bookings' : 'My Bookings'}
-                  </p>
-                  <p className="text-2xl font-bold text-gray-900">{stats.totalBookings}</p>
-                  {stats.pendingBookings > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {stats.pendingBookings} pending
+          <Link href="/dashboard/bookings">
+            <Card className="border-2 border-gray-200 shadow-lg hover:border-green-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-gray-600 mb-1">
+                      {isBusinessOwner ? 'Total Bookings' : 'My Bookings'}
                     </p>
-                  )}
+                    <p className="text-3xl font-bold text-gray-900 group-hover:text-green-600 transition-colors">{stats.totalBookings}</p>
+                    {stats.pendingBookings > 0 && (
+                      <p className="text-xs text-gray-500 mt-2">
+                        {stats.pendingBookings} pending
+                      </p>
+                    )}
+                    <div className="mt-3 flex items-center text-xs text-green-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      View all
+                      <ArrowRight className="w-3 h-3 ml-1" />
+                    </div>
+                  </div>
+                  <div className="p-3 bg-green-100 rounded-lg group-hover:bg-green-200 transition-colors">
+                    <Calendar className="w-6 h-6 text-green-600" />
+                  </div>
                 </div>
-                <div className="p-3 bg-green-100 rounded-lg">
-                  <Calendar className="w-6 h-6 text-green-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </Link>
 
           {/* Revenue (Business Owners) or Messages */}
           {isBusinessOwner ? (
-            <Card className="border-2 border-gray-200 shadow-lg">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                    <p className="text-2xl font-bold text-gray-900">{formatPrice(stats.totalRevenue)}</p>
-                    <p className="text-xs text-gray-500 mt-1">All time</p>
+            <Link href="/dashboard/invoices">
+              <Card className="border-2 border-gray-200 shadow-lg hover:border-purple-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-600 mb-1">Total Revenue</p>
+                      <p className="text-3xl font-bold text-gray-900 group-hover:text-purple-600 transition-colors">{formatPrice(stats.totalRevenue)}</p>
+                      <p className="text-xs text-gray-500 mt-2">All time</p>
+                      <div className="mt-3 flex items-center text-xs text-purple-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                        View invoices
+                        <ArrowRight className="w-3 h-3 ml-1" />
+                      </div>
+                    </div>
+                    <div className="p-3 bg-purple-100 rounded-lg group-hover:bg-purple-200 transition-colors">
+                      <DollarSign className="w-6 h-6 text-purple-600" />
+                    </div>
                   </div>
-                  <div className="p-3 bg-purple-100 rounded-lg">
-                    <DollarSign className="w-6 h-6 text-purple-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           ) : (
-            <Card className="border-2 border-gray-200 shadow-lg">
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Messages</p>
-                    <p className="text-2xl font-bold text-gray-900">{stats.unreadMessages}</p>
-                    <p className="text-xs text-gray-500 mt-1">Unread</p>
+            <Link href="/dashboard/messages">
+              <Card className="border-2 border-gray-200 shadow-lg hover:border-blue-300 hover:shadow-xl transition-all duration-200 cursor-pointer group">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-600 mb-1">Messages</p>
+                      <p className="text-3xl font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{stats.unreadMessages}</p>
+                      <p className="text-xs text-gray-500 mt-2">Unread</p>
+                      <div className="mt-3 flex items-center text-xs text-blue-600 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                        View messages
+                        <ArrowRight className="w-3 h-3 ml-1" />
+                      </div>
+                    </div>
+                    <div className="p-3 bg-blue-100 rounded-lg group-hover:bg-blue-200 transition-colors">
+                      <MessageSquare className="w-6 h-6 text-blue-600" />
+                    </div>
                   </div>
-                  <div className="p-3 bg-blue-100 rounded-lg">
-                    <MessageSquare className="w-6 h-6 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           )}
         </div>
 

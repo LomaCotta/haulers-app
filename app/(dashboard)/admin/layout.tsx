@@ -17,7 +17,9 @@ import {
   DollarSign,
   AlertTriangle,
   MessageSquare,
-  Edit3
+  Edit3,
+  Star,
+  FileText
 } from 'lucide-react'
 import { Avatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
@@ -97,6 +99,8 @@ export default function AdminLayout({
     { name: 'Edit Requests', href: '/admin/edit-requests', icon: Edit3 },
     { name: 'Manage Users', href: '/admin/users', icon: Users },
     { name: 'All Bookings', href: '/admin/bookings', icon: Building },
+    { name: 'Reviews', href: '/admin/reviews', icon: Star },
+    { name: 'Mission Submissions', href: '/admin/mission-submissions', icon: FileText },
     { name: 'Platform Ledger', href: '/admin/ledger', icon: BarChart3 },
     { name: 'Messages', href: '/dashboard/messages', icon: MessageSquare },
     { name: 'Settings', href: '/admin/settings', icon: Settings },
